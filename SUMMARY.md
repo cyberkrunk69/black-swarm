@@ -7,16 +7,20 @@ An AI is teaching itself to become smarter by reading research papers and implem
 
 ## RIGHT NOW
 
-### Opus Strategic Review
-1. **Opus Architect** - Architecture review and code audit
-2. **Opus Strategist** - Wave 12-16 roadmap planning
+### Wave 12 Complete!
+1. **Completed** - Critic retry integration - quality-driven retries
+2. **Completed** - DSPy persistence - demos survive sessions
+3. **Completed** - Performance->Improvement loop - auto-suggestions
+4. **Completed** - Semantic skill retrieval - TF-IDF matching
+5. **Completed** - Knowledge graph wired to main flow
+6. **Completed** - KG auto-population from lessons
+7. **Completed** - Tree search expansion - real branching
+8. **Completed** - Tree search evaluation - critic scoring
+9. **Completed** - Online learning - session feedback capture
+10. **Completed** - Integration tests - feedback loop validation
 
-### Wave 11 Results (COMPLETE)
-**10 Worker AIs** completed:
-LATS tree search, KnowledgeGraph integration, DSPy persistence, metrics loop, critic retry, integration tests, /grind endpoint, structured logging, config validation.
-
-### Up Next: Wave 12 - Production Hardening
-Retry logic, rate limits, health checks, security
+### Up Next: Wave 13 - Knowledge Infrastructure
+AI writes new tools for itself
 
 ---
 
@@ -86,11 +90,10 @@ Retry logic, rate limits, health checks, security
 
 ---
 
-## Future Roadmap (Waves 12-20)
+## Future Roadmap (Waves 13-20)
 
 | Wave | Name | What It Does |
 |------|------|--------------|
-| 12 | Production Hardening | Retry logic, rate limits, health checks, security |
 | 13 | Tool Creation | AI writes new tools for itself |
 | 14 | Meta-Learning | AI learns how to learn better |
 | 15 | Multi-Task Parallel | AI works on multiple improvements simultaneously |
@@ -109,9 +112,9 @@ Watch the numbers tick up at **http://10.0.4.114:8080/dad**
 | Metric | Value |
 |--------|-------|
 | Sessions | 10 |
-| Lessons | 155 |
-| Files | 39 |
-| Lines | 11,536 |
+| Lessons | 174 |
+| Files | 41 |
+| Lines | 12,548 |
 
 ---
 
@@ -130,7 +133,8 @@ Watch the numbers tick up at **http://10.0.4.114:8080/dad**
 | Wave 9 | 6 | Done |
 | Wave 10 | 6 | Done |
 | Wave 11 | 10 | Done |
-| Wave 12 | 0 | Planned |
+| Wave 12 | 10 | Done |
+| Wave 13 | 0 | Planned |
 
-**Total workers spawned: 57+**
-**Last updated: 2026-02-03 05:47**
+**Total workers spawned: 67+**
+**Last updated: 2026-02-03 05:57**

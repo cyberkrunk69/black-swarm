@@ -11,6 +11,7 @@ Implements a tree search system for exploring solution space with:
 import math
 from typing import Any, List, Tuple, Dict, Optional
 from dataclasses import dataclass, field
+from critic import CriticAgent
 
 
 @dataclass
@@ -49,34 +50,114 @@ class TreeNode:
 
 def expand_node(node: TreeNode) -> List[TreeNode]:
     """
-    Generate child nodes from current state.
+    Generate child nodes from current state with real strategy variations.
 
-    This is a template function - in practice, this would:
-    - Apply action generation to the current state
-    - Create child nodes for each valid next state
-    - Return list of unexplored children
+    Generates 2-3 alternative approaches based on task type detection:
+    - REFACTOR tasks: incremental, modular, comprehensive strategies
+    - IMPLEMENT tasks: minimal, standard, feature-rich strategies
+    - FIX tasks: quick-patch, root-cause, test-driven strategies
 
     Args:
         node: TreeNode to expand
 
     Returns:
-        List of newly created child nodes
+        List of newly created child nodes with different strategy variations
     """
-    # Template implementation - generates synthetic child states
     children = []
+    task_state = str(node.state).lower()
 
-    # In a real system, this would call an action generator
-    # For demo: create 2-3 children with different action labels
-    num_children = 2 if isinstance(node.state, int) and node.state > 5 else 3
+    # Detect task type from state description
+    is_refactor = any(kw in task_state for kw in ['refactor', 'restructure', 'reorganize', 'clean'])
+    is_implement = any(kw in task_state for kw in ['implement', 'add', 'create', 'build', 'feature'])
+    is_fix = any(kw in task_state for kw in ['fix', 'bug', 'error', 'issue', 'debug'])
 
-    for i in range(num_children):
-        # Simulate action: increment state or apply transformation
-        next_state = node.state + i + 1 if isinstance(node.state, int) else f"{node.state}_action_{i}"
-        action = f"action_{i}"
+    # Strategy definitions based on task type
+    if is_refactor:
+        strategies = [
+            {
+                'action': 'incremental_refactor',
+                'description': 'Incremental refactoring: Small, safe changes with tests between each step',
+                'prompt_variation': 'Focus on minimal changes. Refactor one component at a time, run tests after each.'
+            },
+            {
+                'action': 'modular_refactor',
+                'description': 'Modular refactoring: Extract reusable components and improve separation of concerns',
+                'prompt_variation': 'Identify duplicated logic. Extract into modules/functions. Improve interfaces.'
+            },
+            {
+                'action': 'comprehensive_refactor',
+                'description': 'Comprehensive refactoring: Redesign architecture with best practices',
+                'prompt_variation': 'Apply design patterns. Optimize structure. Improve maintainability and extensibility.'
+            }
+        ]
+    elif is_implement:
+        strategies = [
+            {
+                'action': 'minimal_implementation',
+                'description': 'Minimal implementation: Core functionality only, fastest path to working',
+                'prompt_variation': 'Implement only required features. Skip extras. Get to working prototype fast.'
+            },
+            {
+                'action': 'standard_implementation',
+                'description': 'Standard implementation: Core features + error handling + basic validation',
+                'prompt_variation': 'Implement features with proper error handling, input validation, and logging.'
+            },
+            {
+                'action': 'robust_implementation',
+                'description': 'Robust implementation: Full features + edge cases + tests + documentation',
+                'prompt_variation': 'Comprehensive solution with tests, docs, edge case handling, and extensibility.'
+            }
+        ]
+    elif is_fix:
+        strategies = [
+            {
+                'action': 'quick_patch',
+                'description': 'Quick patch: Immediate fix for symptoms, minimal changes',
+                'prompt_variation': 'Find the failing point. Apply minimal fix. Verify it works.'
+            },
+            {
+                'action': 'root_cause_fix',
+                'description': 'Root cause fix: Investigate deeply, fix underlying issue',
+                'prompt_variation': 'Trace the bug to its source. Fix the root cause, not symptoms. Prevent recurrence.'
+            },
+            {
+                'action': 'test_driven_fix',
+                'description': 'Test-driven fix: Write failing test first, then fix to pass',
+                'prompt_variation': 'Create test that reproduces bug. Fix code until test passes. Add regression tests.'
+            }
+        ]
+    else:
+        # Generic exploration strategies for unknown task types
+        strategies = [
+            {
+                'action': 'conservative_approach',
+                'description': 'Conservative: Minimal changes, low risk',
+                'prompt_variation': 'Make smallest possible changes. Preserve existing behavior. Low risk approach.'
+            },
+            {
+                'action': 'balanced_approach',
+                'description': 'Balanced: Moderate changes with good tradeoffs',
+                'prompt_variation': 'Balance speed vs quality. Make reasonable improvements without over-engineering.'
+            },
+            {
+                'action': 'aggressive_approach',
+                'description': 'Aggressive: Comprehensive changes, higher complexity',
+                'prompt_variation': 'Go deep. Make significant improvements. Accept higher initial complexity.'
+            }
+        ]
+
+    # Generate child nodes for each strategy
+    for strategy in strategies:
+        next_state = {
+            'original_state': node.state,
+            'strategy': strategy['action'],
+            'description': strategy['description'],
+            'prompt': strategy['prompt_variation']
+        }
 
         child = TreeNode(
             state=next_state,
-            action=action,
+            action=strategy['action'],
             parent=node
         )
         children.append(child)
@@ -85,13 +166,16 @@ def expand_node(node: TreeNode) -> List[TreeNode]:
     return children
 
 
+_evaluation_cache: Dict[str, float] = {}
+_critic: Optional[CriticAgent] = None
+
+
 def evaluate_node(node: TreeNode) -> float:
     """
-    Score a node's state on 0.0-1.0 scale.
+    Score a node's state on 0.0-1.0 scale using CriticAgent.
 
-    This is a template function - in practice, this would:
-    - Call a value estimator (LLM scoring, heuristic eval, etc.)
-    - Return confidence score for how good this state is
+    Uses critic.review() to evaluate code quality when node state is a string (code).
+    Results are cached to avoid redundant evaluations.
 
     Args:
         node: TreeNode to evaluate
@@ -99,14 +183,38 @@ def evaluate_node(node: TreeNode) -> float:
     Returns:
         float: Score between 0.0 (bad) and 1.0 (excellent)
     """
-    # Template: score based on state properties
-    if isinstance(node.state, int):
-        # Higher numbers are "better" in demo
-        return min(node.state / 10.0, 1.0)
+    global _critic, _evaluation_cache
 
-    # String states get random-ish scores based on length
-    score = len(str(node.state)) / 20.0
-    return min(score, 1.0)
+    # Handle nodes without output
+    if node.state is None or (isinstance(node.state, str) and not node.state.strip()):
+        return 0.0
+
+    # Check cache
+    state_key = str(node.state)
+    if state_key in _evaluation_cache:
+        return _evaluation_cache[state_key]
+
+    # Initialize critic if needed
+    if _critic is None:
+        _critic = CriticAgent()
+
+    # Evaluate based on state type
+    if isinstance(node.state, str) and len(node.state) > 10:
+        # Treat as code - use critic
+        review_result = _critic.review(node.state)
+        score = review_result["score"]
+    elif isinstance(node.state, int):
+        # Numeric state - normalize to 0-1
+        score = min(node.state / 10.0, 1.0)
+    else:
+        # Default heuristic
+        score = len(str(node.state)) / 20.0
+        score = min(score, 1.0)
+
+    # Cache result
+    _evaluation_cache[state_key] = score
+
+    return score
 
 
 def select_best_child(node: TreeNode) -> Optional[TreeNode]:

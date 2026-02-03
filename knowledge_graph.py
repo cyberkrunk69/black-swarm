@@ -123,6 +123,32 @@ class KnowledgeGraph:
             "depth": depth
         }
 
+    def get_related_concepts(self, task: str, max_results: int = 5) -> List[str]:
+        """
+        Get related concepts from the knowledge graph based on a task description.
+
+        Args:
+            task: Task description string
+            max_results: Maximum number of related concepts to return
+
+        Returns:
+            List of related concept labels
+        """
+        task_lower = task.lower()
+        related_concepts = []
+
+        # Find nodes whose labels match keywords in the task
+        for node_id, node in self.nodes.items():
+            node_label_lower = node.label.lower()
+            # Match if task contains node label or node label contains task words
+            task_words = [w for w in task_lower.split() if len(w) > 3]
+            if any(word in node_label_lower for word in task_words):
+                related_concepts.append(node.label)
+                if len(related_concepts) >= max_results:
+                    break
+
+        return related_concepts
+
     def populate_from_codebase(self, root_path: str = ".") -> None:
         """
         Scan Python files in the codebase and populate the graph with FILE and FUNCTION nodes.
@@ -240,3 +266,102 @@ class KnowledgeGraph:
                 relation=EdgeType[edge_data["relation"]]
             )
             self.add_edge(edge)
+
+    def add_lesson_node(self, lesson_dict: Dict) -> str:
+        """
+        Add a lesson as a LESSON node to the knowledge graph.
+
+        Args:
+            lesson_dict: Dictionary containing lesson data (from learned_lessons.json)
+
+        Returns:
+            The lesson node ID
+        """
+        lesson_id = lesson_dict.get("id", f"lesson_{len(self.nodes)}")
+
+        lesson_node = KnowledgeNode(
+            id=lesson_id,
+            label=lesson_dict.get("lesson", "Unknown lesson")[:50],
+            type=NodeType.LESSON,
+            properties={
+                "task_category": lesson_dict.get("task_category", ""),
+                "timestamp": lesson_dict.get("timestamp", ""),
+                "importance": lesson_dict.get("importance", 5),
+                "source": lesson_dict.get("source", ""),
+                "full_lesson": lesson_dict.get("lesson", "")
+            }
+        )
+
+        self.add_node(lesson_node)
+        return lesson_id
+
+    def link_lesson_to_concepts(self, lesson_id: str, concepts: List[str]) -> None:
+        """
+        Link a lesson node to concept nodes (creating concepts if they don't exist).
+
+        Args:
+            lesson_id: The lesson node ID
+            concepts: List of concept strings to link to
+        """
+        if lesson_id not in self.nodes:
+            raise ValueError(f"Lesson node {lesson_id} not found in graph")
+
+        for concept in concepts:
+            # Create or find concept node
+            concept_id = f"concept:{concept.lower().replace(' ', '_')}"
+
+            if concept_id not in self.nodes:
+                concept_node = KnowledgeNode(
+                    id=concept_id,
+                    label=concept,
+                    type=NodeType.CONCEPT,
+                    properties={"name": concept}
+                )
+                self.add_node(concept_node)
+
+            # Create edge from lesson to concept
+            edge = KnowledgeEdge(
+                source=lesson_id,
+                target=concept_id,
+                relation=EdgeType.RELATES_TO
+            )
+            self.add_edge(edge)
+
+    def extract_concepts_from_lesson(self, lesson_text: str) -> List[str]:
+        """
+        Extract key concepts from lesson text automatically.
+        Simple extraction based on common patterns and keywords.
+
+        Args:
+            lesson_text: The lesson text to extract concepts from
+
+        Returns:
+            List of extracted concept strings
+        """
+        concepts = []
+
+        # Common technical concepts to extract
+        concept_keywords = [
+            "CAMEL", "DSPy", "Voyager", "TextGrad", "LATS",
+            "role decomposition", "prompt optimization", "skill injection",
+            "knowledge graph", "reflection", "self-verification",
+            "error categorization", "complexity adaptation", "critic feedback",
+            "online learning", "memory synthesis", "demonstration",
+            "few-shot", "chain-of-thought", "quality assurance",
+            "performance tracking", "message pool", "lesson recording"
+        ]
+
+        lesson_lower = lesson_text.lower()
+
+        # Extract matching concepts
+        for keyword in concept_keywords:
+            if keyword.lower() in lesson_lower:
+                concepts.append(keyword)
+
+        # Extract arXiv references as concepts
+        if "arxiv" in lesson_lower:
+            import re
+            arxiv_matches = re.findall(r'arXiv:\d+\.\d+', lesson_text)
+            concepts.extend(arxiv_matches)
+
+        return list(set(concepts))  # Remove duplicates

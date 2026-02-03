@@ -165,6 +165,57 @@ class TestMyFunction:
             self.vectorizer = None
             self.embeddings = None
 
+    def compute_embedding(self, text):
+        """Compute TF-IDF embedding vector for given text
+
+        Args:
+            text: String to compute embedding for
+
+        Returns:
+            Sparse matrix embedding vector, or None if embeddings unavailable
+        """
+        if not EMBEDDING_AVAILABLE or not self.vectorizer:
+            return None
+
+        try:
+            return self.vectorizer.transform([text])
+        except Exception:
+            return None
+
+    def find_similar_skills(self, query, top_k=3):
+        """Find top-k most similar skills using cosine similarity
+
+        Args:
+            query: Task description or query string
+            top_k: Number of top similar skills to return (default: 3)
+
+        Returns:
+            List of tuples (skill_name, similarity_score) sorted by similarity
+        """
+        if not self.vectorizer or self.embeddings is None or len(self.skills) == 0:
+            return []
+
+        try:
+            query_embedding = self.compute_embedding(query)
+            if query_embedding is None:
+                return []
+
+            similarities = cosine_similarity(query_embedding, self.embeddings)[0]
+
+            # Get indices of top-k similarities
+            top_indices = similarities.argsort()[-top_k:][::-1]
+            skill_names = list(self.skills.keys())
+
+            results = [
+                (skill_names[idx], float(similarities[idx]))
+                for idx in top_indices
+                if similarities[idx] > 0.0  # Filter out zero similarity
+            ]
+
+            return results
+        except Exception:
+            return []
+
     def register_skill(self, name, code, description, preconditions=None, postconditions=None):
         """Register a new skill in the library"""
         self.skills[name] = {
@@ -203,23 +254,16 @@ class TestMyFunction:
 
     def _retrieve_by_embedding(self, task_description):
         """Retrieve skill using TF-IDF cosine similarity"""
-        if not self.vectorizer or self.embeddings is None or len(self.skills) == 0:
+        similar_skills = self.find_similar_skills(task_description, top_k=1)
+
+        if not similar_skills:
             return None
 
-        try:
-            task_embedding = self.vectorizer.transform([task_description])
-            similarities = cosine_similarity(task_embedding, self.embeddings)[0]
+        skill_name, similarity_score = similar_skills[0]
 
-            # Return skill with highest similarity
-            best_idx = similarities.argmax()
-            best_score = similarities[best_idx]
-
-            # Only return if there's meaningful similarity (>= 0.3 threshold)
-            if best_score >= 0.3:
-                skill_name = list(self.skills.keys())[best_idx]
-                return self.skills[skill_name]
-        except Exception:
-            pass
+        # Only return if there's meaningful similarity (>= 0.3 threshold)
+        if similarity_score >= 0.3:
+            return self.skills[skill_name]
 
         return None
 

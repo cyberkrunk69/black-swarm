@@ -48,6 +48,7 @@ from lesson_recorder import (
     record_reflection_automation_lesson,
     record_critic_feedback_lesson
 )
+from connect_tracker_to_suggester import post_wave_analysis
 
 # Configuration
 WORKSPACE = Path(__file__).parent
@@ -103,9 +104,19 @@ class GrindSession:
         # Online learning checkpoint counter (every 5 turns)
         self.checkpoint_counter = 0
 
-        # Initialize Knowledge Graph and populate from codebase
+        # Initialize Knowledge Graph - try loading existing, populate if not found
         self.kg = KnowledgeGraph()
-        self.kg.populate_from_codebase(str(self.workspace))
+        kg_file = self.workspace / "knowledge_graph.json"
+        if kg_file.exists():
+            try:
+                self.kg.load_json(str(kg_file))
+                print(f"[Session {self.session_id}] Loaded existing knowledge graph with {len(self.kg.nodes)} nodes")
+            except Exception as e:
+                print(f"[Session {self.session_id}] Could not load KG, repopulating: {e}")
+                self.kg.populate_from_codebase(str(self.workspace))
+        else:
+            self.kg.populate_from_codebase(str(self.workspace))
+            print(f"[Session {self.session_id}] Populated knowledge graph with {len(self.kg.nodes)} nodes")
 
     def _extract_files_from_log(self, output: str) -> list:
         """Extract list of modified files from Claude output."""
@@ -179,11 +190,27 @@ RELEVANT SKILL: {skill_name}
 """
             print(f"[Session {self.session_id}] Retrieved skill: {skill_name}")
 
-        # Query Knowledge Graph for context
+        # Query Knowledge Graph for context based on task keywords
         kg_context_injection = ""
         try:
-            # Query related concepts for current task from KG
-            related_subgraph = self.kg.query_related(f"class:grind_spawner.py:GrindSession", depth=2)
+            # Extract key concepts from task description for better KG querying
+            task_lower = self.task.lower()
+            potential_node_ids = []
+
+            # Try to find relevant nodes based on task keywords
+            for node_id, node in self.kg.nodes.items():
+                node_label_lower = node.label.lower()
+                # Match if task contains node label or vice versa
+                if any(word in task_lower for word in node_label_lower.split()) or \
+                   any(word in node_label_lower for word in task_lower.split() if len(word) > 3):
+                    potential_node_ids.append(node_id)
+
+            # If no matches, fall back to querying a central node
+            if not potential_node_ids:
+                potential_node_ids = [f"class:grind_spawner.py:GrindSession"]
+
+            # Query the first relevant node
+            related_subgraph = self.kg.query_related(potential_node_ids[0], depth=2)
 
             if related_subgraph and related_subgraph.get("nodes"):
                 kg_nodes = list(related_subgraph.get("nodes", {}).keys())[:5]
@@ -381,11 +408,11 @@ The task is NOT complete until REVIEWER approves.
                         for fb in critic_review['feedback'][:2]:
                             print(f"[Session {self.session_id}] Feedback: {fb}")
 
-                    # If critic mode enabled and quality score below threshold, trigger feedback-driven retry
-                    if self.critic_mode and critic_quality_score < 0.7 and critic_retry_count < 1:
+                    # If quality score below threshold, trigger feedback-driven retry (max 2 retries)
+                    if critic_quality_score < 0.7 and critic_retry_count < 2:
                         print(f"[Session {self.session_id}] [CRITIC RETRY] Quality score {critic_quality_score:.2f} < 0.7 threshold, triggering improvement attempt")
                         improvement_suggestions = "\n".join(critic_review.get('feedback', []))
-                        print(f"[Session {self.session_id}] [Session {self.session_id}] Critic retry with feedback")
+                        print(f"[Session {self.session_id}] Critic retry with feedback")
                         print(f"[Session {self.session_id}] Feedback:\n{improvement_suggestions}")
 
                         # Build enhanced prompt with critic feedback (TextGrad pattern)
@@ -407,7 +434,7 @@ Focus on: {', '.join(critic_review.get('feedback', [])[:3])}
                         current_prompt = prompt + critic_feedback_injection
                         critic_retry_count += 1
                         attempt += 1
-                        print(f"[Session {self.session_id}] Retrying with enhanced prompt (critic attempt {critic_retry_count}/1)")
+                        print(f"[Session {self.session_id}] Retrying with enhanced prompt (critic attempt {critic_retry_count}/2)")
                         continue
 
                     # Log critic results with quality metrics
@@ -518,6 +545,22 @@ Focus on: {', '.join(critic_review.get('feedback', [])[:3])}
 
             if not self.running:
                 break
+
+            # Add lesson to knowledge graph if task was successful
+            if result.get("returncode", 0) == 0 and result.get("self_verified"):
+                try:
+                    # Load recent lessons and add them to KG
+                    lessons = load_lessons()
+                    recent_lessons = [l for l in lessons if recent_than_4_hours(l)]
+
+                    for lesson in recent_lessons[-3:]:  # Only add last 3 recent lessons
+                        lesson_id = self.kg.add_lesson_node(lesson)
+                        concepts = self.kg.extract_concepts_from_lesson(lesson.get("lesson", ""))
+                        if concepts:
+                            self.kg.link_lesson_to_concepts(lesson_id, concepts)
+                            print(f"[Session {self.session_id}] Added lesson to KG: {lesson_id} -> {concepts[:3]}")
+                except Exception as e:
+                    print(f"[Session {self.session_id}] Warning: Could not add lesson to KG: {e}")
 
             # Persist Knowledge Graph after each run
             try:
@@ -868,9 +911,137 @@ def learn_online(session_id: int, run_num: int, context: dict, result: dict, tur
                 lessons_data = [online_lesson]
             write_json(LEARNED_LESSONS_FILE, lessons_data)
 
+        # ONLINE LEARNING ENHANCEMENTS: Update prompt_optimizer and skill_registry in real-time
+        _update_prompt_optimizer_online(session_id, result, context)
+        _update_skill_registry_online(session_id, result, context)
+        _log_learning_event(session_id, run_num, turn_count, online_lesson)
+
     except Exception as e:
         print(f"[Session {session_id}] Warning: Could not record online learning: {e}")
 
+
+def _update_prompt_optimizer_online(session_id: int, result: dict, context: dict) -> None:
+    """Update prompt_optimizer with new demonstration in real-time."""
+    try:
+        from prompt_optimizer import save_demonstrations, load_demonstrations
+
+        # Only update if task was successful
+        if result.get("returncode") == 0 and result.get("self_verified"):
+            # Load existing demonstrations
+            existing_demos = load_demonstrations()
+
+            # Create new demonstration from this successful run
+            new_demo = {
+                "result": f"Task '{context.get('task', '')[:50]}...' completed successfully",
+                "num_turns": result.get("run", 1),
+                "duration_ms": int(result.get("elapsed", 0) * 1000),
+                "total_cost_usd": 0.0,  # Would need to extract from result if available
+                "log_file": result.get("log_file", ""),
+                "efficiency_score": 1.0 - min(result.get("run", 1) / 20.0, 0.9),  # Lower runs = higher score
+                "quality_score": result.get("quality_score", 0.0),
+                "task_category": context.get("task", "")[:30],
+                "timestamp": datetime.now().isoformat()
+            }
+
+            # Add to demonstrations list
+            existing_demos.append(new_demo)
+
+            # Keep only top 20 demonstrations (sorted by efficiency)
+            existing_demos.sort(key=lambda x: x.get("efficiency_score", 0), reverse=True)
+            existing_demos = existing_demos[:20]
+
+            # Save updated demonstrations
+            save_demonstrations(existing_demos)
+            print(f"[Session {session_id}] Updated prompt_optimizer with new demonstration (efficiency={new_demo['efficiency_score']:.2f})")
+    except Exception as e:
+        print(f"[Session {session_id}] Warning: Could not update prompt_optimizer: {e}")
+
+
+def _update_skill_registry_online(session_id: int, result: dict, context: dict) -> None:
+    """Update skill_registry if new pattern detected in real-time."""
+    try:
+        from skills.skill_registry import register_skill, get_skill
+
+        # Only extract patterns from successful, high-quality runs
+        if result.get("returncode") == 0 and result.get("quality_score", 0) > 0.75:
+            task_lower = context.get("task", "").lower()
+
+            # Pattern detection: Look for specific task types that could become skills
+            skill_patterns = {
+                "refactor": ("code_refactoring", "Refactoring pattern for improving code structure"),
+                "fix": ("bug_fix_pattern", "Bug fixing pattern with verification"),
+                "add test": ("test_addition", "Test addition pattern with coverage"),
+                "documentation": ("doc_generation", "Documentation generation pattern"),
+                "optimization": ("performance_optimization", "Performance optimization pattern")
+            }
+
+            for keyword, (skill_name, skill_desc) in skill_patterns.items():
+                if keyword in task_lower:
+                    # Check if this skill already exists
+                    if not get_skill(skill_name):
+                        # Generate skill code from task context
+                        skill_code = f"""# Learned pattern: {skill_name}
+# Task: {context.get('task', '')[:100]}
+# Quality score: {result.get('quality_score', 0):.2f}
+# Success verified: {result.get('self_verified', False)}
+
+# Pattern extracted from session {session_id}, run {result.get('run', 0)}
+# This skill was learned online during execution
+"""
+                        register_skill(
+                            name=skill_name,
+                            code=skill_code,
+                            description=skill_desc,
+                            preconditions=["Task requires " + keyword],
+                            postconditions=["Task completed successfully", "Quality score > 0.75"]
+                        )
+                        print(f"[Session {session_id}] Registered new skill: {skill_name}")
+                        break
+    except Exception as e:
+        print(f"[Session {session_id}] Warning: Could not update skill_registry: {e}")
+
+
+def _log_learning_event(session_id: int, run_num: int, turn_count: int, lesson: dict) -> None:
+    """Log learning event to learning_log.json."""
+    try:
+        learning_log_file = WORKSPACE / "learning_log.json"
+
+        # Load existing log
+        if learning_log_file.exists():
+            try:
+                log_data = json.loads(learning_log_file.read_text())
+                if not isinstance(log_data, list):
+                    log_data = []
+            except (json.JSONDecodeError, ValueError):
+                log_data = []
+        else:
+            log_data = []
+
+        # Create learning event
+        learning_event = {
+            "event_id": f"learning_{session_id}_{run_num}_{turn_count}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "run_number": run_num,
+            "turn_count": turn_count,
+            "event_type": "online_learning_checkpoint",
+            "learnings_count": len(lesson.get("learnings", [])),
+            "lesson_id": lesson.get("id"),
+            "importance": lesson.get("importance", 4),
+            "context": lesson.get("context", {})
+        }
+
+        # Append event
+        log_data.append(learning_event)
+
+        # Keep only last 100 events
+        log_data = log_data[-100:]
+
+        # Write back
+        learning_log_file.write_text(json.dumps(log_data, indent=2), encoding="utf-8")
+        print(f"[Session {session_id}] Logged learning event to learning_log.json (total events: {len(log_data)})")
+    except Exception as e:
+        print(f"[Session {session_id}] Warning: Could not log learning event: {e}")
 
 
 def verify_grind_completion(session_id: int, run_num: int, output: str, returncode: int) -> dict:
@@ -1152,6 +1323,14 @@ def main():
 
     # Report error categorization statistics
     report_error_statistics()
+
+    # Post-wave analysis: Connect tracker to suggester
+    try:
+        wave_num = 1  # TODO: Track wave number properly
+        post_wave_result = post_wave_analysis(wave_num, workspace=WORKSPACE)
+        print(f"[OK] Post-wave analysis complete. Report: {post_wave_result['report_file']}")
+    except Exception as e:
+        print(f"[WARN] Post-wave analysis failed: {e}")
 
 
 if __name__ == "__main__":
