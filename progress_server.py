@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Live progress dashboard with real-time updates via Server-Sent Events.
-Only updates when files actually change - no arbitrary polling.
+Live progress dashboard with real-time Server-Sent Events.
+Simple, reliable, and actually works.
 
 Usage:
-    py progress_server.py --lan    # LAN accessible on port 8080
+    py progress_server.py          # Local only on port 8080
+    py progress_server.py --lan    # LAN accessible
 """
 
 import http.server
@@ -13,754 +14,456 @@ import argparse
 import json
 import threading
 import time
-import hashlib
 import os
 from pathlib import Path
 from datetime import datetime
-from queue import Queue
 
 PORT = 8080
 WORKSPACE = Path(__file__).parent
 
-# Global state for SSE
-update_queues = []
-last_state_hash = None
+# Global: list of SSE client queues and file modification times
+sse_clients = []
+sse_lock = threading.Lock()
+last_mtimes = {}
 
 
-def get_state_hash():
-    """Compute hash of all monitored files to detect changes."""
-    state = []
-
-    # Monitor these files/dirs for changes
-    monitors = [
-        WORKSPACE / "PROGRESS.md",
-        WORKSPACE / "learned_lessons.json",
-        WORKSPACE / "grind_logs",
+def get_file_mtimes():
+    """Get modification times of monitored files."""
+    files = [
         WORKSPACE / "wave_status.json",
         WORKSPACE / "SUMMARY.md",
+        WORKSPACE / "PROGRESS.md",
+        WORKSPACE / "learned_lessons.json",
     ]
-
-    for path in monitors:
-        if path.is_file():
-            try:
-                state.append(f"{path}:{path.stat().st_mtime}")
-            except:
-                pass
-        elif path.is_dir():
-            try:
-                for f in path.glob("*.json"):
-                    state.append(f"{f}:{f.stat().st_mtime}")
-            except:
-                pass
-
-    return hashlib.md5("|".join(state).encode()).hexdigest()
-
-
-def get_stats():
-    """Get current stats as JSON."""
-    logs_dir = WORKSPACE / "grind_logs"
-    log_count = len(list(logs_dir.glob("*.json"))) if logs_dir.exists() else 0
-
-    lessons_file = WORKSPACE / "learned_lessons.json"
-    lesson_count = 0
-    if lessons_file.exists():
+    mtimes = {}
+    for f in files:
         try:
-            data = json.loads(lessons_file.read_text(encoding='utf-8'))
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if isinstance(value, list):
-                        lesson_count += len(value)
-            elif isinstance(data, list):
-                lesson_count = len(data)
+            if f.exists():
+                mtimes[str(f)] = f.stat().st_mtime
         except:
             pass
-
-    py_files = list(WORKSPACE.glob("*.py")) + list(WORKSPACE.glob("**/*.py"))
-    py_count = len(set(py_files))
-
-    total_lines = 0
-    for py_file in set(py_files):
-        try:
-            total_lines += len(py_file.read_text(encoding='utf-8').splitlines())
-        except:
-            pass
-
-    return {
-        "sessions": log_count,
-        "lessons": lesson_count,
-        "files": py_count,
-        "lines": total_lines,
-        "timestamp": datetime.now().strftime('%H:%M:%S')
-    }
-
-
-def generate_roadmap_html():
-    """Generate roadmap HTML based on current wave status."""
-    # Define the full roadmap
-    roadmap = {
-        12: ("Production Hardening", "Retry logic, health checks, security"),
-        13: ("Tool Creation", "AI writes new tools for itself"),
-        14: ("Meta-Learning", "AI learns how to learn better"),
-        15: ("Multi-Task Parallel", "Work on multiple improvements simultaneously"),
-        16: ("Self-Curriculum", "AI designs its own training exercises"),
-        17: ("Emergent Behaviors", "Capabilities not explicitly programmed"),
-        18: ("External Integration", "Connect to external services"),
-        19: ("Autonomous Debugging", "Diagnose and fix own bugs"),
-        20: ("Full Autonomy", "Self-directed improvement"),
-    }
-
-    # Get current wave from wave_status.json
-    wave_file = WORKSPACE / "wave_status.json"
-    current_wave = 11
-    if wave_file.exists():
-        try:
-            data = json.loads(wave_file.read_text(encoding='utf-8'))
-            waves = data.get('waves', [])
-            done_waves = [w['num'] for w in waves if w.get('status') == 'done']
-            current_wave = max(done_waves) if done_waves else 0
-        except:
-            pass
-
-    # Show waves starting from current+1
-    future_start = current_wave + 1
-    html_parts = []
-
-    for wave_num in sorted(roadmap.keys()):
-        if wave_num >= future_start:
-            name, desc = roadmap[wave_num]
-            html_parts.append(f'''<div class="roadmap-item">
-                    <div class="roadmap-wave">Wave {wave_num}: {name}</div>
-                    <div class="roadmap-desc">{desc}</div>
-                </div>''')
-
-    return '\n                '.join(html_parts) if html_parts else '<div class="roadmap-item"><div class="roadmap-desc">Roadmap complete!</div></div>'
-
-
-def get_summary_content():
-    """Get SUMMARY.md content as HTML (human-friendly version)."""
-    summary_file = WORKSPACE / "SUMMARY.md"
-    if not summary_file.exists():
-        return None
-    return convert_md_to_html(summary_file.read_text(encoding='utf-8'))
-
-
-def convert_md_to_html(content):
-    """Convert markdown to HTML."""
-    import re
-    html = content
-    html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
-    html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    html = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', html, flags=re.DOTALL)
-    html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-
-    # Tables
-    lines = html.split('\n')
-    in_table = False
-    new_lines = []
-    for line in lines:
-        if '|' in line and '---' not in line:
-            if not in_table:
-                new_lines.append('<table>')
-                in_table = True
-            cells = [c.strip() for c in line.split('|')[1:-1]]
-            new_lines.append('<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>')
-        else:
-            if in_table and '---' not in line:
-                new_lines.append('</table>')
-                in_table = False
-            if '---' not in line:
-                new_lines.append(line)
-    if in_table:
-        new_lines.append('</table>')
-    html = '\n'.join(new_lines)
-    html = html.replace('\n\n', '<br><br>')
-    return html
-
-
-def get_progress_content():
-    """Get PROGRESS.md content as HTML."""
-    progress_file = WORKSPACE / "PROGRESS.md"
-    if not progress_file.exists():
-        return "<p>No PROGRESS.md found</p>"
-
-    content = progress_file.read_text(encoding='utf-8')
-
-    # Convert markdown to HTML
-    import re
-    html = content
-    html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
-    html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    html = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', html, flags=re.DOTALL)
-    html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-
-    # Tables
-    lines = html.split('\n')
-    in_table = False
-    new_lines = []
-    for line in lines:
-        if '|' in line and '---' not in line:
-            if not in_table:
-                new_lines.append('<table>')
-                in_table = True
-            cells = [c.strip() for c in line.split('|')[1:-1]]
-            new_lines.append('<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>')
-        else:
-            if in_table and '---' not in line:
-                new_lines.append('</table>')
-                in_table = False
-            if '---' not in line:
-                new_lines.append(line)
-    if in_table:
-        new_lines.append('</table>')
-    html = '\n'.join(new_lines)
-    html = html.replace('\n\n', '<br><br>')
-
-    return html
-
-
-def regenerate_summary():
-    """Regenerate SUMMARY.md from wave_status.json."""
-    try:
-        from summary_generator import update_summary
-        update_summary()
-    except Exception as e:
-        print(f"[DASHBOARD] Failed to regenerate SUMMARY.md: {e}")
-
-
-def file_watcher():
-    """Watch for file changes and notify SSE clients."""
-    global last_state_hash
-    last_state_hash = get_state_hash()
-    last_wave_mtime = 0
-
-    while True:
-        time.sleep(1)  # Check every second
-        current_hash = get_state_hash()
-
-        # Check if wave_status.json changed specifically - regenerate SUMMARY.md
-        wave_file = WORKSPACE / "wave_status.json"
-        if wave_file.exists():
-            try:
-                wave_mtime = wave_file.stat().st_mtime
-                if wave_mtime != last_wave_mtime:
-                    last_wave_mtime = wave_mtime
-                    regenerate_summary()
-            except:
-                pass
-
-        if current_hash != last_state_hash:
-            last_state_hash = current_hash
-            # Notify all connected clients
-            stats = get_stats()
-            content = get_progress_content()
-            data = json.dumps({"stats": stats, "content": content})
-
-            for q in update_queues[:]:
-                try:
-                    q.put(data)
-                except:
-                    pass
-
-
-def get_index_html():
-    """Return the main dashboard HTML with SSE support."""
-    stats = get_stats()
-    content = get_progress_content()
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Black Swarm Progress</title>
-    <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #0d1117;
-            color: #c9d1d9;
-        }}
-        h1 {{ color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 10px; }}
-        h2 {{ color: #7ee787; margin-top: 30px; }}
-        h3 {{ color: #d2a8ff; }}
-        table {{
-            border-collapse: collapse;
-            width: 100%;
-            margin: 15px 0;
-        }}
-        td, th {{
-            border: 1px solid #30363d;
-            padding: 8px 12px;
-            text-align: left;
-        }}
-        tr:nth-child(even) {{ background: #161b22; }}
-        tr:hover {{ background: #21262d; }}
-        code {{
-            background: #161b22;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Consolas', monospace;
-            color: #79c0ff;
-        }}
-        pre {{
-            background: #161b22;
-            padding: 15px;
-            border-radius: 6px;
-            overflow-x: auto;
-        }}
-        pre code {{ padding: 0; background: none; }}
-        .stats {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
-            margin: 20px 0;
-        }}
-        .stat-box {{
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 15px;
-            text-align: center;
-            transition: all 0.3s ease;
-        }}
-        .stat-box.updated {{
-            border-color: #238636;
-            box-shadow: 0 0 10px rgba(35, 134, 54, 0.5);
-        }}
-        .stat-value {{
-            font-size: 2em;
-            font-weight: bold;
-            color: #58a6ff;
-        }}
-        .stat-label {{ color: #8b949e; font-size: 0.9em; }}
-        .status {{
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 0.8em;
-        }}
-        .status.connected {{ background: #238636; color: white; }}
-        .status.disconnected {{ background: #da3633; color: white; }}
-        strong {{ color: #ffa657; }}
-        #content {{ transition: opacity 0.2s; }}
-        #timestamp {{ color: #8b949e; font-size: 0.9em; }}
-    </style>
-</head>
-<body>
-    <div class="status connected" id="status">Live</div>
-    <div style="position:fixed;top:10px;left:10px;"><a href="/dad" style="background:#238636;color:white;padding:5px 10px;text-decoration:none;border-radius:4px;">Simple View</a></div>
-
-    <div class="stats">
-        <div class="stat-box" id="stat-sessions">
-            <div class="stat-value" id="val-sessions">{stats['sessions']}</div>
-            <div class="stat-label">Grind Sessions</div>
-        </div>
-        <div class="stat-box" id="stat-lessons">
-            <div class="stat-value" id="val-lessons">{stats['lessons']}</div>
-            <div class="stat-label">Lessons Learned</div>
-        </div>
-        <div class="stat-box" id="stat-files">
-            <div class="stat-value" id="val-files">{stats['files']}</div>
-            <div class="stat-label">Python Files</div>
-        </div>
-        <div class="stat-box" id="stat-lines">
-            <div class="stat-value" id="val-lines">{stats['lines']:,}</div>
-            <div class="stat-label">Lines of Code</div>
-        </div>
-    </div>
-
-    <p id="timestamp">Last updated: {stats['timestamp']}</p>
-
-    <div id="content">{content}</div>
-
-    <script>
-        const evtSource = new EventSource('/events');
-
-        evtSource.onmessage = function(event) {{
-            const data = JSON.parse(event.data);
-
-            // Update stats with animation
-            ['sessions', 'lessons', 'files', 'lines'].forEach(key => {{
-                const el = document.getElementById('val-' + key);
-                const box = document.getElementById('stat-' + key);
-                const newVal = key === 'lines' ? data.stats[key].toLocaleString() : data.stats[key];
-                if (el.textContent !== String(newVal)) {{
-                    el.textContent = newVal;
-                    box.classList.add('updated');
-                    setTimeout(() => box.classList.remove('updated'), 1000);
-                }}
-            }});
-
-            // Update content
-            document.getElementById('content').innerHTML = data.content;
-            document.getElementById('timestamp').textContent = 'Last updated: ' + data.stats.timestamp;
-        }};
-
-        evtSource.onopen = function() {{
-            document.getElementById('status').className = 'status connected';
-            document.getElementById('status').textContent = 'Live';
-        }};
-
-        evtSource.onerror = function() {{
-            document.getElementById('status').className = 'status disconnected';
-            document.getElementById('status').textContent = 'Reconnecting...';
-        }};
-    </script>
-</body>
-</html>"""
+    return mtimes
 
 
 def load_wave_status():
-    """Load wave status from JSON file."""
+    """Load wave status from JSON."""
     wave_file = WORKSPACE / "wave_status.json"
     if wave_file.exists():
         try:
             return json.loads(wave_file.read_text(encoding='utf-8'))
         except:
             pass
-    # Fallback to default
     return {"waves": [], "current_activity": {"title": "Loading...", "workers": []}}
 
 
-def get_summary_html():
-    """Return the human-friendly summary page with visual wave tracker."""
-    stats = get_stats()
-    summary = get_summary_content() or "<p>Loading summary...</p>"
+def get_stats():
+    """Get basic stats."""
+    logs_dir = WORKSPACE / "grind_logs"
+    sessions = len(list(logs_dir.glob("*.json"))) if logs_dir.exists() else 0
 
-    # Load wave data from JSON file (auto-refreshes when file changes)
+    lessons = 0
+    lessons_file = WORKSPACE / "learned_lessons.json"
+    if lessons_file.exists():
+        try:
+            data = json.loads(lessons_file.read_text(encoding='utf-8'))
+            if isinstance(data, dict):
+                for v in data.values():
+                    if isinstance(v, list):
+                        lessons += len(v)
+            elif isinstance(data, list):
+                lessons = len(data)
+        except:
+            pass
+
+    py_files = set(WORKSPACE.glob("*.py")) | set(WORKSPACE.glob("**/*.py"))
+    files = len(py_files)
+    lines = sum(len(f.read_text(encoding='utf-8', errors='ignore').splitlines()) for f in py_files if f.exists())
+
+    return {"sessions": sessions, "lessons": lessons, "files": files, "lines": lines}
+
+
+def get_dashboard_data():
+    """Get all data needed for dashboard as JSON."""
     wave_data = load_wave_status()
-    waves = wave_data.get("waves", [])
-    current_activity = wave_data.get("current_activity", {"title": "Loading...", "workers": []})
+    stats = get_stats()
+    return {
+        "waves": wave_data.get("waves", []),
+        "current_activity": wave_data.get("current_activity", {}),
+        "stats": stats,
+        "timestamp": datetime.now().strftime('%H:%M:%S')
+    }
 
+
+def broadcast_update():
+    """Send update to all SSE clients."""
+    data = json.dumps(get_dashboard_data())
+    message = f"data: {data}\n\n"
+
+    with sse_lock:
+        dead_clients = []
+        for client in sse_clients:
+            try:
+                client['wfile'].write(message.encode('utf-8'))
+                client['wfile'].flush()
+            except:
+                dead_clients.append(client)
+        for c in dead_clients:
+            sse_clients.remove(c)
+
+
+def file_watcher():
+    """Watch files and broadcast on changes."""
+    global last_mtimes
+    last_mtimes = get_file_mtimes()
+
+    while True:
+        time.sleep(1)
+        current = get_file_mtimes()
+        if current != last_mtimes:
+            last_mtimes = current
+            broadcast_update()
+
+
+def get_dashboard_html():
+    """Single-page dashboard with SSE auto-refresh."""
+    data = get_dashboard_data()
+    waves = data["waves"]
+    activity = data["current_activity"]
+    stats = data["stats"]
+
+    # Build wave tracker HTML
     wave_html = ""
     for w in waves:
-        if w["status"] == "done":
-            cls = "wave-done"
-            icon = "&#10003;"  # checkmark
-        elif w["status"] == "running":
-            cls = "wave-running"
-            icon = "&#9881;"  # gear
+        status = w.get("status", "planned")
+        if status == "done":
+            cls, icon = "done", "✓"
+        elif status == "running":
+            cls, icon = "running", "⚡"
         else:
-            cls = "wave-planned"
-            icon = "&#8226;"  # bullet
+            cls, icon = "planned", "○"
 
         wave_html += f'''<div class="wave {cls}">
-            <div class="wave-icon">{icon}</div>
-            <div class="wave-num">Wave {w["num"]}</div>
-            <div class="wave-name">{w["name"]}</div>
-            {f'<div class="wave-workers">{w["workers"]} workers</div>' if w["workers"] > 0 else ""}
+            <span class="icon">{icon}</span>
+            <span class="num">Wave {w["num"]}</span>
+            <span class="name">{w["name"]}</span>
         </div>'''
 
-    return f"""<!DOCTYPE html>
+    # Build workers HTML
+    workers_html = ""
+    for w in activity.get("workers", []):
+        workers_html += f'''<div class="worker">
+            <div class="type">{w.get("type", "Worker")}</div>
+            <div class="task">{w.get("task", "Working...")}</div>
+        </div>'''
+
+    return f'''<!DOCTYPE html>
 <html>
 <head>
-    <title>AI Self-Improvement - Live Progress</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Progress Dashboard</title>
     <style>
-        * {{ box-sizing: border-box; }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
             min-height: 100vh;
+            padding: 20px;
         }}
-        .container {{ max-width: 1200px; margin: 0 auto; }}
+        .container {{ max-width: 900px; margin: 0 auto; }}
 
-        h1 {{
-            color: #58a6ff;
+        header {{
             text-align: center;
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 0 0 20px rgba(88, 166, 255, 0.3);
-        }}
-        .subtitle {{
-            text-align: center;
-            color: #7ee787;
-            font-size: 1.2em;
             margin-bottom: 30px;
         }}
+        h1 {{
+            color: #58a6ff;
+            font-size: 1.8em;
+            margin-bottom: 5px;
+        }}
+        .subtitle {{ color: #7ee787; font-size: 1em; }}
 
-        /* Big Stats */
-        .big-stats {{
+        .status-badge {{
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }}
+        .status-badge.live {{ background: #238636; color: white; }}
+        .status-badge.offline {{ background: #da3633; color: white; }}
+
+        .stats {{
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
-            margin: 30px 0;
+            gap: 12px;
+            margin-bottom: 25px;
         }}
-        .big-stat {{
-            background: rgba(22, 27, 34, 0.8);
-            border: 2px solid #30363d;
-            border-radius: 15px;
-            padding: 20px;
+        @media (max-width: 600px) {{
+            .stats {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+        .stat {{
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 15px;
             text-align: center;
-            transition: all 0.3s ease;
         }}
-        .big-stat:hover {{
-            border-color: #58a6ff;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(88, 166, 255, 0.2);
-        }}
-        .big-stat .value {{
-            font-size: 2.5em;
+        .stat .value {{
+            font-size: 2em;
             font-weight: bold;
             color: #58a6ff;
-            text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
         }}
-        .big-stat .label {{ color: #8b949e; font-size: 0.95em; margin-top: 5px; }}
+        .stat .label {{
+            color: #8b949e;
+            font-size: 0.85em;
+            margin-top: 4px;
+        }}
 
-        /* Wave Tracker */
-        .wave-section {{
-            background: rgba(22, 27, 34, 0.6);
-            border-radius: 20px;
-            padding: 25px;
-            margin: 30px 0;
+        .section {{
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
         }}
         .section-title {{
             color: #7ee787;
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            font-size: 1.1em;
+            margin-bottom: 15px;
         }}
+
         .wave-tracker {{
             display: flex;
-            gap: 10px;
+            gap: 8px;
             overflow-x: auto;
-            padding: 10px 0;
+            padding: 5px 0;
         }}
         .wave {{
-            min-width: 100px;
-            padding: 15px;
-            border-radius: 10px;
+            flex-shrink: 0;
+            padding: 10px 14px;
+            border-radius: 8px;
             text-align: center;
-            transition: all 0.3s ease;
+            font-size: 0.85em;
         }}
-        .wave-done {{
-            background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+        .wave.done {{
+            background: linear-gradient(135deg, #238636, #2ea043);
             color: white;
         }}
-        .wave-running {{
-            background: linear-gradient(135deg, #1f6feb 0%, #58a6ff 100%);
+        .wave.running {{
+            background: linear-gradient(135deg, #1f6feb, #58a6ff);
             color: white;
             animation: pulse 2s infinite;
         }}
-        .wave-planned {{
-            background: rgba(48, 54, 61, 0.5);
-            border: 1px dashed #30363d;
+        .wave.planned {{
+            background: #21262d;
             color: #8b949e;
+            border: 1px dashed #30363d;
         }}
         @keyframes pulse {{
-            0%, 100% {{ box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.4); }}
-            50% {{ box-shadow: 0 0 20px 10px rgba(88, 166, 255, 0.2); }}
+            0%, 100% {{ box-shadow: 0 0 0 0 rgba(88,166,255,0.4); }}
+            50% {{ box-shadow: 0 0 15px 5px rgba(88,166,255,0.2); }}
         }}
-        .wave-icon {{ font-size: 1.5em; margin-bottom: 5px; }}
-        .wave-num {{ font-weight: bold; font-size: 0.9em; }}
-        .wave-name {{ font-size: 0.8em; margin-top: 5px; }}
-        .wave-workers {{ font-size: 0.7em; opacity: 0.8; margin-top: 3px; }}
+        .wave .icon {{ margin-right: 4px; }}
+        .wave .name {{ display: block; font-size: 0.8em; margin-top: 3px; opacity: 0.9; }}
 
-        /* Current Activity */
-        .activity-box {{
+        .activity {{
             background: rgba(31, 111, 235, 0.1);
-            border: 2px solid #1f6feb;
-            border-radius: 15px;
+            border: 1px solid #1f6feb;
+            border-radius: 12px;
             padding: 20px;
-            margin: 20px 0;
+            margin-bottom: 20px;
         }}
         .activity-title {{
             color: #58a6ff;
-            font-size: 1.3em;
-            margin-bottom: 15px;
+            font-size: 1.1em;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
         }}
         .activity-title::before {{
             content: '';
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             background: #58a6ff;
             border-radius: 50%;
             animation: blink 1s infinite;
         }}
         @keyframes blink {{
-            0%, 100% {{ opacity: 1; }}
             50% {{ opacity: 0.3; }}
         }}
-        .workers-grid {{
+        .workers {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
+            gap: 10px;
         }}
         .worker {{
-            background: rgba(22, 27, 34, 0.8);
-            border-radius: 8px;
+            background: #0d1117;
             padding: 12px;
-        }}
-        .worker-type {{ color: #d2a8ff; font-weight: bold; margin-bottom: 5px; }}
-        .worker-task {{ color: #c9d1d9; font-size: 0.9em; }}
-
-        /* Roadmap */
-        .roadmap {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }}
-        .roadmap-item {{
-            background: rgba(22, 27, 34, 0.5);
-            border-left: 3px solid #30363d;
-            padding: 12px;
-            transition: all 0.3s ease;
-        }}
-        .roadmap-item:hover {{
-            border-left-color: #7ee787;
-            background: rgba(35, 134, 54, 0.1);
-        }}
-        .roadmap-wave {{ color: #7ee787; font-weight: bold; }}
-        .roadmap-desc {{ color: #8b949e; font-size: 0.85em; margin-top: 5px; }}
-
-        /* Summary content */
-        .summary-content {{
-            margin-top: 30px;
-            line-height: 1.8;
-        }}
-        .summary-content h1 {{ font-size: 2em; }}
-        .summary-content h2 {{ color: #7ee787; margin-top: 30px; font-size: 1.5em; }}
-        .summary-content h3 {{ color: #d2a8ff; font-size: 1.2em; }}
-        .summary-content table {{
-            border-collapse: collapse;
-            width: 100%;
-            margin: 15px 0;
-            background: rgba(22, 27, 34, 0.5);
             border-radius: 8px;
-            overflow: hidden;
         }}
-        .summary-content td {{
-            border: 1px solid #30363d;
-            padding: 10px 15px;
+        .worker .type {{
+            color: #d2a8ff;
+            font-weight: 600;
+            margin-bottom: 4px;
         }}
-        .summary-content tr:first-child {{ background: rgba(35, 134, 54, 0.2); }}
-        .summary-content strong {{ color: #ffa657; }}
+        .worker .task {{
+            color: #8b949e;
+            font-size: 0.9em;
+        }}
 
-        .nav {{ position: fixed; top: 15px; right: 15px; }}
-        .nav a {{
-            background: rgba(35, 134, 54, 0.8);
-            color: white;
-            padding: 10px 20px;
-            text-decoration: none;
-            border-radius: 8px;
-            transition: all 0.3s ease;
+        .timestamp {{
+            text-align: center;
+            color: #484f58;
+            font-size: 0.8em;
+            margin-top: 20px;
         }}
-        .nav a:hover {{ background: #2ea043; }}
     </style>
-    <meta http-equiv="refresh" content="5">
 </head>
 <body>
-    <div class="nav"><a href="/">Technical View</a></div>
+    <div class="status-badge live" id="status">● Live</div>
 
     <div class="container">
-        <h1>AI Self-Improvement in Progress</h1>
-        <div class="subtitle">An AI is teaching itself to become smarter by reading research papers</div>
+        <header>
+            <h1>AI Self-Improvement</h1>
+            <div class="subtitle">Autonomous learning in progress</div>
+        </header>
 
-        <div class="big-stats">
-            <div class="big-stat">
-                <div class="value">{stats['sessions']}</div>
-                <div class="label">Work Sessions</div>
-            </div>
-            <div class="big-stat">
-                <div class="value">{stats['lessons']}</div>
-                <div class="label">Things Learned</div>
-            </div>
-            <div class="big-stat">
-                <div class="value">{stats['files']}</div>
-                <div class="label">Files Created</div>
-            </div>
-            <div class="big-stat">
-                <div class="value">{stats['lines']:,}</div>
-                <div class="label">Lines of Code</div>
-            </div>
+        <div class="stats" id="stats">
+            <div class="stat"><div class="value" id="stat-sessions">{stats['sessions']}</div><div class="label">Sessions</div></div>
+            <div class="stat"><div class="value" id="stat-lessons">{stats['lessons']}</div><div class="label">Lessons</div></div>
+            <div class="stat"><div class="value" id="stat-files">{stats['files']}</div><div class="label">Files</div></div>
+            <div class="stat"><div class="value" id="stat-lines">{stats['lines']:,}</div><div class="label">Lines</div></div>
         </div>
 
-        <div class="wave-section">
+        <div class="section">
             <div class="section-title">Wave Progress</div>
-            <div class="wave-tracker">
-                {wave_html}
-            </div>
+            <div class="wave-tracker" id="waves">{wave_html}</div>
         </div>
 
-        <div class="activity-box">
-            <div class="activity-title">Currently Running - {current_activity.get('title', 'Unknown')}</div>
-            <div class="workers-grid">
-                {''.join(f'''<div class="worker">
-                    <div class="worker-type">{w.get('type', 'Worker')}</div>
-                    <div class="worker-task">{w.get('task', 'Processing...')}</div>
-                </div>''' for w in current_activity.get('workers', []))}
-            </div>
+        <div class="activity" id="activity">
+            <div class="activity-title" id="activity-title">{activity.get('title', 'Idle')}</div>
+            <div class="workers" id="workers">{workers_html if workers_html else '<div class="worker"><div class="task">No active workers</div></div>'}</div>
         </div>
 
-        <div class="wave-section">
-            <div class="section-title">Future Roadmap</div>
-            <div class="roadmap">
-                {generate_roadmap_html()}
-            </div>
-        </div>
-
-        <div class="summary-content">
-            {summary}
-        </div>
+        <div class="timestamp" id="timestamp">Updated: {data['timestamp']}</div>
     </div>
+
+    <script>
+        function updateDashboard(data) {{
+            // Update stats
+            document.getElementById('stat-sessions').textContent = data.stats.sessions;
+            document.getElementById('stat-lessons').textContent = data.stats.lessons;
+            document.getElementById('stat-files').textContent = data.stats.files;
+            document.getElementById('stat-lines').textContent = data.stats.lines.toLocaleString();
+
+            // Update waves
+            let wavesHtml = '';
+            data.waves.forEach(w => {{
+                let cls = w.status === 'done' ? 'done' : (w.status === 'running' ? 'running' : 'planned');
+                let icon = w.status === 'done' ? '✓' : (w.status === 'running' ? '⚡' : '○');
+                wavesHtml += `<div class="wave ${{cls}}"><span class="icon">${{icon}}</span><span class="num">Wave ${{w.num}}</span><span class="name">${{w.name}}</span></div>`;
+            }});
+            document.getElementById('waves').innerHTML = wavesHtml;
+
+            // Update activity
+            document.getElementById('activity-title').innerHTML = data.current_activity.title || 'Idle';
+            let workersHtml = '';
+            (data.current_activity.workers || []).forEach(w => {{
+                workersHtml += `<div class="worker"><div class="type">${{w.type || 'Worker'}}</div><div class="task">${{w.task || 'Working...'}}</div></div>`;
+            }});
+            document.getElementById('workers').innerHTML = workersHtml || '<div class="worker"><div class="task">No active workers</div></div>';
+
+            // Update timestamp
+            document.getElementById('timestamp').textContent = 'Updated: ' + data.timestamp;
+        }}
+
+        function connect() {{
+            const status = document.getElementById('status');
+            const es = new EventSource('/events');
+
+            es.onopen = () => {{
+                status.className = 'status-badge live';
+                status.textContent = '● Live';
+            }};
+
+            es.onmessage = (e) => {{
+                try {{
+                    updateDashboard(JSON.parse(e.data));
+                }} catch(err) {{
+                    console.error('Parse error:', err);
+                }}
+            }};
+
+            es.onerror = () => {{
+                status.className = 'status-badge offline';
+                status.textContent = '● Reconnecting...';
+                es.close();
+                setTimeout(connect, 3000);
+            }};
+        }}
+
+        connect();
+    </script>
 </body>
-</html>"""
+</html>'''
 
 
-class ProgressHandler(http.server.BaseHTTPRequestHandler):
+class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/' or self.path == '/index.html':
+        if self.path in ('/', '/index.html', '/dad', '/summary'):
             self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(get_index_html().encode('utf-8'))
-
-        elif self.path == '/summary' or self.path == '/dad':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(get_summary_html().encode('utf-8'))
+            self.wfile.write(get_dashboard_html().encode('utf-8'))
 
         elif self.path == '/events':
             self.send_response(200)
-            self.send_header('Content-type', 'text/event-stream')
+            self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'keep-alive')
-            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
 
-            q = Queue()
-            update_queues.append(q)
+            client = {'wfile': self.wfile}
+            with sse_lock:
+                sse_clients.append(client)
 
+            # Send initial data
             try:
+                data = json.dumps(get_dashboard_data())
+                self.wfile.write(f"data: {data}\n\n".encode('utf-8'))
+                self.wfile.flush()
+
+                # Keep connection alive
                 while True:
-                    data = q.get()
-                    self.wfile.write(f"data: {data}\n\n".encode('utf-8'))
+                    time.sleep(30)
+                    self.wfile.write(": keepalive\n\n".encode('utf-8'))
                     self.wfile.flush()
             except:
                 pass
             finally:
-                if q in update_queues:
-                    update_queues.remove(q)
+                with sse_lock:
+                    if client in sse_clients:
+                        sse_clients.remove(client)
+
+        elif self.path == '/api/status':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(get_dashboard_data()).encode('utf-8'))
+
         else:
             self.send_error(404)
 
     def log_message(self, format, *args):
-        pass
+        pass  # Suppress logs
+
+
+class ThreadedServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
 
 
 def get_local_ip():
@@ -775,32 +478,24 @@ def get_local_ip():
         return "localhost"
 
 
-class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    allow_reuse_address = True
-
-
 def main():
     parser = argparse.ArgumentParser(description="Live progress dashboard")
-    parser.add_argument("--port", type=int, default=8080, help="Port to serve on")
-    parser.add_argument("--lan", action="store_true", help="Make accessible on LAN")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--lan", action="store_true", help="LAN accessible")
     args = parser.parse_args()
 
-    # Start file watcher thread
-    watcher = threading.Thread(target=file_watcher, daemon=True)
-    watcher.start()
+    # Start file watcher
+    threading.Thread(target=file_watcher, daemon=True).start()
 
     host = "0.0.0.0" if args.lan else ""
-    local_ip = get_local_ip()
 
-    with ThreadedTCPServer((host, args.port), ProgressHandler) as httpd:
-        print(f"Progress dashboard running!")
-        print(f"  Local:   http://localhost:{args.port}")
+    with ThreadedServer((host, args.port), Handler) as server:
+        print(f"Dashboard: http://localhost:{args.port}")
         if args.lan:
-            print(f"  Network: http://{local_ip}:{args.port}")
-        print(f"\nUpdates push instantly when files change - no polling!")
-        print("Press Ctrl+C to stop")
+            print(f"LAN:       http://{get_local_ip()}:{args.port}")
+        print("Live updates enabled. Ctrl+C to stop.")
         try:
-            httpd.serve_forever()
+            server.serve_forever()
         except KeyboardInterrupt:
             print("\nStopped.")
 
