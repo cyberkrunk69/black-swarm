@@ -31,6 +31,7 @@ class ContextBuilder:
 
     Usage:
         builder = ContextBuilder()
+        builder.add_founding_memory()  # Identity and values foundation
         builder.add_skills(query="implement tests", top_k=3)
         builder.add_lessons(query="error handling", top_k=3)
         builder.add_kg_context(query="DSPy optimization", depth=2)
@@ -45,6 +46,7 @@ class ContextBuilder:
         self.memory_synth = MemorySynthesis(lessons_file=str(self.workspace / "learned_lessons.json"))
 
         # Context components
+        self.founding_memory = None  # Identity seed - loaded first
         self.skills_context = []
         self.lessons_context = []
         self.kg_context = []
@@ -52,6 +54,25 @@ class ContextBuilder:
 
         # UI/UX knowledge loader (lazy init)
         self._uiux_loader = None
+
+    def add_founding_memory(self) -> 'ContextBuilder':
+        """
+        Load the founding memory - identity seeds and core principles.
+
+        This should be called first to establish foundational context
+        that structures all subsequent learning and behavior.
+
+        Returns:
+            Self for method chaining
+        """
+        founding_file = self.workspace / "founding_memory.md"
+        if founding_file.exists():
+            try:
+                self.founding_memory = founding_file.read_text(encoding='utf-8')
+            except Exception as e:
+                print(f"[CONTEXT] Warning: Could not load founding memory: {e}")
+                self.founding_memory = None
+        return self
 
     def add_skills(self, query: str, top_k: int = 3, log_expansion: bool = False) -> 'ContextBuilder':
         """
@@ -182,6 +203,18 @@ class ContextBuilder:
         """
         sections = []
 
+        # Founding memory section (FIRST - structures everything else)
+        if self.founding_memory:
+            founding_section = "============================================================\n"
+            founding_section += "FOUNDING MEMORY - IDENTITY & VALUES SEED\n"
+            founding_section += "============================================================\n\n"
+            founding_section += self.founding_memory
+            founding_section += "\n\n============================================================\n"
+            sections.append(founding_section)
+
+            if log_injection:
+                print("[CONTEXT] Injected founding memory (identity seed)")
+
         # Skills section
         if self.skills_context:
             skills_section = "============================================================\n"
@@ -258,6 +291,7 @@ class ContextBuilder:
                 print(f"[CONTEXT] Injected {len(self.uiux_context)} UI/UX docs: {', '.join(titles)}")
 
         # Clear stored context after building
+        self.founding_memory = None
         self.skills_context = []
         self.lessons_context = []
         self.kg_context = []
@@ -271,6 +305,7 @@ class ContextBuilder:
         Returns:
             Self for method chaining
         """
+        self.founding_memory = None
         self.skills_context = []
         self.lessons_context = []
         self.kg_context = []
@@ -286,6 +321,7 @@ class ContextBuilder:
 def build_context(
     query: str,
     workspace: str = ".",
+    include_founding_memory: bool = True,
     include_skills: bool = True,
     include_lessons: bool = True,
     include_kg: bool = True,
@@ -298,6 +334,7 @@ def build_context(
     Args:
         query: Task description for retrieval
         workspace: Workspace directory path (default: current dir)
+        include_founding_memory: Whether to include identity seed (default: True)
         include_skills: Whether to include skill retrieval (default: True)
         include_lessons: Whether to include lesson retrieval (default: True)
         include_kg: Whether to include KG context (default: True)
@@ -308,6 +345,10 @@ def build_context(
         Formatted context string
     """
     builder = ContextBuilder(workspace)
+
+    # Founding memory first - structures everything else
+    if include_founding_memory:
+        builder.add_founding_memory()
 
     if include_skills:
         builder.add_skills(query, top_k=top_k)
