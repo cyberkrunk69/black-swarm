@@ -1,0 +1,3 @@
+Deleted: X
+Kept: Y
+Bytes freed: Z

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# -------------------------------------------------
+# Pre‑commit hook: run the full pytest suite.
+# -------------------------------------------------
+echo "Running pytest before commit..."
+pytest --quiet
+RESULT=$?
+if [ $RESULT -ne 0 ]; then
+  echo "Tests failed – commit aborted."
+  exit 1
+fi
+exit 0

@@ -1,0 +1,9 @@
+{
+  "example_task": {
+    "tool_name": "example_tool",
+    "code": "def example_tool(*args, **kwargs):\n    return \"example result\"\n",
+    "metadata": {
+      "description": "placeholder example"
+    }
+  }
+}

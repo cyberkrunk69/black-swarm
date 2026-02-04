@@ -1,0 +1,9 @@
+{
+  "greet_tool": {
+    "code": "\n\ndef hello(name: str) -> str:\n    return f\"Hello, {name}!\"\n",
+    "metadata": {
+      "description": "Say hello to a user",
+      "version": "1.0"
+    }
+  }
+}

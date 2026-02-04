@@ -16,3 +16,9 @@ aiofiles>=23.0.0
 
 # Note: requests, httpx, urllib3 are NOT included
 # All network calls go through groq_client.py which only talks to Groq API
+
+# Dashboard dependencies
+flask>=2.3.0
+flask-socketio>=5.3.0
+python-engineio>=4.0.0
+python-socketio>=5.0.0

@@ -1,0 +1,4 @@
+# Added for benchmark suite
+fastapi
+uvicorn
+sse-starlette
