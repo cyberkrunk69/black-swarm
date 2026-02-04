@@ -7,20 +7,38 @@ Provides a single interface for the swarm to use either backend:
 
 Usage:
     from inference_engine import get_engine, EngineType
-
-    # Auto-detect based on environment
-    engine = get_engine()
-
-    # Or explicitly choose
-    engine = get_engine(EngineType.CLAUDE)
-    engine = get_engine(EngineType.GROQ)
-
-    # Execute
-    result = engine.execute(prompt="Fix this bug", model="sonnet")
 """
+
+# ----------------------------------------------------------------------
+# Complexity estimation utilities
+# ----------------------------------------------------------------------
+COMPLEXITY_THRESHOLDS = {
+    "low": 0,
+    "medium": 300,   # approx. token count
+    "high": 800,
+}
+MODEL_SELECTION = {
+    "low": "gpt-3.5-turbo",
+    "medium": "gpt-4o-mini",
+    "high": "gpt-4o",
+}
+
+def estimate_complexity(request: dict) -> str:
+    prompt = request.get("prompt", "")
+    token_count = len(prompt.split())
+    code_bonus = sum(1 for marker in ["```", "<code>", "</code>"] if marker in prompt) * 100
+    steps_bonus = len(request.get("steps", [])) * 50 if isinstance(request.get("steps"), list) else 0
+    score = token_count + code_bonus + steps_bonus
+    if score >= COMPLEXITY_THRESHOLDS["high"]:
+        return "high"
+    elif score >= COMPLEXITY_THRESHOLDS["medium"]:
+        return "medium"
+    return "low"
+
 
 import os
 import json
+import self_observer
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -337,16 +355,19 @@ class GroqEngine(InferenceEngine):
         model: str = None,
         workspace: Path = None,
         max_tokens: int = 4096,
-        timeout: int = 600
+        timeout: int = 600,
+        session_id: int = 0,
+        on_activity: callable = None
     ) -> InferenceResult:
         """Execute via Groq API."""
         start_time = datetime.now()
 
         # Resolve model alias
+        # DEFAULT: groq/compound auto-selects based on complexity
         if model and model.lower() in self._aliases:
             model = self._aliases[model.lower()]
         elif model is None:
-            model = "llama-3.3-70b-versatile"
+            model = "groq/compound"  # Let Groq auto-select based on complexity
 
         try:
             result = self._engine.execute(
@@ -358,10 +379,10 @@ class GroqEngine(InferenceEngine):
             duration = (datetime.now() - start_time).total_seconds()
 
             return InferenceResult(
-                success=result.get("success", False),
-                output=result.get("response", ""),
+                success=result.get("returncode", 1) == 0,
+                output=result.get("result", ""),
                 model=model,
-                cost_usd=result.get("cost_usd", 0.0),
+                cost_usd=result.get("total_cost_usd", result.get("cost", 0.0)),
                 tokens_input=result.get("input_tokens", 0),
                 tokens_output=result.get("output_tokens", 0),
                 duration_seconds=duration,
@@ -395,6 +416,8 @@ class GroqEngine(InferenceEngine):
     def get_available_models(self) -> Dict[str, str]:
         """Get available models."""
         return {
+            "groq/compound": "Groq Compound - AUTO-SELECTS model based on complexity (RECOMMENDED)",
+            "groq/compound-mini": "Groq Compound Mini - Fast auto-select, 3x lower latency",
             "llama-3.1-8b-instant": "Llama 8B - Ultra fast, very cheap ($0.05/$0.08 per 1M)",
             "llama-3.3-70b-versatile": "Llama 70B - Smart, still cheap ($0.59/$0.79 per 1M)",
         }
@@ -422,28 +445,11 @@ def get_engine(engine_type: EngineType = EngineType.AUTO) -> InferenceEngine:
     """
     global _claude_engine, _groq_engine
 
-    if engine_type == EngineType.AUTO:
-        # Check environment variable first
-        env_engine = os.environ.get("INFERENCE_ENGINE", "").lower()
-        if env_engine == "groq":
-            engine_type = EngineType.GROQ
-        elif env_engine == "claude":
-            engine_type = EngineType.CLAUDE
-        elif os.environ.get("GROQ_API_KEY"):
-            # Groq key present, use Groq
-            engine_type = EngineType.GROQ
-        else:
-            # Default to Claude
-            engine_type = EngineType.CLAUDE
-
-    if engine_type == EngineType.CLAUDE:
-        if _claude_engine is None:
-            _claude_engine = ClaudeEngine()
-        return _claude_engine
-    else:
-        if _groq_engine is None:
-            _groq_engine = GroqEngine()
-        return _groq_engine
+    # Claude support removed - always use Groq
+    # Groq Compound handles complexity-based model selection internally
+    if _groq_engine is None:
+        _groq_engine = GroqEngine()
+    return _groq_engine
 
 
 def get_engine_type_from_env() -> EngineType:
@@ -464,3 +470,45 @@ if __name__ == "__main__":
     print(f"Engine type: {type(engine).__name__}")
     print(f"Available models: {engine.get_available_models()}")
     print(f"Stats: {engine.get_stats()}")
+# ------------------------------------------------------------
+# Complexity estimation utilities
+# ------------------------------------------------------------
+import re
+from typing import List
+
+# Simple keyword list that usually indicates higher reasoning / coding demand
+_COMPLEXITY_KEYWORDS: List[str] = [
+    "algorithm", "optimize", "refactor", "benchmark", "scale", "performance",
+    "thread", "process", "async", "concurrency", "distributed", "pipeline",
+    "SQL", "database", "API", "authentication", "encryption", "Docker",
+    "Kubernetes", "microservice", "cache", "index", "migration"
+]
+
+def _token_count(text: str) -> int:
+    """
+    Approximate token count using whitespace split.
+    For production you may replace this with a tokenizer from the LLM SDK.
+    """
+    return len(text.split())
+
+def estimate_complexity(request: str) -> int:
+    """
+    Return a numeric complexity score.
+    Higher scores → more demanding request.
+
+    Scoring factors (simple additive model):
+      * Base score = token count // 10
+      * +2 for each recognized complexity keyword present
+      * +5 if request length > 800 characters (likely multi‑step)
+    """
+    score = _token_count(request) // 10
+
+    lowered = request.lower()
+    for kw in _COMPLEXITY_KEYWORDS:
+        if re.search(r'\b' + re.escape(kw.lower()) + r'\b', lowered):
+            score += 2
+
+    if len(request) > 800:
+        score += 5
+
+    return score
