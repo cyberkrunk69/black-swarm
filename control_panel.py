@@ -610,9 +610,8 @@ CONTROL_PANEL_HTML = '''
                                    font-size: 0.85rem; cursor: pointer;">
                         <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Default)</option>
                         <option value="llama-3.1-70b-versatile">Llama 3.1 70B</option>
-                        <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast)</option>
-                        <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
-                        <option value="gemma2-9b-it">Gemma2 9B</option>
+                        <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast/Cheap)</option>
+                        <option value="mixtral-8x7b-32768">Mixtral 8x7B (32K context)</option>
                     </select>
                     <p style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.2rem;">
                         Changes apply on next session
