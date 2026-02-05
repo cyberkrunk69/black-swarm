@@ -750,12 +750,13 @@ CONTROL_PANEL_HTML = '''
         // Socket events
         socket.on('connect', () => {
             console.log('Connected to control panel');
-            document.getElementById('statusDot').classList.remove('stopped');
+            loadSpawnerStatus();
         });
 
         socket.on('disconnect', () => {
             console.log('Disconnected');
-            document.getElementById('statusDot').classList.add('stopped');
+            const dot = document.getElementById('spawnerDot');
+            if (dot) dot.classList.add('stopped');
         });
 
         socket.on('log_entry', (entry) => {
@@ -766,8 +767,24 @@ CONTROL_PANEL_HTML = '''
             updateIdentities(data);
         });
 
-        socket.on('stop_status', (data) => {
-            updateStopStatus(data.stopped);
+        socket.on('spawner_started', (data) => {
+            spawnerState = { running: true, paused: false, pid: data.pid };
+            updateSpawnerUI();
+        });
+
+        socket.on('spawner_paused', () => {
+            spawnerState.paused = true;
+            updateSpawnerUI();
+        });
+
+        socket.on('spawner_resumed', () => {
+            spawnerState.paused = false;
+            updateSpawnerUI();
+        });
+
+        socket.on('spawner_killed', () => {
+            spawnerState = { running: false, paused: false, pid: null };
+            updateSpawnerUI();
         });
 
         function addLogEntry(entry) {
