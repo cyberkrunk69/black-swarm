@@ -609,9 +609,10 @@ CONTROL_PANEL_HTML = '''
                                    border: 1px solid var(--border); color: var(--teal); border-radius: 4px;
                                    font-size: 0.85rem; cursor: pointer;">
                         <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Default)</option>
-                        <option value="llama-3.1-70b-versatile">Llama 3.1 70B</option>
                         <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast/Cheap)</option>
-                        <option value="mixtral-8x7b-32768">Mixtral 8x7B (32K context)</option>
+                        <option value="deepseek-r1-distill-llama-70b">DeepSeek R1 70B (Reasoning)</option>
+                        <option value="qwen-qwq-32b">Qwen QwQ 32B (Reasoning)</option>
+                        <option value="meta-llama/llama-4-maverick-17b-128e-instruct">Llama 4 Maverick (Preview)</option>
                     </select>
                     <p style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.2rem;">
                         Changes apply on next session
