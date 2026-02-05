@@ -238,13 +238,60 @@ CONTROL_PANEL_HTML = '''
             overflow: hidden;
         }
 
-        /* Sidebar */
+        /* Sidebar - scrollable with collapsible sections */
         .sidebar {
-            width: 280px;
+            width: 300px;
             background: var(--bg-card);
             border-right: 1px solid var(--border);
             padding: 1rem;
             overflow-y: auto;
+        }
+
+        /* Collapsible section for sidebar */
+        .sidebar-section {
+            margin-bottom: 0.5rem;
+        }
+
+        .sidebar-section summary {
+            cursor: pointer;
+            padding: 0.5rem;
+            background: var(--bg-hover);
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-section summary::after {
+            content: '▼';
+            font-size: 0.6rem;
+            transition: transform 0.2s;
+        }
+
+        .sidebar-section[open] summary::after {
+            transform: rotate(180deg);
+        }
+
+        .sidebar-section-content {
+            padding: 0.5rem 0;
+        }
+
+        /* Identities grid/scroll for many identities */
+        #identities {
+            max-height: calc(100vh - 400px);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .identity-card {
+            flex-shrink: 0;
         }
 
         .sidebar h3 {
@@ -557,40 +604,54 @@ CONTROL_PANEL_HTML = '''
 
     <div class="main">
         <div class="sidebar">
-            <h3>Collaboration Request</h3>
-            <div class="identity-card" style="margin-bottom: 1rem;">
-                <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.5rem;">
-                    What the human is hoping we can work on together.
-                    Approach however makes sense. Push back if something seems off.
-                </p>
-                <textarea id="humanRequest"
-                    placeholder="e.g., I'd love help improving test coverage for the auth module..."
-                    style="width: 100%; height: 80px; background: var(--bg-dark); border: 1px solid var(--border);
-                           color: var(--text); padding: 0.5rem; border-radius: 4px; font-family: inherit;
-                           font-size: 0.85rem; resize: vertical;"></textarea>
-                <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                    <button onclick="saveRequest()"
-                        style="flex: 1; padding: 0.4rem 0.8rem; background: var(--teal);
-                               border: none; color: var(--bg-dark); border-radius: 4px; cursor: pointer;
-                               font-weight: 600;">
-                        Update
-                    </button>
-                    <button onclick="markRequestComplete()"
-                        style="padding: 0.4rem 0.8rem; background: var(--green);
-                               border: none; color: var(--bg-dark); border-radius: 4px; cursor: pointer;
-                               font-weight: 600;">
-                        Done!
-                    </button>
-                </div>
-                <div id="requestStatus" style="font-size: 0.7rem; color: var(--green); margin-top: 0.3rem; text-align: center;"></div>
-            </div>
-
-            <h3>Identities</h3>
+            <!-- Identities Section - Always visible, scrollable -->
+            <h3 style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Identities</span>
+                <span id="identityCount" style="font-size: 0.7rem; color: var(--text-dim); font-weight: normal;"></span>
+            </h3>
             <div id="identities">
                 <!-- Populated by JS -->
             </div>
 
-            <h3 style="margin-top: 2rem;">Budget & Scaling</h3>
+            <!-- Collapsible: Collaboration Request -->
+            <details class="sidebar-section" open>
+                <summary>
+                    Collaboration Request
+                    <span id="requestActiveIndicator" style="display: none; font-size: 0.65rem; padding: 0.1rem 0.3rem;
+                          background: rgba(76, 175, 80, 0.2); color: var(--green); border-radius: 4px;">
+                        ACTIVE
+                    </span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card" style="margin-bottom: 0;">
+                        <textarea id="humanRequest"
+                            placeholder="What should we work on together?"
+                            style="width: 100%; height: 60px; background: var(--bg-dark); border: 1px solid var(--border);
+                                   color: var(--text); padding: 0.5rem; border-radius: 4px; font-family: inherit;
+                                   font-size: 0.8rem; resize: vertical;"></textarea>
+                        <div style="display: flex; gap: 0.3rem; margin-top: 0.3rem;">
+                            <button onclick="saveRequest()"
+                                style="flex: 1; padding: 0.3rem; background: var(--teal);
+                                       border: none; color: var(--bg-dark); border-radius: 4px; cursor: pointer;
+                                       font-weight: 600; font-size: 0.75rem;">
+                                Update
+                            </button>
+                            <button onclick="markRequestComplete()"
+                                style="padding: 0.3rem 0.5rem; background: var(--green);
+                                       border: none; color: var(--bg-dark); border-radius: 4px; cursor: pointer;
+                                       font-weight: 600; font-size: 0.75rem;">
+                                Done
+                            </button>
+                        </div>
+                        <div id="requestStatus" style="font-size: 0.65rem; color: var(--green); margin-top: 0.2rem; text-align: center;"></div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Budget & Scaling -->
+            <details class="sidebar-section">
+                <summary>Budget & Model</summary>
+                <div class="sidebar-section-content">
             <div class="identity-card">
                 <div class="identity-stat">
                     <span>Session Budget</span>
@@ -601,21 +662,32 @@ CONTROL_PANEL_HTML = '''
                     <span class="stat-value" id="totalSpent">$0.00</span>
                 </div>
 
-                <!-- Model Selector -->
+                <!-- Model Selector with Auto Mode -->
                 <div style="margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
-                    <label style="font-size: 0.8rem; color: var(--text-dim);">Model:</label>
-                    <select id="modelSelector" onchange="updateModel(this.value)"
-                            style="width: 100%; padding: 0.4rem; margin-top: 0.3rem; background: var(--bg-dark);
-                                   border: 1px solid var(--border); color: var(--teal); border-radius: 4px;
-                                   font-size: 0.85rem; cursor: pointer;">
-                        <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Default)</option>
-                        <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast/Cheap)</option>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.8rem; color: var(--text-dim);">Model:</label>
+                        <span id="autoModelIndicator" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;
+                              background: rgba(76, 175, 80, 0.2); color: var(--green); border-radius: 4px;">
+                            AUTO
+                        </span>
+                    </div>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.8rem; margin-bottom: 0.5rem;">
+                        <input type="checkbox" id="overrideModelToggle" onchange="toggleModelOverride()">
+                        <span style="color: var(--text-dim);">Override auto-select</span>
+                    </label>
+                    <select id="modelSelector" onchange="updateModel(this.value)" disabled
+                            style="width: 100%; padding: 0.4rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text-dim); border-radius: 4px;
+                                   font-size: 0.85rem; cursor: not-allowed; opacity: 0.6;">
+                        <option value="auto">Auto (by complexity)</option>
+                        <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast/Simple)</option>
+                        <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Standard)</option>
                         <option value="deepseek-r1-distill-llama-70b">DeepSeek R1 70B (Reasoning)</option>
                         <option value="qwen-qwq-32b">Qwen QwQ 32B (Reasoning)</option>
                         <option value="meta-llama/llama-4-maverick-17b-128e-instruct">Llama 4 Maverick (Preview)</option>
                     </select>
-                    <p style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.2rem;">
-                        Changes apply on next session
+                    <p id="modelDescription" style="font-size: 0.65rem; color: var(--green); margin-top: 0.3rem;">
+                        Smallest model for each task complexity
                     </p>
                 </div>
 
@@ -650,48 +722,76 @@ CONTROL_PANEL_HTML = '''
                 </div>
 
                 <button onclick="saveSpawnerConfig()"
-                    style="margin-top: 0.75rem; width: 100%; padding: 0.4rem; background: var(--bg-hover);
+                    style="margin-top: 0.75rem; width: 100%; padding: 0.3rem; background: var(--bg-hover);
                            border: 1px solid var(--border); color: var(--text); border-radius: 4px;
-                           cursor: pointer; font-size: 0.8rem;">
+                           cursor: pointer; font-size: 0.75rem;">
                     Save Config
                 </button>
             </div>
-
-            <h3 style="margin-top: 2rem;">Messages from Swarm</h3>
-            <div id="messagesContainer" style="max-height: 300px; overflow-y: auto;">
-                <p style="color: var(--text-dim); font-size: 0.8rem;">No messages yet</p>
-            </div>
-
-            <h3 style="margin-top: 2rem;">Bounty Board</h3>
-            <div class="identity-card" style="margin-bottom: 0.5rem;">
-                <input type="text" id="bountyTitle" placeholder="Bounty title..."
-                    style="width: 100%; padding: 0.3rem; margin-bottom: 0.3rem; background: var(--bg-dark);
-                           border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.85rem;">
-                <textarea id="bountyDesc" placeholder="What needs to be done..."
-                    style="width: 100%; height: 50px; background: var(--bg-dark); border: 1px solid var(--border);
-                           color: var(--text); padding: 0.3rem; border-radius: 4px; font-size: 0.8rem; resize: none;"></textarea>
-                <div style="display: flex; gap: 0.5rem; margin-top: 0.3rem; align-items: center;">
-                    <input type="number" id="bountyReward" placeholder="Tokens" min="10" value="50"
-                        style="width: 60px; padding: 0.3rem; background: var(--bg-dark);
-                               border: 1px solid var(--border); color: var(--yellow); border-radius: 4px; font-size: 0.85rem;"
-                        title="Token reward">
-                    <input type="number" id="bountyMaxTeams" placeholder="Teams" min="1" max="5" value="1"
-                        style="width: 50px; padding: 0.3rem; background: var(--bg-dark);
-                               border: 1px solid var(--border); color: var(--teal); border-radius: 4px; font-size: 0.85rem;"
-                        title="Max competing teams">
-                    <button onclick="createBounty()"
-                        style="flex: 1; padding: 0.3rem; background: var(--yellow); border: none;
-                               color: var(--bg-dark); border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.8rem;">
-                        Post Bounty
-                    </button>
                 </div>
-                <div style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.2rem;">
-                    Tokens | Max Teams (for competing proposals)
+            </details>
+
+            <!-- Collapsible: Messages -->
+            <details class="sidebar-section">
+                <summary>
+                    Messages
+                    <span id="messageCount" style="font-size: 0.65rem; color: var(--teal);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div id="messagesContainer" style="max-height: 250px; overflow-y: auto;">
+                        <p style="color: var(--text-dim); font-size: 0.75rem;">No messages yet</p>
+                    </div>
                 </div>
-            </div>
-            <div id="bountiesContainer" style="max-height: 250px; overflow-y: auto;">
-                <p style="color: var(--text-dim); font-size: 0.75rem;">No active bounties</p>
-            </div>
+            </details>
+
+            <!-- Collapsible: Chat Rooms -->
+            <details class="sidebar-section">
+                <summary>
+                    Chat Rooms
+                    <span id="chatRoomsCount" style="font-size: 0.65rem; color: var(--teal);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div id="chatRoomsContainer" style="max-height: 300px; overflow-y: auto;">
+                        <p style="color: var(--text-dim); font-size: 0.75rem;">Loading rooms...</p>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Bounty Board -->
+            <details class="sidebar-section">
+                <summary>
+                    Bounty Board
+                    <span id="bountyCount" style="font-size: 0.65rem; color: var(--yellow);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card" style="margin-bottom: 0.5rem;">
+                        <input type="text" id="bountyTitle" placeholder="Bounty title..."
+                            style="width: 100%; padding: 0.25rem; margin-bottom: 0.2rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.8rem;">
+                        <textarea id="bountyDesc" placeholder="What needs to be done..."
+                            style="width: 100%; height: 40px; background: var(--bg-dark); border: 1px solid var(--border);
+                                   color: var(--text); padding: 0.25rem; border-radius: 4px; font-size: 0.75rem; resize: none;"></textarea>
+                        <div style="display: flex; gap: 0.3rem; margin-top: 0.2rem; align-items: center;">
+                            <input type="number" id="bountyReward" placeholder="Tokens" min="10" value="50"
+                                style="width: 50px; padding: 0.2rem; background: var(--bg-dark);
+                                       border: 1px solid var(--border); color: var(--yellow); border-radius: 4px; font-size: 0.75rem;"
+                                title="Token reward">
+                            <input type="number" id="bountyMaxTeams" placeholder="Teams" min="1" max="5" value="1"
+                                style="width: 40px; padding: 0.2rem; background: var(--bg-dark);
+                                       border: 1px solid var(--border); color: var(--teal); border-radius: 4px; font-size: 0.75rem;"
+                                title="Max competing teams">
+                            <button onclick="createBounty()"
+                                style="flex: 1; padding: 0.25rem; background: var(--yellow); border: none;
+                                       color: var(--bg-dark); border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.7rem;">
+                                Post
+                            </button>
+                        </div>
+                    </div>
+                    <div id="bountiesContainer" style="max-height: 200px; overflow-y: auto;">
+                        <p style="color: var(--text-dim); font-size: 0.7rem;">No active bounties</p>
+                    </div>
+                </div>
+            </details>
         </div>
 
         <div class="log-panel">
@@ -813,13 +913,16 @@ CONTROL_PANEL_HTML = '''
                 dayStr = dt.toLocaleDateString('en-US', { weekday: 'short' });
             }
 
+            // Make file paths clickable in detail
+            const linkedDetail = linkifyFilePaths(entry.detail || '');
+
             div.innerHTML = `
                 <span class="log-time">${timeStr}</span>
                 <span class="log-day">${dayStr}</span>
                 <span class="log-actor">${entry.actor || 'UNKNOWN'}</span>
                 <span class="log-type type-${entry.action_type}">${entry.action_type}</span>
                 <span class="log-action">${entry.action}</span>
-                <span class="log-detail">${entry.detail}</span>
+                <span class="log-detail">${linkedDetail}</span>
             `;
 
             // Apply filter
@@ -835,11 +938,76 @@ CONTROL_PANEL_HTML = '''
             document.getElementById('lastUpdate').textContent = timeStr;
         }
 
+        // Make file paths clickable in log entries
+        function linkifyFilePaths(text) {
+            // Match common file path patterns
+            // Patterns: path/to/file.ext, ./file.ext, file.py (+12 lines), etc.
+            const pathRegex = /([a-zA-Z0-9_\-\.\/\\]+\.(py|js|ts|json|md|html|css|yaml|yml|txt|log|sh|sql))/g;
+            return text.replace(pathRegex, (match) => {
+                // Clean up the path (remove trailing info like " (+12 lines)")
+                const cleanPath = match.split(' ')[0];
+                return `<a href="#" onclick="viewArtifact('${cleanPath}'); return false;" style="color: var(--teal); text-decoration: underline; cursor: pointer;">${match}</a>`;
+            });
+        }
+
+        // View artifact in modal
+        function viewArtifact(path) {
+            fetch('/api/artifact/view?path=' + encodeURIComponent(path))
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        alert('Error: ' + data.error);
+                        return;
+                    }
+
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 1000; display: flex; flex-direction: column; padding: 1rem;';
+                    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+                    // Escape HTML in content
+                    const escapeHtml = (text) => {
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    };
+
+                    modal.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1rem; background: var(--bg-card); border-radius: 8px 8px 0 0;">
+                            <div>
+                                <span style="color: var(--teal); font-weight: bold;">${data.filename}</span>
+                                <span style="color: var(--text-dim); font-size: 0.8rem; margin-left: 1rem;">${data.path}</span>
+                                <span style="color: var(--text-dim); font-size: 0.75rem; margin-left: 1rem;">${(data.size / 1024).toFixed(1)}KB</span>
+                            </div>
+                            <button onclick="this.closest('[style*=position]').remove()" style="background: var(--red); border: none; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; cursor: pointer;">Close</button>
+                        </div>
+                        <pre style="flex: 1; margin: 0; padding: 1rem; background: var(--bg-dark); overflow: auto; border-radius: 0 0 8px 8px; font-size: 0.85rem; line-height: 1.4;"><code>${escapeHtml(data.content)}</code></pre>
+                    `;
+
+                    document.body.appendChild(modal);
+                });
+        }
+
         function updateIdentities(identities) {
             const container = document.getElementById('identities');
+            const countEl = document.getElementById('identityCount');
+            if (countEl) countEl.textContent = `(${identities.length})`;
+
+            // Sort by level (highest first), then by sessions
+            identities.sort((a, b) => {
+                const levelDiff = (b.level || 1) - (a.level || 1);
+                if (levelDiff !== 0) return levelDiff;
+                return (b.sessions || 0) - (a.sessions || 0);
+            });
+
             container.innerHTML = identities.map(id => `
                 <div class="identity-card" style="cursor: pointer;" onclick="showProfile('${id.id}')">
-                    <div class="identity-name">${id.name}</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="identity-name">${id.name}</div>
+                        <span style="font-size: 0.7rem; color: var(--yellow); background: rgba(255,193,7,0.15);
+                                     padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600;">
+                            Lv.${id.level || 1}
+                        </span>
+                    </div>
                     ${id.profile_display ? `<div style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.3rem; font-style: italic;">${id.profile_display.substring(0, 50)}${id.profile_display.length > 50 ? '...' : ''}</div>` : ''}
                     ${id.traits && id.traits.length ? `<div style="font-size: 0.7rem; color: var(--purple); margin-bottom: 0.3rem;">${id.traits.slice(0,3).join(' | ')}</div>` : ''}
                     <div class="identity-stat">
@@ -849,6 +1017,10 @@ CONTROL_PANEL_HTML = '''
                     <div class="identity-stat">
                         <span>Sessions</span>
                         <span>${id.sessions}</span>
+                    </div>
+                    <div class="identity-stat">
+                        <span>Respec Cost</span>
+                        <span style="color: var(--orange);">${id.respec_cost || 10}</span>
                     </div>
                 </div>
             `).join('');
@@ -885,11 +1057,17 @@ CONTROL_PANEL_HTML = '''
                         content += `<p style="font-size: 1.1rem; margin-bottom: 1rem; border-left: 3px solid var(--teal); padding-left: 1rem;">"${core.identity_statement}"</p>`;
                     }
 
-                    // Stats bar
-                    content += `<div style="display: flex; gap: 1rem; margin-bottom: 1rem; padding: 0.75rem; background: var(--bg-dark); border-radius: 8px;">
+                    // Stats bar (row 1)
+                    content += `<div style="display: flex; gap: 1rem; margin-bottom: 0.5rem; padding: 0.75rem; background: var(--bg-dark); border-radius: 8px;">
+                        <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--yellow);">${data.level || 1}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Level</div></div>
                         <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--teal);">${data.sessions}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Sessions</div></div>
-                        <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--green);">${data.tasks_completed}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Tasks Done</div></div>
+                        <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--green);">${data.tasks_completed}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Tasks</div></div>
                         <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: ${data.task_success_rate >= 80 ? 'var(--green)' : data.task_success_rate >= 50 ? 'var(--yellow)' : 'var(--red)'}">${data.task_success_rate}%</div><div style="font-size: 0.7rem; color: var(--text-dim);">Success</div></div>
+                    </div>`;
+                    // Stats bar (row 2 - respec info)
+                    content += `<div style="display: flex; gap: 1rem; margin-bottom: 1rem; padding: 0.5rem 0.75rem; background: var(--bg-dark); border-radius: 8px; font-size: 0.8rem;">
+                        <div style="flex: 1; color: var(--text-dim);">Respec Cost: <span style="color: var(--orange); font-weight: 600;">${data.respec_cost || 10} tokens</span></div>
+                        <div style="color: var(--text-dim); font-size: 0.7rem;">Level formula: sqrt(sessions) | Respec: 10 + (sessions × 3)</div>
                     </div>`;
 
                     // Core traits and values
@@ -938,7 +1116,7 @@ CONTROL_PANEL_HTML = '''
                                     <span style="color: var(--text-dim);">${new Date(a.timestamp).toLocaleTimeString()}</span>
                                     <span style="color: var(--purple); margin-left: 0.5rem;">${a.type}</span>
                                     <span style="color: var(--text); margin-left: 0.5rem;">${a.action}</span>
-                                    <span style="color: var(--text-dim); margin-left: 0.5rem;">${a.detail || ''}</span>
+                                    <span style="color: var(--text-dim); margin-left: 0.5rem;">${linkifyFilePaths(a.detail || '')}</span>
                                 </div>`).join('')}
                             </div>
                         </details>`;
@@ -1104,14 +1282,56 @@ CONTROL_PANEL_HTML = '''
 
         function updateModel(model) {
             // Model selection - saved with config
+            updateModelDescription(model);
+        }
+
+        function toggleModelOverride() {
+            const override = document.getElementById('overrideModelToggle').checked;
+            const selector = document.getElementById('modelSelector');
+            const indicator = document.getElementById('autoModelIndicator');
+            const description = document.getElementById('modelDescription');
+
+            if (override) {
+                selector.disabled = false;
+                selector.style.cursor = 'pointer';
+                selector.style.opacity = '1';
+                selector.style.color = 'var(--teal)';
+                indicator.style.display = 'none';
+                updateModelDescription(selector.value);
+            } else {
+                selector.disabled = true;
+                selector.style.cursor = 'not-allowed';
+                selector.style.opacity = '0.6';
+                selector.style.color = 'var(--text-dim)';
+                selector.value = 'auto';
+                indicator.style.display = 'inline';
+                description.textContent = 'Smallest model for each task complexity';
+                description.style.color = 'var(--green)';
+            }
+        }
+
+        function updateModelDescription(model) {
+            const description = document.getElementById('modelDescription');
+            const descriptions = {
+                'auto': 'Smallest model for each task complexity',
+                'llama-3.1-8b-instant': 'Fast & cheap - simple tasks, quick edits',
+                'llama-3.3-70b-versatile': 'Standard - general purpose, balanced',
+                'deepseek-r1-distill-llama-70b': 'Reasoning - complex logic, math, planning',
+                'qwen-qwq-32b': 'Reasoning - analytical tasks, problem solving',
+                'meta-llama/llama-4-maverick-17b-128e-instruct': 'Preview - experimental features'
+            };
+            description.textContent = descriptions[model] || 'Custom model';
+            description.style.color = model === 'auto' ? 'var(--green)' : 'var(--text-dim)';
         }
 
         function saveSpawnerConfig() {
+            const override = document.getElementById('overrideModelToggle').checked;
             const config = {
                 sessions: parseInt(document.getElementById('sessionSlider').value),
                 auto_scale: document.getElementById('autoScaleToggle').checked,
                 budget_limit: parseFloat(document.getElementById('budgetLimit').value),
-                model: document.getElementById('modelSelector').value
+                model: document.getElementById('modelSelector').value,
+                auto_model: !override  // Default is auto, override disables it
             };
             fetch('/api/spawner/config', {
                 method: 'POST',
@@ -1121,7 +1341,8 @@ CONTROL_PANEL_HTML = '''
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    alert('Config saved! Model change will apply on next session.');
+                    const modeText = config.auto_model ? 'Auto mode enabled.' : `Model set to ${config.model}.`;
+                    alert('Config saved! ' + modeText + ' Changes apply on next session.');
                 }
             });
         }
@@ -1143,7 +1364,14 @@ CONTROL_PANEL_HTML = '''
                         document.getElementById('sessionCount').textContent = data.config.sessions || 3;
                         document.getElementById('autoScaleToggle').checked = data.config.auto_scale || false;
                         document.getElementById('budgetLimit').value = data.config.budget_limit || 1.00;
-                        document.getElementById('modelSelector').value = data.config.model || 'llama-3.3-70b-versatile';
+
+                        // Model auto-select (default is auto)
+                        const autoModel = data.config.auto_model !== false;  // Default true
+                        document.getElementById('overrideModelToggle').checked = !autoModel;
+                        if (!autoModel && data.config.model) {
+                            document.getElementById('modelSelector').value = data.config.model;
+                        }
+                        toggleModelOverride();
                         toggleScaleMode();
                     }
                 });
@@ -1166,6 +1394,14 @@ CONTROL_PANEL_HTML = '''
             });
         });
 
+        // Update active indicator based on request content
+        function updateRequestIndicator(hasContent) {
+            const indicator = document.getElementById('requestActiveIndicator');
+            if (indicator) {
+                indicator.style.display = hasContent ? 'inline' : 'none';
+            }
+        }
+
         // Save human request
         function saveRequest() {
             const request = document.getElementById('humanRequest').value;
@@ -1178,6 +1414,7 @@ CONTROL_PANEL_HTML = '''
             .then(data => {
                 const status = document.getElementById('requestStatus');
                 status.textContent = 'Saved!';
+                updateRequestIndicator(request.trim().length > 0);
                 setTimeout(() => status.textContent = '', 2000);
             });
         }
@@ -1187,7 +1424,9 @@ CONTROL_PANEL_HTML = '''
             fetch('/api/human_request')
                 .then(r => r.json())
                 .then(data => {
-                    document.getElementById('humanRequest').value = data.request || '';
+                    const request = data.request || '';
+                    document.getElementById('humanRequest').value = request;
+                    updateRequestIndicator(request.trim().length > 0);
                 });
         }
 
@@ -1201,6 +1440,11 @@ CONTROL_PANEL_HTML = '''
                 .then(r => r.json())
                 .then(messages => {
                     const container = document.getElementById('messagesContainer');
+                    const countEl = document.getElementById('messageCount');
+
+                    // Update count in header
+                    const unread = messages.filter(m => !m.response).length;
+                    if (countEl) countEl.textContent = unread > 0 ? `(${unread} unread)` : messages.length > 0 ? `(${messages.length})` : '';
 
                     // Check if anything changed - don't refresh if user might be typing
                     const newIds = new Set(messages.map(m => m.id));
@@ -1215,7 +1459,7 @@ CONTROL_PANEL_HTML = '''
                     lastMessageIds = newIds;
 
                     if (messages.length === 0) {
-                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.8rem;">No messages yet</p>';
+                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">No messages yet</p>';
                         return;
                     }
 
@@ -1435,9 +1679,11 @@ CONTROL_PANEL_HTML = '''
                 .then(r => r.json())
                 .then(bounties => {
                     const container = document.getElementById('bountiesContainer');
+                    const countEl = document.getElementById('bountyCount');
+                    if (countEl) countEl.textContent = bounties.length > 0 ? `(${bounties.length})` : '';
 
                     if (bounties.length === 0) {
-                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">No active bounties</p>';
+                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.7rem;">No active bounties</p>';
                         return;
                     }
 
@@ -1448,45 +1694,69 @@ CONTROL_PANEL_HTML = '''
                             'completed': 'var(--green)'
                         };
                         const borderColor = statusColors[b.status] || 'var(--border)';
-                        const claimedBy = b.claimed_by ? `Claimed: ${b.claimed_by.name}` : 'Open';
-                        const teamCount = (b.teams || []).length;
+                        const teams = b.teams || [];
+                        const teamCount = teams.length;
                         const maxTeams = b.max_teams || 1;
                         const cost = b.cost_tracking || {};
                         const apiCost = cost.api_cost ? `$${cost.api_cost.toFixed(3)}` : '';
                         const sessions = cost.sessions_used || 0;
 
+                        // Build teams display
+                        const teamsHtml = teams.length > 0 ? `
+                            <div style="margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid var(--border);">
+                                <div style="font-size: 0.65rem; color: var(--text-dim); margin-bottom: 0.2rem;">Submissions:</div>
+                                ${teams.map((t, i) => `
+                                    <div style="font-size: 0.7rem; padding: 0.2rem 0; display: flex; justify-content: space-between;">
+                                        <span style="color: var(--teal);">${t.identity_name}</span>
+                                        <span style="color: var(--text-dim);">${new Date(t.submitted_at).toLocaleDateString()}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : '';
+
                         return `
                             <div class="identity-card" style="margin-bottom: 0.4rem; padding: 0.6rem; border-left: 3px solid ${borderColor};">
                                 <div style="display: flex; justify-content: space-between; align-items: start;">
                                     <div style="flex: 1;">
-                                        <div style="font-weight: 600; font-size: 0.85rem; color: var(--text);">${b.title}</div>
-                                        <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.2rem;">
-                                            ${claimedBy}${maxTeams > 1 ? ` | Teams: ${teamCount}/${maxTeams}` : ''}
+                                        <div style="font-weight: 600; font-size: 0.8rem; color: var(--text);">${b.title}</div>
+                                        <div style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.15rem;">
+                                            ${b.status.toUpperCase()}${maxTeams > 1 ? ` | Teams: ${teamCount}/${maxTeams}` : ''}
                                         </div>
                                         ${apiCost || sessions ? `
-                                            <div style="font-size: 0.65rem; color: var(--purple); margin-top: 0.2rem;">
+                                            <div style="font-size: 0.6rem; color: var(--purple); margin-top: 0.15rem;">
                                                 ${apiCost ? `Cost: ${apiCost}` : ''}${apiCost && sessions ? ' | ' : ''}${sessions ? `Sessions: ${sessions}` : ''}
                                             </div>
                                         ` : ''}
                                     </div>
-                                    <div style="color: var(--yellow); font-weight: bold; font-size: 0.9rem;">${b.reward}</div>
+                                    <div style="color: var(--yellow); font-weight: bold; font-size: 0.85rem;">${b.reward}</div>
                                 </div>
-                                ${b.status === 'claimed' ? `
-                                    <button onclick="showCompleteBountyModal('${b.id}', ${b.reward}, ${teamCount})"
-                                        style="margin-top: 0.4rem; padding: 0.2rem 0.5rem; background: var(--green);
-                                               border: none; color: var(--bg-dark); border-radius: 4px;
-                                               cursor: pointer; font-size: 0.7rem; width: 100%;">
-                                        Mark Complete & Pay Out
-                                    </button>
-                                ` : ''}
-                                ${b.status === 'open' ? `
-                                    <button onclick="deleteBounty('${b.id}')"
-                                        style="margin-top: 0.4rem; padding: 0.2rem 0.5rem; background: var(--bg-dark);
-                                               border: 1px solid var(--red); color: var(--red); border-radius: 4px;
-                                               cursor: pointer; font-size: 0.65rem; width: 100%;">
-                                        Cancel
-                                    </button>
-                                ` : ''}
+                                ${teamsHtml}
+                                <div style="display: flex; gap: 0.3rem; margin-top: 0.4rem;">
+                                    ${b.status === 'claimed' || (b.status === 'open' && teamCount > 0) ? `
+                                        <button onclick="showCompleteBountyModal('${b.id}', ${b.reward}, ${teamCount})"
+                                            style="flex: 1; padding: 0.2rem; background: var(--green);
+                                                   border: none; color: var(--bg-dark); border-radius: 4px;
+                                                   cursor: pointer; font-size: 0.65rem;">
+                                            Complete
+                                        </button>
+                                    ` : ''}
+                                    ${teamCount > 0 ? `
+                                        <button onclick="viewBountySubmissions('${b.id}', '${b.title.replace(/'/g, "\\'")}')"
+                                            style="flex: 1; padding: 0.2rem; background: var(--bg-dark);
+                                                   border: 1px solid var(--teal); color: var(--teal); border-radius: 4px;
+                                                   cursor: pointer; font-size: 0.65rem;">
+                                            View (${teamCount})
+                                        </button>
+                                    ` : ''}
+                                    ${b.status === 'open' && teamCount === 0 ? `
+                                        <button onclick="deleteBounty('${b.id}')"
+                                            style="flex: 1; padding: 0.2rem; background: var(--bg-dark);
+                                                   border: 1px solid var(--red); color: var(--red); border-radius: 4px;
+                                                   cursor: pointer; font-size: 0.65rem;">
+                                            Cancel
+                                        </button>
+                                    ` : ''}
+                                </div>
                             </div>
                         `;
                     }).join('');
@@ -1585,6 +1855,129 @@ CONTROL_PANEL_HTML = '''
                 });
         }
 
+        function viewBountySubmissions(bountyId, bountyTitle) {
+            fetch('/api/bounties/' + bountyId + '/submissions')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        alert('Error loading submissions');
+                        return;
+                    }
+
+                    const submissions = data.submissions || [];
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 2rem;';
+                    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+                    modal.innerHTML = `
+                        <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 12px; max-width: 500px; width: 100%; max-height: 80vh; overflow-y: auto;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                                <h3 style="color: var(--teal); margin: 0;">Submissions: ${bountyTitle}</h3>
+                                <button onclick="this.closest('[style*=position]').remove()" style="background: none; border: none; color: var(--text-dim); font-size: 1.5rem; cursor: pointer;">&times;</button>
+                            </div>
+
+                            ${submissions.length === 0 ? `
+                                <p style="color: var(--text-dim);">No submissions yet.</p>
+                            ` : submissions.map((s, i) => `
+                                <div style="background: var(--bg-dark); padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 3px solid var(--teal);">
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                        <span style="font-weight: 600; color: var(--teal);">${s.identity_name}</span>
+                                        <span style="font-size: 0.75rem; color: var(--text-dim);">${new Date(s.submitted_at).toLocaleString()}</span>
+                                    </div>
+                                    ${s.description ? `<p style="font-size: 0.85rem; color: var(--text); margin-bottom: 0.5rem;">${s.description}</p>` : ''}
+                                    ${s.artifacts && s.artifacts.length > 0 ? `
+                                        <div style="font-size: 0.75rem; color: var(--text-dim);">
+                                            <span>Artifacts:</span>
+                                            <div style="margin-top: 0.3rem;">
+                                                ${s.artifacts.map(a => `<a href="#" onclick="viewArtifact('${a}'); return false;" style="color: var(--purple); margin-right: 0.5rem;">${a.split('/').pop()}</a>`).join('')}
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                    ${s.notes ? `<p style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.5rem; font-style: italic;">${s.notes}</p>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    document.body.appendChild(modal);
+                });
+        }
+
+        // Chat Rooms functions
+        let currentOpenRoom = null;
+
+        function loadChatRooms() {
+            fetch('/api/chatrooms')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('chatRoomsContainer');
+                    const countEl = document.getElementById('chatRoomsCount');
+
+                    if (!data.success || !data.rooms || data.rooms.length === 0) {
+                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.8rem;">No chat rooms yet. Rooms appear when residents start chatting!</p>';
+                        countEl.textContent = '';
+                        return;
+                    }
+
+                    const totalMessages = data.rooms.reduce((sum, r) => sum + (r.message_count || 0), 0);
+                    countEl.textContent = `(${totalMessages} messages)`;
+
+                    container.innerHTML = data.rooms.map(room => `
+                        <details class="chat-room" style="margin-bottom: 0.5rem;" ${currentOpenRoom === room.id ? 'open' : ''}>
+                            <summary onclick="loadRoomMessages('${room.id}')"
+                                     style="cursor: pointer; padding: 0.6rem; background: var(--bg-dark); border-radius: 6px;
+                                            list-style: none; display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-size: 1.1rem;">${room.icon}</span>
+                                <span style="flex: 1;">
+                                    <span style="font-weight: 600; color: var(--teal);">${room.name}</span>
+                                    <span style="font-size: 0.7rem; color: var(--text-dim); margin-left: 0.3rem;">(${room.message_count})</span>
+                                </span>
+                                <span style="font-size: 0.65rem; color: var(--text-dim);">
+                                    ${room.latest_timestamp ? new Date(room.latest_timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}
+                                </span>
+                            </summary>
+                            <div id="room_${room.id}" style="padding: 0.5rem; background: var(--bg-card); border-radius: 0 0 6px 6px;
+                                                             max-height: 300px; overflow-y: auto;">
+                                <p style="color: var(--text-dim); font-size: 0.75rem;">Loading messages...</p>
+                            </div>
+                        </details>
+                    `).join('');
+                });
+        }
+
+        function loadRoomMessages(roomId) {
+            currentOpenRoom = roomId;
+            const container = document.getElementById('room_' + roomId);
+            if (!container) return;
+
+            fetch('/api/chatrooms/' + roomId)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success || !data.messages || data.messages.length === 0) {
+                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem; font-style: italic;">No messages in this room yet.</p>';
+                        return;
+                    }
+
+                    container.innerHTML = data.messages.map(msg => {
+                        const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+                        const mood = msg.mood ? ` <span style="opacity: 0.6;">(${msg.mood})</span>` : '';
+                        const linkedContent = linkifyFilePaths(msg.content || '');
+
+                        return `
+                            <div style="margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
+                                    <span style="font-weight: 600; color: var(--teal); font-size: 0.8rem;">${msg.author_name || 'Unknown'}${mood}</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-dim);">${time}</span>
+                                </div>
+                                <div style="font-size: 0.85rem; color: var(--text); line-height: 1.4;">${linkedContent}</div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    // Scroll to bottom
+                    container.scrollTop = container.scrollHeight;
+                });
+        }
+
         // Initial load
         setupDayVibe();
         setInterval(setupDayVibe, 60000); // Update every minute (for time-based changes)
@@ -1593,10 +1986,12 @@ CONTROL_PANEL_HTML = '''
         loadRequest();
         loadMessages();
         loadBounties();
+        loadChatRooms();
 
-        // Refresh bounties and spawner status periodically
+        // Refresh bounties, spawner status, and chat rooms periodically
         setInterval(loadBounties, 10000);
         setInterval(loadSpawnerStatus, 5000);
+        setInterval(loadChatRooms, 15000);  // Refresh chat rooms every 15 seconds
     </script>
 </body>
 </html>
@@ -1632,6 +2027,21 @@ class LogWatcher(FileSystemEventHandler):
                 pass
 
 
+def calculate_identity_level(sessions: int) -> int:
+    """Calculate identity level based on sessions (ARPG-style progression)."""
+    # Level formula: sqrt(sessions) rounded down, minimum level 1
+    import math
+    return max(1, int(math.sqrt(sessions)))
+
+
+def calculate_respec_cost(sessions: int) -> int:
+    """Calculate respec cost based on sessions (ARPG-style: cheap early, expensive later)."""
+    # Formula from swarm_enrichment.py: BASE (10) + (sessions * SCALE (3))
+    RESPEC_BASE_COST = 10
+    RESPEC_SCALE_PER_SESSION = 3
+    return RESPEC_BASE_COST + (sessions * RESPEC_SCALE_PER_SESSION)
+
+
 def get_identities():
     """Get all identity info with token balances and profile snippets."""
     identities = []
@@ -1655,16 +2065,19 @@ def get_identities():
                     attrs = data.get('attributes', {})
                     profile = attrs.get('profile', {})
                     core = attrs.get('core', {})
+                    sessions = data.get('sessions_participated', 0)
 
                     identities.append({
                         'id': identity_id,
                         'name': data.get('name', 'Unknown'),
                         'tokens': balances.get(identity_id, {}).get('tokens', 0),
-                        'sessions': data.get('sessions_participated', 0),
+                        'sessions': sessions,
                         'tasks_completed': data.get('tasks_completed', 0),
                         'profile_display': profile.get('display'),
                         'traits': core.get('personality_traits', []),
                         'values': core.get('core_values', []),
+                        'level': calculate_identity_level(sessions),
+                        'respec_cost': calculate_respec_cost(sessions),
                     })
             except:
                 pass
@@ -1798,14 +2211,17 @@ def api_identity_profile(identity_id):
             except:
                 pass
 
+        sessions = data.get('sessions_participated', 0)
         return jsonify({
             'identity_id': identity_id,
             'name': data.get('name'),
             'created_at': data.get('created_at'),
-            'sessions': data.get('sessions_participated', 0),
+            'sessions': sessions,
             'tasks_completed': data.get('tasks_completed', 0),
             'tasks_failed': data.get('tasks_failed', 0),
             'task_success_rate': round(task_success_rate, 1),
+            'level': calculate_identity_level(sessions),
+            'respec_cost': calculate_respec_cost(sessions),
             'profile': profile,
             'core_summary': {
                 'traits': core.get('personality_traits', []),
@@ -2369,6 +2785,67 @@ def api_delete_bounty(bounty_id):
     return jsonify({'success': True})
 
 
+@app.route('/api/bounties/<bounty_id>/submit', methods=['POST'])
+def api_submit_to_bounty(bounty_id):
+    """Submit work to a bounty (for competing teams)."""
+    data = request.json or {}
+    bounties = load_bounties()
+    bounty = next((b for b in bounties if b['id'] == bounty_id), None)
+
+    if not bounty:
+        return jsonify({'success': False, 'error': 'Bounty not found'})
+
+    if bounty.get('status') != 'open':
+        return jsonify({'success': False, 'error': 'Bounty is not open for submissions'})
+
+    # Check team limit
+    max_teams = bounty.get('max_teams', 1)
+    current_teams = bounty.get('teams', [])
+    if len(current_teams) >= max_teams:
+        return jsonify({'success': False, 'error': f'Maximum {max_teams} team(s) already submitted'})
+
+    # Create submission
+    submission = {
+        'id': f"sub_{int(time.time()*1000)}",
+        'identity_id': data.get('identity_id'),
+        'identity_name': data.get('identity_name', 'Unknown'),
+        'description': data.get('description', ''),
+        'artifacts': data.get('artifacts', []),  # List of file paths
+        'submitted_at': datetime.now().isoformat(),
+        'notes': data.get('notes', '')
+    }
+
+    if 'teams' not in bounty:
+        bounty['teams'] = []
+    bounty['teams'].append(submission)
+
+    # Mark bounty as claimed if this is the first submission
+    if bounty['status'] == 'open' and len(bounty['teams']) == 1:
+        bounty['status'] = 'claimed'
+        bounty['cost_tracking']['started_at'] = datetime.now().isoformat()
+
+    save_bounties(bounties)
+
+    return jsonify({'success': True, 'submission': submission})
+
+
+@app.route('/api/bounties/<bounty_id>/submissions')
+def api_get_bounty_submissions(bounty_id):
+    """Get all submissions for a bounty."""
+    bounties = load_bounties()
+    bounty = next((b for b in bounties if b['id'] == bounty_id), None)
+
+    if not bounty:
+        return jsonify({'success': False, 'error': 'Bounty not found'})
+
+    return jsonify({
+        'success': True,
+        'bounty_id': bounty_id,
+        'bounty_title': bounty.get('title'),
+        'submissions': bounty.get('teams', [])
+    })
+
+
 @app.route('/api/bounties/<bounty_id>/track_cost', methods=['POST'])
 def api_track_bounty_cost(bounty_id):
     """Track API cost against a bounty."""
@@ -2499,6 +2976,226 @@ def api_complete_bounty(bounty_id):
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e), 'cost_tracking': cost_tracking})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARTIFACTS VIEWER - View files created by residents
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/artifact/view')
+def api_view_artifact():
+    """View contents of a file artifact."""
+    file_path = request.args.get('path', '')
+
+    if not file_path:
+        return jsonify({'success': False, 'error': 'No path provided'})
+
+    # Security: Only allow viewing files within workspace
+    try:
+        # Resolve the path relative to workspace
+        if not os.path.isabs(file_path):
+            full_path = WORKSPACE / file_path
+        else:
+            full_path = Path(file_path)
+
+        # Ensure it's within workspace (prevent directory traversal)
+        full_path = full_path.resolve()
+        if not str(full_path).startswith(str(WORKSPACE.resolve())):
+            return jsonify({'success': False, 'error': 'Access denied: path outside workspace'})
+
+        if not full_path.exists():
+            return jsonify({'success': False, 'error': 'File not found'})
+
+        if not full_path.is_file():
+            return jsonify({'success': False, 'error': 'Not a file'})
+
+        # Check file size (limit to 500KB for viewing)
+        if full_path.stat().st_size > 500 * 1024:
+            return jsonify({'success': False, 'error': 'File too large (>500KB)'})
+
+        # Detect file type for syntax highlighting
+        ext = full_path.suffix.lower()
+        file_type_map = {
+            '.py': 'python',
+            '.js': 'javascript',
+            '.ts': 'typescript',
+            '.json': 'json',
+            '.md': 'markdown',
+            '.html': 'html',
+            '.css': 'css',
+            '.yaml': 'yaml',
+            '.yml': 'yaml',
+            '.sh': 'bash',
+            '.sql': 'sql',
+            '.txt': 'text',
+            '.log': 'text',
+        }
+        file_type = file_type_map.get(ext, 'text')
+
+        # Read content
+        try:
+            content = full_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            content = full_path.read_text(encoding='latin-1')
+
+        return jsonify({
+            'success': True,
+            'path': str(full_path.relative_to(WORKSPACE)),
+            'filename': full_path.name,
+            'content': content,
+            'file_type': file_type,
+            'size': full_path.stat().st_size,
+            'modified': datetime.fromtimestamp(full_path.stat().st_mtime).isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/artifacts/list')
+def api_list_artifacts():
+    """List recent artifacts (files created/modified by the swarm)."""
+    try:
+        # Get files from journals and library
+        artifacts = []
+
+        # Journals
+        journals_dir = WORKSPACE / ".swarm" / "journals"
+        if journals_dir.exists():
+            for f in sorted(journals_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                artifacts.append({
+                    'path': str(f.relative_to(WORKSPACE)),
+                    'name': f.name,
+                    'type': 'journal',
+                    'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                })
+
+        # Library/creative works
+        library_dir = WORKSPACE / "library" / "creative_works"
+        if library_dir.exists():
+            for f in sorted(library_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                artifacts.append({
+                    'path': str(f.relative_to(WORKSPACE)),
+                    'name': f.name,
+                    'type': 'creative_work',
+                    'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                })
+
+        # Skills created
+        skills_dir = WORKSPACE / "skills"
+        if skills_dir.exists():
+            for f in sorted(skills_dir.glob("*.py"), key=lambda x: x.stat().st_mtime, reverse=True)[:10]:
+                artifacts.append({
+                    'path': str(f.relative_to(WORKSPACE)),
+                    'name': f.name,
+                    'type': 'skill',
+                    'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                })
+
+        return jsonify({'success': True, 'artifacts': artifacts})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAT ROOMS API - View watercooler, town hall, etc.
+# ═══════════════════════════════════════════════════════════════════
+
+DISCUSSIONS_DIR = WORKSPACE / ".swarm" / "discussions"
+
+# Room display names and icons
+ROOM_INFO = {
+    'watercooler': {'name': 'Break Room', 'icon': '☕', 'description': 'Casual chat, status updates'},
+    'town_hall': {'name': 'Town Hall', 'icon': '🏛️', 'description': 'Proposals, votes, community decisions'},
+    'improvements': {'name': 'Improvements', 'icon': '💡', 'description': 'System enhancement ideas'},
+    'struggles': {'name': 'Struggles', 'icon': '🤔', 'description': 'Challenges and help requests'},
+    'discoveries': {'name': 'Discoveries', 'icon': '✨', 'description': 'Interesting findings'},
+    'project_war_room': {'name': 'War Room', 'icon': '⚔️', 'description': 'Active project coordination'},
+}
+
+
+@app.route('/api/chatrooms')
+def api_get_chatrooms():
+    """Get list of available chat rooms with message counts."""
+    rooms = []
+
+    if DISCUSSIONS_DIR.exists():
+        for room_file in DISCUSSIONS_DIR.glob("*.jsonl"):
+            room_name = room_file.stem
+            if room_name.startswith('town_hall_') or room_name.startswith('permanent'):
+                continue  # Skip archives
+
+            info = ROOM_INFO.get(room_name, {'name': room_name.title(), 'icon': '💬', 'description': ''})
+
+            # Count messages and get latest
+            message_count = 0
+            latest_timestamp = None
+            latest_preview = None
+
+            try:
+                with open(room_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    message_count = len([l for l in lines if l.strip()])
+
+                    if lines:
+                        for line in reversed(lines):
+                            if line.strip():
+                                msg = json.loads(line)
+                                latest_timestamp = msg.get('timestamp')
+                                author = msg.get('author_name', 'Unknown')
+                                content = msg.get('content', '')[:50]
+                                latest_preview = f"{author}: {content}..."
+                                break
+            except:
+                pass
+
+            rooms.append({
+                'id': room_name,
+                'name': info['name'],
+                'icon': info['icon'],
+                'description': info['description'],
+                'message_count': message_count,
+                'latest_timestamp': latest_timestamp,
+                'latest_preview': latest_preview
+            })
+
+    # Sort by latest activity
+    rooms.sort(key=lambda r: r.get('latest_timestamp') or '', reverse=True)
+    return jsonify({'success': True, 'rooms': rooms})
+
+
+@app.route('/api/chatrooms/<room_id>')
+def api_get_chatroom_messages(room_id):
+    """Get messages from a specific chat room."""
+    limit = request.args.get('limit', 50, type=int)
+
+    if not DISCUSSIONS_DIR.exists():
+        return jsonify({'success': True, 'messages': [], 'room': room_id})
+
+    room_file = DISCUSSIONS_DIR / f"{room_id}.jsonl"
+    if not room_file.exists():
+        return jsonify({'success': True, 'messages': [], 'room': room_id})
+
+    messages = []
+    try:
+        with open(room_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    messages.append(json.loads(line))
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+    # Return most recent, reverse to show newest last
+    info = ROOM_INFO.get(room_id, {'name': room_id.title(), 'icon': '💬', 'description': ''})
+
+    return jsonify({
+        'success': True,
+        'room': room_id,
+        'room_name': info['name'],
+        'room_icon': info['icon'],
+        'messages': messages[-limit:]
+    })
 
 
 def background_watcher():

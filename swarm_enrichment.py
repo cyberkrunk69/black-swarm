@@ -405,6 +405,79 @@ class EnrichmentSystem:
         self.teams_file = self.workspace / ".swarm" / "teams.json"
 
     # ═══════════════════════════════════════════════════════════════════
+    # CASCADING NAME UPDATE SYSTEM
+    # ═══════════════════════════════════════════════════════════════════
+
+    def cascade_name_update(self, identity_id: str, old_name: str, new_name: str) -> dict:
+        """
+        Update all references to an identity's name across the system.
+        Called automatically when an identity respecs their name.
+
+        Updates:
+        - messages_to_human.jsonl (from_name field)
+        - Discussion board messages (author_name field)
+        - Action log entries (actor field, if using name)
+
+        Returns a summary of what was updated.
+        """
+        updates = {
+            "messages_to_human": 0,
+            "discussion_messages": 0,
+            "errors": []
+        }
+
+        # 1. Update messages_to_human.jsonl
+        messages_file = self.workspace / ".swarm" / "messages_to_human.jsonl"
+        if messages_file.exists():
+            try:
+                updated_lines = []
+                with open(messages_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            msg = json.loads(line)
+                            if msg.get('from_id') == identity_id:
+                                msg['from_name'] = new_name
+                                updates["messages_to_human"] += 1
+                            updated_lines.append(json.dumps(msg))
+
+                with open(messages_file, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(updated_lines) + '\n' if updated_lines else '')
+            except Exception as e:
+                updates["errors"].append(f"messages_to_human: {str(e)}")
+
+        # 2. Update discussion board messages
+        discussion_dir = self.workspace / ".swarm" / "discussion"
+        if discussion_dir.exists():
+            for room_file in discussion_dir.glob("*.jsonl"):
+                try:
+                    updated_lines = []
+                    with open(room_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.strip():
+                                msg = json.loads(line)
+                                if msg.get('author_id') == identity_id:
+                                    msg['author_name'] = new_name
+                                    updates["discussion_messages"] += 1
+                                updated_lines.append(json.dumps(msg))
+
+                    with open(room_file, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(updated_lines) + '\n' if updated_lines else '')
+                except Exception as e:
+                    updates["errors"].append(f"discussion/{room_file.name}: {str(e)}")
+
+        # Log the cascade update
+        if _action_logger:
+            total = updates["messages_to_human"] + updates["discussion_messages"]
+            _action_logger.log(
+                ActionType.IDENTITY,
+                "name_cascade",
+                f"{old_name} -> {new_name}: updated {total} references",
+                actor=identity_id
+            )
+
+        return updates
+
+    # ═══════════════════════════════════════════════════════════════════
     # TOKEN ECONOMY CONFIGURATION
     # ═══════════════════════════════════════════════════════════════════
     #
@@ -3470,6 +3543,11 @@ Take a moment to read these before starting your task.
                 identity.add_memory(memory_entry)
 
             manager._save_identity(identity)
+
+            # Cascade name update across all references
+            if new_name and new_name != old_name:
+                cascade_result = self.cascade_name_update(identity_id, old_name, new_name)
+                changes_made.append(f"cascaded: {cascade_result['messages_to_human'] + cascade_result['discussion_messages']} refs")
 
             # Log the respec with refund info
             if _action_logger:

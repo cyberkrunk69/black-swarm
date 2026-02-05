@@ -83,6 +83,67 @@ LOGS_DIR = WORKSPACE / "grind_logs"
 TASKS_FILE = WORKSPACE / "grind_tasks.json"
 LEARNED_LESSONS_FILE = WORKSPACE / "learned_lessons.json"
 
+
+# ═══════════════════════════════════════════════════════════════════
+# AUTO MODEL SELECTION
+# ═══════════════════════════════════════════════════════════════════
+# Uses the smallest model capable of handling the task complexity.
+# This is the default behavior - use override to force a specific model.
+# ═══════════════════════════════════════════════════════════════════
+
+def auto_select_model(complexity_score: float, complexity_level: str) -> str:
+    """
+    Automatically select the most cost-effective model for the task complexity.
+
+    Model tiers (cheapest to most expensive):
+    1. llama-3.1-8b-instant    - Simple tasks, quick edits, straightforward code
+    2. llama-3.3-70b-versatile - Standard tasks, most common choice
+    3. deepseek-r1-distill-llama-70b - Complex reasoning, planning, architecture
+
+    Args:
+        complexity_score: 0.0-1.0 score from task decomposition
+        complexity_level: "simple", "moderate", or "complex"
+
+    Returns:
+        Model name to use
+    """
+    # Simple tasks (score < 0.3 or level == "simple")
+    if complexity_score < 0.3 or complexity_level == "simple":
+        return "llama-3.1-8b-instant"
+
+    # Complex tasks requiring reasoning (score > 0.7 or level == "complex")
+    if complexity_score > 0.7 or complexity_level == "complex":
+        return "deepseek-r1-distill-llama-70b"
+
+    # Everything else uses the standard model
+    return "llama-3.3-70b-versatile"
+
+
+def get_model_for_task(config: dict, complexity_score: float, complexity_level: str) -> str:
+    """
+    Get the model to use, checking config for auto mode or override.
+
+    Args:
+        config: Spawner config from .swarm/spawner_config.json
+        complexity_score: Task complexity score
+        complexity_level: Task complexity level
+
+    Returns:
+        Model name to use
+    """
+    # Check if auto mode is enabled (default)
+    auto_model = config.get("auto_model", True)
+
+    if auto_model:
+        selected = auto_select_model(complexity_score, complexity_level)
+        print(f"[AUTO-MODEL] Selected {selected} for complexity={complexity_level} (score={complexity_score:.3f})")
+        return selected
+
+    # Override mode - use specified model
+    override_model = config.get("model", "llama-3.3-70b-versatile")
+    print(f"[AUTO-MODEL] Override mode - using {override_model}")
+    return override_model
+
 GRIND_PROMPT_TEMPLATE = """
 BEFORE YOU DO ANYTHING: Read SWARM_ROLE_HIERARCHY.md in the workspace root.
 It explains what this place is, why you're here, and how we work together.
@@ -1852,6 +1913,37 @@ def main():
         print("ERROR: Specify --task 'your task' or --delegate")
         sys.exit(1)
 
+    # Load spawner config for auto model selection
+    spawner_config_file = WORKSPACE / ".swarm" / "spawner_config.json"
+    spawner_config = {}
+    if spawner_config_file.exists():
+        try:
+            with open(spawner_config_file) as f:
+                spawner_config = json.load(f)
+        except:
+            pass
+
+    # Apply auto model selection if enabled (default behavior)
+    auto_model_enabled = spawner_config.get("auto_model", True)
+    if auto_model_enabled:
+        print("[AUTO-MODEL] Automatic model selection enabled - selecting optimal model per task complexity")
+        for task_obj in tasks:
+            # Decompose task to get complexity
+            decomp = decompose_task(task_obj["task"])
+            complexity_score = decomp.get("complexity_score", 0.5)
+            complexity_level = decomp.get("complexity", "moderate")
+
+            # Auto-select model based on complexity
+            selected_model = get_model_for_task(spawner_config, complexity_score, complexity_level)
+            task_obj["model"] = selected_model
+            task_obj["_complexity"] = complexity_level
+            task_obj["_complexity_score"] = complexity_score
+    else:
+        override_model = spawner_config.get("model", args.model)
+        print(f"[AUTO-MODEL] Override mode - all tasks using {override_model}")
+        for task_obj in tasks:
+            task_obj["model"] = override_model
+
     # Safety check: Validate all tasks against Constitutional AI constraints
     constitutional_checker = ConstitutionalCheckerStandalone(constraints_path=str(WORKSPACE / "SAFETY_CONSTRAINTS.json"))
     print("[SAFETY] Validating tasks against Constitutional AI constraints...")
@@ -1885,7 +1977,9 @@ def main():
         print(f"  Max Cost:  ${args.max_total_cost:.2f}")
     print("-" * 60)
     for i, t in enumerate(tasks):
-        print(f"  [{i+1}] {t['task'][:50]}... (${t['budget']:.2f})")
+        model_info = f" [{t['model'].split('/')[-1][:15]}]" if auto_model_enabled else ""
+        complexity_info = f" C:{t.get('_complexity', '?')}" if auto_model_enabled else ""
+        print(f"  [{i+1}] {t['task'][:45]}...{complexity_info}{model_info} (${t['budget']:.2f})")
     print("=" * 60)
 
     # Check if total cost would exceed max before spawning
