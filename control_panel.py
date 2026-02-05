@@ -917,7 +917,7 @@ CONTROL_PANEL_HTML = '''
                     if (data.recent_actions && data.recent_actions.length) {
                         content += `<details style="margin-top: 0.5rem;"><summary style="cursor: pointer; color: var(--teal); font-size: 0.9rem;">Recent Actions (${data.recent_actions.length})</summary>
                             <div style="background: var(--bg-dark); padding: 0.75rem; border-radius: 8px; margin-top: 0.5rem; max-height: 200px; overflow-y: auto;">
-                                ${data.recent_actions.map(a => `<div style="font-size: 0.75rem; margin-bottom: 0.3rem;">
+                                ${data.recent_actions.map(a => `<div style="font-size: 0.75rem; margin-bottom: 0.3rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border);">
                                     <span style="color: var(--text-dim);">${new Date(a.timestamp).toLocaleTimeString()}</span>
                                     <span style="color: var(--purple); margin-left: 0.5rem;">${a.type}</span>
                                     <span style="color: var(--text); margin-left: 0.5rem;">${a.action}</span>
@@ -932,7 +932,7 @@ CONTROL_PANEL_HTML = '''
                         const expertiseItems = Object.entries(data.expertise).sort((a, b) => b[1] - a[1]).slice(0, 5);
                         content += `<details style="margin-top: 0.5rem;"><summary style="cursor: pointer; color: var(--teal); font-size: 0.9rem;">Expertise</summary>
                             <div style="background: var(--bg-dark); padding: 0.75rem; border-radius: 8px; margin-top: 0.5rem;">
-                                ${expertiseItems.map(([domain, count]) => `<div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.2rem;">
+                                ${expertiseItems.map(([domain, count]) => `<div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.2rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--border);">
                                     <span>${domain}</span><span style="color: var(--yellow);">${count}</span>
                                 </div>`).join('')}
                             </div>
@@ -2523,4 +2523,5 @@ if __name__ == '__main__':
     threading.Thread(target=background_watcher, daemon=True).start()
     threading.Thread(target=push_identities_periodically, daemon=True).start()
 
-    socketio.run(app, host='0.0.0.0', port=8421, debug=False)
+    # debug=True enables auto-reload when files change
+    socketio.run(app, host='0.0.0.0', port=8421, debug=True, use_reloader=True)
