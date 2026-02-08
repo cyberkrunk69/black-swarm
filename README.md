@@ -45,6 +45,18 @@ This README prioritizes observable outputs. The "Observable Facts" section inclu
 4. Workers acquire locks, call /grind, and append to execution_log.jsonl.
 5. Control panel (optional) streams action_log.jsonl and exposes pause/kill controls.
 
+## Why this can be efficient (and not just "bots roleplaying")
+This system is a task pipeline, not a social simulation. The core loop is:
+queue -> worker -> API call -> logged result. Any "persona" or free-time modules are optional and not required for task execution.
+
+Efficiency levers that exist in code today:
+- Parallelism: orchestrator.py spawns N workers; task locks prevent duplicate work.
+- Budget control: queue tasks include min/max budgets; circuit breaker enforces cost limits.
+- Model control: config.py enforces a Groq model whitelist and a small default model.
+- Auditability: execution_log.jsonl, action_log.jsonl, and api_audit.log show what ran and what it cost.
+
+If you only want straight execution, you can ignore the optional identity/enrichment modules and run just the API + orchestrator + worker stack.
+
 ## Running (local)
 ```
 python -m venv .venv
