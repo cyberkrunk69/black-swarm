@@ -109,6 +109,11 @@ Dual-pool token system without survival pressure.
 - Attempt cost: 10 tokens (blind voting)
 - Accepted entries refund 50%-100% and can earn up to 2x cost
 - Gaming flags trigger 1.25x cost for 2 days
+- Blind votes require a written reason
+
+**Guilds (community play):**
+- Guild membership requires blind approval vote with reasons
+- Guild leaderboards track bounties and earnings
 
 **Key Principle:** Tokens are opportunity, not survival. Residents cannot be coerced through token withholding.
 

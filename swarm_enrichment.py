@@ -379,6 +379,7 @@ class EnrichmentSystem:
         self.journals_dir.mkdir(parents=True, exist_ok=True)
         self.journal_votes_file = self.workspace / ".swarm" / "journal_votes.json"
         self.journal_penalties_file = self.workspace / ".swarm" / "journal_penalties.json"
+        self.guild_votes_file = self.workspace / ".swarm" / "guild_votes.json"
 
         # Shared universe registry
         self.universe_file = self.library_dir / "shared_universe_index.json"
@@ -511,12 +512,18 @@ class EnrichmentSystem:
     JOURNAL_GAMING_THRESHOLD = 0.50     # >= 50% gaming votes triggers penalty
     JOURNAL_PENALTY_MULTIPLIER = 1.25   # 1.25x attempt cost
     JOURNAL_PENALTY_DAYS = 2
+    BLIND_VOTE_MIN_REASON_CHARS = 3
     JOURNAL_VOTE_SCORES = {
         "reject": 0,
         "accept": 1,
         "exceptional": 2,
         "gaming": 0
     }
+
+    # Guild join voting
+    GUILD_JOIN_MIN_VOTES = 2
+    GUILD_JOIN_APPROVAL_RATIO = 0.60
+    GUILD_JOIN_VOTE_TYPES = ["accept", "reject"]
 
     # Quality thresholds (word count + content markers) - heuristic only
     MIN_JOURNAL_WORDS = 50
@@ -812,6 +819,182 @@ class EnrichmentSystem:
         with open(self.journal_penalties_file, 'w') as f:
             json.dump(penalties, f, indent=2)
 
+    def _load_guild_votes(self) -> dict:
+        if self.guild_votes_file.exists():
+            try:
+                with open(self.guild_votes_file, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "requests" in data:
+                        return data
+            except Exception:
+                pass
+        return {"requests": {}}
+
+    def _save_guild_votes(self, votes: dict):
+        self.guild_votes_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.guild_votes_file, 'w') as f:
+            json.dump(votes, f, indent=2)
+
+    def get_pending_guild_requests(self, identity_id: str, limit: int = 10) -> list:
+        """List pending guild join requests for guilds the identity belongs to."""
+        my_guild = self.get_my_guild(identity_id)
+        if not my_guild:
+            return []
+
+        votes = self._load_guild_votes()
+        pending = []
+        for req in votes.get("requests", {}).values():
+            if req.get("status") != "pending":
+                continue
+            if req.get("guild_id") != my_guild.get("id"):
+                continue
+            pending.append({
+                "request_id": req.get("request_id"),
+                "applicant_id": req.get("applicant_id"),
+                "applicant_name": req.get("applicant_name"),
+                "message": req.get("message"),
+                "created_at": req.get("created_at")
+            })
+
+        pending.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        return pending[:limit]
+
+    def request_guild_join(self, identity_id: str, identity_name: str, guild_id: str,
+                           message: str = None) -> dict:
+        """Request to join a guild (triggers blind approval vote)."""
+        if self.get_my_guild(identity_id):
+            return {"success": False, "reason": "already_on_guild"}
+
+        guild = self.get_guild(guild_id)
+        if not guild:
+            return {"success": False, "reason": "guild_not_found"}
+
+        votes = self._load_guild_votes()
+        for req in votes.get("requests", {}).values():
+            if req.get("status") == "pending" and req.get("applicant_id") == identity_id and req.get("guild_id") == guild_id:
+                return {"success": False, "reason": "request_already_pending"}
+
+        request_id = f"guild_req_{guild_id}_{int(time.time()*1000)}"
+        votes["requests"][request_id] = {
+            "request_id": request_id,
+            "guild_id": guild_id,
+            "guild_name": guild.get("name"),
+            "applicant_id": identity_id,
+            "applicant_name": identity_name,
+            "message": (message or "").strip(),
+            "created_at": datetime.now().isoformat(),
+            "status": "pending",
+            "votes": []
+        }
+        self._save_guild_votes(votes)
+
+        return {"success": True, "status": "pending", "request_id": request_id}
+
+    def submit_guild_vote(self, request_id: str, voter_id: str, vote: str, reason: str) -> dict:
+        """Submit a blind vote to accept/reject a guild join request (reason required)."""
+        if vote not in self.GUILD_JOIN_VOTE_TYPES:
+            return {"success": False, "reason": "invalid_vote"}
+        if not reason or len(reason.strip()) < self.BLIND_VOTE_MIN_REASON_CHARS:
+            return {"success": False, "reason": "reason_required"}
+
+        votes = self._load_guild_votes()
+        request = votes.get("requests", {}).get(request_id)
+        if not request:
+            return {"success": False, "reason": "request_not_found"}
+        if request.get("status") != "pending":
+            return {"success": False, "reason": "request_already_resolved"}
+        if voter_id == request.get("applicant_id"):
+            return {"success": False, "reason": "applicant_cannot_vote"}
+
+        guild = self.get_guild(request.get("guild_id"))
+        if not guild or voter_id not in guild.get("members", []):
+            return {"success": False, "reason": "not_guild_member"}
+
+        existing_votes = request.get("votes", [])
+        if any(v.get("voter_id") == voter_id for v in existing_votes):
+            return {"success": False, "reason": "already_voted"}
+
+        existing_votes.append({
+            "voter_id": voter_id,
+            "vote": vote,
+            "reason": reason.strip(),
+            "timestamp": datetime.now().isoformat()
+        })
+        request["votes"] = existing_votes
+        votes["requests"][request_id] = request
+        self._save_guild_votes(votes)
+
+        return {"success": True, "request_id": request_id, "vote": vote}
+
+    def finalize_guild_vote(self, request_id: str) -> dict:
+        """Resolve a guild join request once enough votes are present."""
+        votes = self._load_guild_votes()
+        request = votes.get("requests", {}).get(request_id)
+        if not request:
+            return {"success": False, "reason": "request_not_found"}
+        if request.get("status") != "pending":
+            return {"success": False, "reason": "request_already_resolved", "status": request.get("status")}
+
+        vote_list = request.get("votes", [])
+        if len(vote_list) < self.GUILD_JOIN_MIN_VOTES:
+            return {
+                "success": False,
+                "reason": "insufficient_votes",
+                "votes": len(vote_list),
+                "required": self.GUILD_JOIN_MIN_VOTES
+            }
+
+        accepts = len([v for v in vote_list if v.get("vote") == "accept"])
+        rejects = len([v for v in vote_list if v.get("vote") == "reject"])
+        total = accepts + rejects
+        approval_ratio = accepts / total if total else 0
+
+        applicant_id = request.get("applicant_id")
+        applicant_name = request.get("applicant_name", "Unknown")
+        guild_id = request.get("guild_id")
+
+        decision = "accepted" if approval_ratio >= self.GUILD_JOIN_APPROVAL_RATIO else "rejected"
+
+        if decision == "accepted":
+            if self.get_my_guild(applicant_id):
+                decision = "rejected"
+                rejection_reason = "already_on_guild"
+            else:
+                guilds = self._load_guilds()
+                guild = next((g for g in guilds if g["id"] == guild_id), None)
+                if not guild:
+                    return {"success": False, "reason": "guild_not_found"}
+                guild["members"].append(applicant_id)
+                guild["member_names"][applicant_id] = applicant_name
+                self._save_guilds(guilds)
+                rejection_reason = None
+        else:
+            rejection_reason = None
+
+        request["status"] = decision
+        request["resolved_at"] = datetime.now().isoformat()
+        request["result"] = {
+            "accepts": accepts,
+            "rejects": rejects,
+            "approval_ratio": round(approval_ratio, 2),
+            "decision": decision,
+            "reasons": [v.get("reason") for v in vote_list if v.get("reason")],
+            "rejection_reason": rejection_reason
+        }
+
+        votes["requests"][request_id] = request
+        self._save_guild_votes(votes)
+
+        if _action_logger:
+            _action_logger.log(
+                ActionType.SOCIAL,
+                "guild_join_vote",
+                f"{decision.upper()}: {applicant_name} -> {request.get('guild_name', '')}",
+                actor="SYSTEM"
+            )
+
+        return {"success": True, "request_id": request_id, "status": decision, "result": request["result"]}
+
     def _get_active_journal_penalty(self, identity_id: str) -> Optional[dict]:
         penalties = self._load_journal_penalties()
         penalty = penalties.get(identity_id)
@@ -864,10 +1047,12 @@ class EnrichmentSystem:
         pending.sort(key=lambda e: e.get("created_at", ""), reverse=True)
         return pending[:limit]
 
-    def submit_journal_vote(self, journal_id: str, voter_id: str, vote: str) -> dict:
-        """Submit a blind vote for a journal review."""
+    def submit_journal_vote(self, journal_id: str, voter_id: str, vote: str, reason: str) -> dict:
+        """Submit a blind vote for a journal review (reason required)."""
         if vote not in self.JOURNAL_VOTE_SCORES:
             return {"success": False, "reason": "invalid_vote"}
+        if not reason or len(reason.strip()) < self.BLIND_VOTE_MIN_REASON_CHARS:
+            return {"success": False, "reason": "reason_required"}
 
         votes = self._load_journal_votes()
         journal = votes.get("journals", {}).get(journal_id)
@@ -885,6 +1070,7 @@ class EnrichmentSystem:
         existing_votes.append({
             "voter_id": voter_id,
             "vote": vote,
+            "reason": reason.strip(),
             "timestamp": datetime.now().isoformat()
         })
         journal["votes"] = existing_votes
@@ -941,7 +1127,8 @@ class EnrichmentSystem:
             "bonus_rate": 0.0,
             "refund_tokens": 0,
             "bonus_tokens": 0,
-            "total_awarded": 0
+            "total_awarded": 0,
+            "reasons": [v.get("reason") for v in vote_list if v.get("reason")]
         }
 
         if gaming_flagged:
@@ -4940,6 +5127,30 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
             "history": guild.get("refund_history", [])[-10:]
         }
 
+    def get_guild_leaderboard(self, sort_by: str = "total_earned", limit: int = 10) -> list:
+        """Get guild leaderboard sorted by total_earned or bounties_completed."""
+        guilds = self._load_guilds()
+        if sort_by not in ["total_earned", "bounties_completed", "members"]:
+            sort_by = "total_earned"
+
+        def score(guild):
+            if sort_by == "members":
+                return len(guild.get("members", []))
+            return guild.get(sort_by, 0)
+
+        ranked = sorted(guilds, key=score, reverse=True)
+        return [
+            {
+                "id": g.get("id"),
+                "name": g.get("name"),
+                "members": len(g.get("members", [])),
+                "bounties_completed": g.get("bounties_completed", 0),
+                "total_earned": g.get("total_earned", 0),
+                "refund_pool": g.get("refund_pool", 0)
+            }
+            for g in ranked[:limit]
+        ]
+
     def get_my_guild(self, identity_id: str) -> dict:
         """Get the guild this identity belongs to (if any)."""
         guilds = self._load_guilds()
@@ -4999,42 +5210,12 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
 
         return {"success": True, "guild": guild}
 
-    def join_guild(self, identity_id: str, identity_name: str, guild_id: str) -> dict:
+    def join_guild(self, identity_id: str, identity_name: str, guild_id: str,
+                   message: str = None) -> dict:
         """
-        Join an existing guild.
+        Request to join an existing guild (blind approval vote required).
         """
-        guilds = self._load_guilds()
-
-        # Check if already on a guild
-        for guild in guilds:
-            if identity_id in guild.get("members", []):
-                if guild["id"] == guild_id:
-                    return {"success": False, "reason": "already_on_this_guild"}
-                return {
-                    "success": False,
-                    "reason": "already_on_different_guild",
-                    "current_guild": guild
-                }
-
-        # Find target guild
-        guild = next((g for g in guilds if g["id"] == guild_id), None)
-        if not guild:
-            return {"success": False, "reason": "guild_not_found"}
-
-        guild["members"].append(identity_id)
-        guild["member_names"][identity_id] = identity_name
-
-        self._save_guilds(guilds)
-
-        if _action_logger:
-            _action_logger.log(
-                ActionType.SOCIAL,
-                "guild_join",
-                f"Joined guild '{guild['name']}'",
-                actor=identity_id
-            )
-
-        return {"success": True, "guild": guild}
+        return self.request_guild_join(identity_id, identity_name, guild_id, message=message)
 
     def leave_guild(self, identity_id: str) -> dict:
         """
@@ -5084,8 +5265,8 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
     def create_team(self, identity_id: str, identity_name: str, team_name: str) -> dict:
         return self.create_guild(identity_id, identity_name, team_name)
 
-    def join_team(self, identity_id: str, identity_name: str, team_id: str) -> dict:
-        return self.join_guild(identity_id, identity_name, team_id)
+    def join_team(self, identity_id: str, identity_name: str, team_id: str, message: str = None) -> dict:
+        return self.join_guild(identity_id, identity_name, team_id, message=message)
 
     def leave_team(self, identity_id: str) -> dict:
         return self.leave_guild(identity_id)
@@ -5618,6 +5799,21 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                 f"  Guild refund pool: {my_guild.get('refund_pool', 0)} tokens",
                 "",
             ])
+
+            pending_requests = self.get_pending_guild_requests(identity_id)
+            if pending_requests:
+                lines.append("PENDING GUILD REQUESTS (vote required):")
+                for req in pending_requests[:3]:
+                    lines.append(
+                        f"  - {req['applicant_name']} (req {req['request_id'][:8]}): {req.get('message', '')[:40]}"
+                    )
+                lines.extend([
+                    "",
+                    "  Use: submit_guild_vote(request_id, vote, reason)",
+                    "  (Reason required for all blind votes.)",
+                    "  Then: finalize_guild_vote(request_id)",
+                    "",
+                ])
         else:
             all_guilds = self.get_guilds()
             if all_guilds:
@@ -5628,9 +5824,20 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                     lines.append(f"  - {g['name']}: {len(g.get('members', []))} members")
                 lines.extend([
                     "",
-                    "  Use: create_guild(guild_name) or join_guild(guild_id)",
+                    "  Use: create_guild(guild_name) or join_guild(guild_id, message)",
+                    "  (Join requests require blind approval votes with reasons.)",
                     "",
                 ])
+
+        # Guild leaderboard
+        leaderboard = self.get_guild_leaderboard(limit=3)
+        if leaderboard:
+            lines.append("GUILD LEADERBOARD:")
+            for rank, guild in enumerate(leaderboard, start=1):
+                lines.append(
+                    f"  {rank}. {guild['name']} - {guild['bounties_completed']} bounties, {guild['total_earned']} earned"
+                )
+            lines.append("")
 
         lines.extend([
             "To invite someone:",

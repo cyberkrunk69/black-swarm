@@ -776,10 +776,10 @@ CONTROL_PANEL_HTML = '''
                                 style="width: 50px; padding: 0.2rem; background: var(--bg-dark);
                                        border: 1px solid var(--border); color: var(--yellow); border-radius: 4px; font-size: 0.75rem;"
                                 title="Token reward">
-                            <input type="number" id="bountyMaxTeams" placeholder="Teams" min="1" max="5" value="1"
+                            <input type="number" id="bountyMaxTeams" placeholder="Guilds" min="1" max="5" value="1"
                                 style="width: 40px; padding: 0.2rem; background: var(--bg-dark);
                                        border: 1px solid var(--border); color: var(--teal); border-radius: 4px; font-size: 0.75rem;"
-                                title="Max competing teams">
+                                title="Max competing guilds">
                             <button onclick="createBounty()"
                                 style="flex: 1; padding: 0.25rem; background: var(--yellow); border: none;
                                        color: var(--bg-dark); border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.7rem;">
@@ -1701,10 +1701,10 @@ CONTROL_PANEL_HTML = '''
                         const apiCost = cost.api_cost ? `$${cost.api_cost.toFixed(3)}` : '';
                         const sessions = cost.sessions_used || 0;
 
-                        // Build teams display
+                        // Build guild submissions display
                         const teamsHtml = teams.length > 0 ? `
                             <div style="margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid var(--border);">
-                                <div style="font-size: 0.65rem; color: var(--text-dim); margin-bottom: 0.2rem;">Submissions:</div>
+                                <div style="font-size: 0.65rem; color: var(--text-dim); margin-bottom: 0.2rem;">Guild submissions:</div>
                                 ${teams.map((t, i) => `
                                     <div style="font-size: 0.7rem; padding: 0.2rem 0; display: flex; justify-content: space-between;">
                                         <span style="color: var(--teal);">${t.identity_name}</span>
@@ -1720,7 +1720,7 @@ CONTROL_PANEL_HTML = '''
                                     <div style="flex: 1;">
                                         <div style="font-weight: 600; font-size: 0.8rem; color: var(--text);">${b.title}</div>
                                         <div style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.15rem;">
-                                            ${b.status.toUpperCase()}${maxTeams > 1 ? ` | Teams: ${teamCount}/${maxTeams}` : ''}
+                                            ${b.status.toUpperCase()}${maxTeams > 1 ? ` | Guilds: ${teamCount}/${maxTeams}` : ''}
                                         </div>
                                         ${apiCost || sessions ? `
                                             <div style="font-size: 0.6rem; color: var(--purple); margin-top: 0.15rem;">
@@ -1776,7 +1776,7 @@ CONTROL_PANEL_HTML = '''
 
                     ${hasMultipleTeams ? `
                         <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 1rem;">
-                            This bounty has ${teamCount} competing teams. Set rewards for each placement:
+                            This bounty has ${teamCount} competing guilds. Set rewards for each placement:
                         </p>
                         <div style="margin-bottom: 1rem;">
                             <label style="font-size: 0.8rem; color: var(--text-dim);">Winner Reward:</label>
@@ -2751,8 +2751,8 @@ def api_create_bounty():
         'created_at': datetime.now().isoformat(),
         'claimed_by': None,
         # Project-level cost tracking
-        'max_teams': data.get('max_teams', 1),  # How many competing teams allowed
-        'teams': [],  # List of team submissions
+        'max_teams': data.get('max_teams', 1),  # How many competing guilds allowed
+        'teams': [],  # List of guild submissions
         'cost_tracking': {
             'api_cost': 0.0,
             'sessions_used': 0,
@@ -2787,7 +2787,7 @@ def api_delete_bounty(bounty_id):
 
 @app.route('/api/bounties/<bounty_id>/submit', methods=['POST'])
 def api_submit_to_bounty(bounty_id):
-    """Submit work to a bounty (for competing teams)."""
+    """Submit work to a bounty (for competing guilds)."""
     data = request.json or {}
     bounties = load_bounties()
     bounty = next((b for b in bounties if b['id'] == bounty_id), None)
@@ -2798,11 +2798,11 @@ def api_submit_to_bounty(bounty_id):
     if bounty.get('status') != 'open':
         return jsonify({'success': False, 'error': 'Bounty is not open for submissions'})
 
-    # Check team limit
+    # Check guild limit
     max_teams = bounty.get('max_teams', 1)
     current_teams = bounty.get('teams', [])
     if len(current_teams) >= max_teams:
-        return jsonify({'success': False, 'error': f'Maximum {max_teams} team(s) already submitted'})
+        return jsonify({'success': False, 'error': f'Maximum {max_teams} guild(s) already submitted'})
 
     # Create submission
     submission = {
@@ -2831,7 +2831,7 @@ def api_submit_to_bounty(bounty_id):
 
 @app.route('/api/bounties/<bounty_id>/submissions')
 def api_get_bounty_submissions(bounty_id):
-    """Get all submissions for a bounty."""
+    """Get all submissions for a bounty (guild submissions)."""
     bounties = load_bounties()
     bounty = next((b for b in bounties if b['id'] == bounty_id), None)
 
@@ -2931,7 +2931,7 @@ def api_complete_bounty(bounty_id):
         except Exception as e:
             print(f"Error calculating bounty costs: {e}")
 
-    # Handle manual reward distribution for competing teams
+    # Handle manual reward distribution for competing guilds
     winner_reward = data.get('winner_reward', bounty.get('reward', 50))
     runner_up_reward = data.get('runner_up_reward', 0)
 
@@ -2942,7 +2942,7 @@ def api_complete_bounty(bounty_id):
 
         enrichment = get_enrichment(WORKSPACE)
 
-        # If there are teams, distribute according to placement
+        # If there are guild submissions, distribute according to placement
         teams = bounty.get('teams', [])
         if teams and len(teams) > 1:
             # Winner gets winner_reward, runner-up gets runner_up_reward
@@ -2962,7 +2962,7 @@ def api_complete_bounty(bounty_id):
                             'place': i + 1
                         })
         else:
-            # Single team/claimant - use original distribution
+            # Single guild/claimant - use original distribution
             result = enrichment.distribute_bounty(bounty_id)
             result['cost_tracking'] = cost_tracking
 
