@@ -72,6 +72,38 @@ The following are commit messages recorded in git log; included verbatim:
 - Failures cluster around integration steps (safety wiring, file operations),
   suggesting these are the highest-friction points to stabilize.
 
+## Timeline gaps between code changes (commit-time analysis)
+Assumption: ~10 hours/day of active development since start.
+Note: Commit gaps measure time between code changes, not necessarily idle time.
+
+Largest gaps between commits (chronological commit dates):
+- 62.31h gap
+  - 0492a20 2026-02-05T07:49:53-06:00 Fix regex escaping in linkifyFilePaths
+  - -> 7f98509 2026-02-08T04:08:18+00:00 Harden core: Groq-only API, JSONL logs, loud failures
+- 28.33h gap
+  - 5b6a0b6 2026-02-04T02:38:41-06:00 BACKUP: All work from Feb 3-4 before clean rollback
+  - -> e6c8e41 2026-02-05T06:58:37-06:00 Control Panel v1: START/PAUSE/STOP, Budget Scaling, Chat History, Sunday Rest
+- 8.89h gap
+  - 75b046c 2026-02-03T10:54:15-06:00 Add /vision route for new living dashboard + multi-user LAN task
+  - -> bcc798b 2026-02-03T19:47:54-06:00 Add founding memory, identity system, and rename tooling
+- 5.85h gap
+  - 3e623eb 2026-02-03T20:47:45-06:00 Milestone: Swarm builds its own architecture autonomously ($0.17)
+  - -> 5b6a0b6 2026-02-04T02:38:41-06:00 BACKUP: All work from Feb 3-4 before clean rollback
+
+Given the 10h/day assumption, gaps >10h likely represent extended blockers,
+long-running experiments, or uncommitted work.
+
+## Most critical time-wasting blockers (evidence-backed)
+- Missing GROQ_API_KEY blocked API calls (api_audit.log 2026-02-03T22:41:31).
+- Verification gap for claimed file edits (tool_operations.json 2026-02-03T09:28).
+- Repeated failed attempts with no files modified (performance_history.json
+  2026-02-03T09:34-09:35, hallucination bug attempts).
+- Safety integration attempts failing with no file changes (performance_history.json
+  2026-02-03T07:46-07:54).
+- Encoding errors during automated edits (kernel_run.log "charmap" errors).
+- Patch parse failures during automated edits (kernel_run.log invalid patch blocks).
+- File protection blocks on sensitive targets (kernel_run.log blocked writes).
+
 ## Next milestones (grounded, not speculative)
 - Require file verification before scoring a session as "success".
 - Normalize log fields for provenance (workspace_root, commit_sha, dry_run).
