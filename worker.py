@@ -2,7 +2,7 @@
 Parallel Worker for Black Swarm Orchestrator
 
 Uses file-based lock protocol for coordination between multiple workers.
-Lock Protocol from: claude-code-orchestrator EXECUTION_SWARM_SYSTEM.md
+Lock protocol details: docs/architecture/ARCHITECTURE_CORE.md
 
 Target API: http://127.0.0.1:8420 (Black Swarm)
 """
