@@ -2769,6 +2769,62 @@ def api_jury_author_feedback():
     return jsonify({"feedback": get_author_feedback(identity_id)})
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ESTIMATE REQUESTS - escalating budget estimates
+# ═══════════════════════════════════════════════════════════════════
+
+
+@app.route('/api/estimates/requests')
+def api_estimate_requests():
+    limit = request.args.get('limit', 10)
+    try:
+        limit = int(limit)
+    except ValueError:
+        limit = 10
+    from estimate_requests import list_requests
+    return jsonify({"requests": list_requests(limit=limit)})
+
+
+@app.route('/api/estimates/claim', methods=['POST'])
+def api_estimate_claim():
+    data = request.json or {}
+    task_id = data.get("task_id")
+    estimator_id = data.get("estimator_id")
+    estimator_name = data.get("estimator_name", estimator_id)
+    if not task_id or not estimator_id:
+        return jsonify({"success": False, "error": "missing_fields"}), 400
+    from estimate_requests import claim_request
+    result = claim_request(task_id, estimator_id, estimator_name)
+    status = 200 if result.get("success") else 400
+    return jsonify(result), status
+
+
+@app.route('/api/estimates/submit', methods=['POST'])
+def api_estimate_submit():
+    data = request.json or {}
+    task_id = data.get("task_id")
+    estimator_id = data.get("estimator_id")
+    estimator_name = data.get("estimator_name", estimator_id)
+    estimate_budget = data.get("estimate_budget")
+    justification = data.get("justification", "")
+    collaborators = data.get("collaborators", [])
+    model_tier = data.get("model_tier")
+    if not task_id or not estimator_id or estimate_budget is None:
+        return jsonify({"success": False, "error": "missing_fields"}), 400
+    from estimate_requests import submit_estimate
+    result = submit_estimate(
+        task_id=task_id,
+        estimator_id=estimator_id,
+        estimator_name=estimator_name,
+        estimate_budget=float(estimate_budget),
+        justification=justification,
+        collaborators=collaborators,
+        model_tier=model_tier,
+    )
+    status = 200 if result.get("success") else 400
+    return jsonify(result), status
+
+
 # Human request storage
 HUMAN_REQUEST_FILE = WORKSPACE / ".swarm" / "human_request.json"
 

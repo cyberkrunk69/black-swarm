@@ -25,6 +25,7 @@ from config import (
     validate_model_id,
     validate_config,
 )
+from model_policy import resolve_model_choice
 
 # ============================================================================
 # CONSTANTS
@@ -127,6 +128,74 @@ def infer_origin(task: Dict[str, Any]) -> str:
     return "explore"
 
 
+def task_priority_score(task: Dict[str, Any]) -> float:
+    """Compute priority score with escalation for time-sensitive tasks."""
+    score = float(task.get("priority", 0) or 0)
+    if task.get("time_sensitive"):
+        score += 5.0
+
+    bounty = task.get("bounty_tokens") or task.get("bounty") or 0
+    try:
+        score += float(bounty)
+    except (TypeError, ValueError):
+        pass
+
+    created_at = task.get("created_at")
+    escalation = task.get("value_escalation") or 0
+    try:
+        escalation = float(escalation)
+    except (TypeError, ValueError):
+        escalation = 0.0
+
+    if created_at and escalation > 0:
+        try:
+            if isinstance(created_at, (int, float)):
+                age_seconds = time.time() - float(created_at)
+            else:
+                parsed = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                age_seconds = (datetime.now(timezone.utc) - parsed).total_seconds()
+            score += max(age_seconds / 3600.0, 0.0) * escalation
+        except Exception:
+            pass
+
+    return score
+
+
+def register_estimate_requests(queue: Dict[str, Any]) -> None:
+    """Register estimate requests for tasks missing estimates."""
+    try:
+        from estimate_requests import register_request, resolve_request
+    except Exception:
+        return
+
+    for task in queue.get("tasks", []):
+        task_id = task.get("id")
+        if not task_id:
+            continue
+        if task.get("estimated_budget") is not None:
+            try:
+                resolve_request(task_id, reason="estimated")
+            except Exception:
+                pass
+            continue
+        summary = (
+            task.get("summary")
+            or task.get("prompt")
+            or task.get("task")
+            or task.get("instruction")
+            or ""
+        )
+        time_sensitive = bool(task.get("time_sensitive") or task.get("urgent"))
+        try:
+            register_request(
+                task_id=task_id,
+                summary=str(summary),
+                time_sensitive=time_sensitive,
+            )
+        except Exception:
+            continue
+
+
 def get_lock_path(task_id: str) -> Path:
     """Get the lock file path for a task."""
     return LOCKS_DIR / f"{task_id}.lock"
@@ -218,7 +287,11 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
     max_budget = task.get("max_budget", DEFAULT_MAX_BUDGET)
     intensity = task.get("intensity", DEFAULT_INTENSITY)
     prompt = task.get("prompt") or task.get("task") or task.get("instruction")
-    model = task.get("model")
+    requested_model = task.get("model")
+    requested_tier = task.get("model_tier") or task.get("model_size") or task.get("model_choice")
+    model, model_tier = resolve_model_choice(model=requested_model, model_tier=requested_tier)
+    if not model_tier:
+        model_tier = None
     if model:
         validate_model_id(model)
 
@@ -238,6 +311,7 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
         "max_budget": max_budget,
         "intensity": intensity,
         "task_id": task_id,
+        "model_tier": model_tier,
     }
 
     try:
@@ -253,6 +327,7 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
                 "model": result.get("model"),
                 "budget_used": result.get("budget_used"),
                 "usage": result.get("usage"),
+                "model_tier": result.get("model_tier", model_tier),
             }
 
         error_msg = f"API returned {response.status_code}: {response.text}"
@@ -293,6 +368,9 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
     execution_log = read_execution_log()
     api_endpoint = queue.get("api_endpoint", "http://127.0.0.1:8420")
 
+    register_estimate_requests(queue)
+
+    candidates = []
     for task in queue.get("tasks", []):
         task_id = task.get("id")
         if not task_id:
@@ -304,6 +382,15 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
         if not check_dependencies_complete(task, execution_log):
             continue
 
+        score = task_priority_score(task)
+        candidates.append((score, task))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    for _, task in candidates:
+        task_id = task.get("id")
+        if not task_id:
+            continue
         if not try_acquire_lock(task_id):
             continue
 
@@ -329,6 +416,7 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
                 activity_type=activity_type,
                 novelty_decay=activity_info.get("decay_multiplier"),
                 concurrent_activity=activity_info.get("concurrent"),
+                model_tier=task.get("model_tier") or task.get("model_size") or task.get("model_choice"),
             )
 
             result = execute_task(task, api_endpoint)
@@ -365,6 +453,7 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
                 submission_id=submission_id,
                 origin=origin,
                 novelty_decay=activity_info.get("decay_multiplier"),
+                model_tier=result.get("model_tier"),
             )
             _log("INFO", f"Completed task {task_id} - {result['status']}")
         finally:
@@ -430,6 +519,7 @@ def add_task(
     max_budget: float = DEFAULT_MAX_BUDGET,
     intensity: str = DEFAULT_INTENSITY,
     model: Optional[str] = None,
+    model_tier: Optional[str] = None,
 ) -> None:
     """Helper to add a task to the queue."""
     try:
@@ -445,6 +535,7 @@ def add_task(
             "depends_on": depends_on or [],
             "parallel_safe": True,
             "model": model,
+            "model_tier": model_tier,
         }
 
         queue["tasks"].append(task)

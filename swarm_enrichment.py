@@ -5156,6 +5156,28 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                     lines.append("    Concerns: " + "; ".join(concerns))
                 lines.append("")
 
+        # Estimate requests (time-sensitive tasks that need budgets)
+        try:
+            from estimate_requests import get_estimate_alerts
+
+            alerts = get_estimate_alerts(limit=3)
+        except Exception:
+            alerts = []
+
+        if alerts:
+            lines.extend([
+                "ESTIMATE REQUESTS (Time-sensitive):",
+                "  Some tasks need budget estimates. Bounties escalate over time.",
+                "",
+            ])
+            for alert in alerts:
+                task_id = alert.get("task_id")
+                bounty = alert.get("current_bounty", 0)
+                summary = alert.get("summary", "")
+                urgency = "URGENT" if alert.get("time_sensitive") else "OPEN"
+                lines.append(f"  [{urgency}] {task_id}: {summary[:60]} (bounty {bounty} tokens)")
+            lines.append("")
+
         # Gift Economy section
         daily_gifted = self._get_daily_gifted(identity_id)
         gratitude = self.get_gratitude(identity_id)
