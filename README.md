@@ -46,18 +46,23 @@ This README prioritizes observable outputs. The "Observable Facts" section inclu
 5. Control panel (optional) streams action_log.jsonl and exposes pause/kill controls.
 
 ## Why this can be efficient (and not just "bots roleplaying")
-This system is a task pipeline, not a social simulation. The core loop is:
-queue -> worker -> API call -> logged result. Any "persona" or free-time modules are optional and not required for task execution.
+This system is a task pipeline with a collaborative layer. The core loop is:
+queue -> worker -> API call -> logged result. On top of that, the "role-play" layer is a deliberate structure for cross-pollination, critique, and reuse.
 
-Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions. You can disable these modules entirely for pure task execution.
+Why the collaborative layer can add real value (the rationale):
+- Role separation reduces blind spots. Different workers can approach the same task with different prompts, constraints, or "personas," which surfaces alternatives and catches errors.
+- Critique and synthesis improve quality. The intended loop is propose -> review -> integrate, which mirrors how human teams improve reliability.
+- Shared memory compounds. Lessons, skills, and knowledge artifacts are stored in shared files (learned_lessons.json, skill_registry.py, knowledge_graph.py), so later workers can reuse what earlier workers discovered.
+- Incentives reward quality. The system tracks outcomes and can reward efficient, high-quality outputs (see performance_history.json and swarm_enrichment.py).
+
+Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions.
 
 Efficiency levers that exist in code today:
 - Parallelism: orchestrator.py spawns N workers; task locks prevent duplicate work.
 - Budget control: queue tasks include min/max budgets; circuit breaker enforces cost limits.
 - Model control: config.py enforces a Groq model whitelist and a small default model.
 - Auditability: execution_log.jsonl, action_log.jsonl, and api_audit.log show what ran and what it cost.
-
-If you only want straight execution, you can ignore the optional identity/enrichment modules and run just the API + orchestrator + worker stack.
+If you only want straight execution, you can run just the API + orchestrator + worker stack. The collaborative layer is optional, but it is the intended lever for improving quality and compounding results.
 
 ## Running (local)
 ```
