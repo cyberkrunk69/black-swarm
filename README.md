@@ -49,6 +49,8 @@ This README prioritizes observable outputs. The "Observable Facts" section inclu
 This system is a task pipeline, not a social simulation. The core loop is:
 queue -> worker -> API call -> logged result. Any "persona" or free-time modules are optional and not required for task execution.
 
+Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions. You can disable these modules entirely for pure task execution.
+
 Efficiency levers that exist in code today:
 - Parallelism: orchestrator.py spawns N workers; task locks prevent duplicate work.
 - Budget control: queue tasks include min/max budgets; circuit breaker enforces cost limits.
