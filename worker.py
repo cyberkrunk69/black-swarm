@@ -25,6 +25,7 @@ from config import (
     validate_model_id,
     validate_config,
 )
+from model_policy import resolve_model_choice
 
 # ============================================================================
 # CONSTANTS
@@ -99,6 +100,111 @@ def append_execution_event(task_id: str, status: str, **fields: Any) -> None:
         **fields,
     }
     append_jsonl(EXECUTION_LOG, record)
+
+
+def infer_identity(task: Dict[str, Any]) -> Dict[str, str]:
+    """Infer identity metadata for task attribution."""
+    identity_id = (
+        task.get("identity_id")
+        or task.get("resident_id")
+        or task.get("author_id")
+        or WORKER_ID
+    )
+    identity_name = task.get("identity_name") or task.get("author_name") or identity_id
+    return {"identity_id": identity_id, "identity_name": identity_name}
+
+
+def infer_origin(task: Dict[str, Any]) -> str:
+    """Infer task origin for balanced action paths."""
+    if task.get("origin"):
+        return task["origin"]
+    if task.get("bounty_id") or task.get("is_bounty"):
+        return "bounty"
+    if task.get("request_id") or task.get("user_request"):
+        return "user_request"
+    task_type = (task.get("task_type") or task.get("type") or "").lower()
+    if "maint" in task_type:
+        return "maintenance"
+    return "explore"
+
+
+def task_priority_score(task: Dict[str, Any]) -> float:
+    """Compute priority score with escalation for time-sensitive tasks."""
+    score = float(task.get("priority", 0) or 0)
+    if task.get("time_sensitive"):
+        score += 5.0
+
+    bounty = task.get("bounty_tokens") or task.get("bounty") or 0
+    try:
+        score += float(bounty)
+    except (TypeError, ValueError):
+        pass
+
+    created_at = task.get("created_at")
+    escalation = task.get("value_escalation") or 0
+    try:
+        escalation = float(escalation)
+    except (TypeError, ValueError):
+        escalation = 0.0
+
+    if created_at and escalation > 0:
+        try:
+            if isinstance(created_at, (int, float)):
+                age_seconds = time.time() - float(created_at)
+            else:
+                parsed = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                age_seconds = (datetime.now(timezone.utc) - parsed).total_seconds()
+            score += max(age_seconds / 3600.0, 0.0) * escalation
+        except Exception:
+            pass
+
+    return score
+
+
+def register_estimate_requests(queue: Dict[str, Any]) -> None:
+    """Register estimate requests for tasks missing estimates."""
+    try:
+        from estimate_requests import register_request, resolve_request
+        from utils.task_complexity import analyze_task_complexity
+    except Exception:
+        return
+
+    for task in queue.get("tasks", []):
+        task_id = task.get("id")
+        if not task_id:
+            continue
+        if task.get("estimated_budget") is not None:
+            try:
+                resolve_request(task_id, reason="estimated")
+            except Exception:
+                pass
+            continue
+        summary = (
+            task.get("summary")
+            or task.get("prompt")
+            or task.get("task")
+            or task.get("instruction")
+            or ""
+        )
+        time_sensitive = bool(task.get("time_sensitive") or task.get("urgent"))
+        analysis = analyze_task_complexity(
+            str(summary),
+            metadata={"depends_on": task.get("depends_on", [])},
+        )
+        base_budget = float(task.get("max_budget") or DEFAULT_MAX_BUDGET)
+        suggested_budget = round(base_budget * float(analysis.get("suggested_budget_multiplier", 1.0)), 4)
+        try:
+            register_request(
+                task_id=task_id,
+                summary=str(summary),
+                time_sensitive=time_sensitive,
+                complexity_score=analysis.get("complexity_score"),
+                complexity_band=analysis.get("complexity_band"),
+                suggested_model_tier=analysis.get("suggested_model_tier"),
+                suggested_budget=suggested_budget,
+            )
+        except Exception:
+            continue
 
 
 def get_lock_path(task_id: str) -> Path:
@@ -192,7 +298,11 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
     max_budget = task.get("max_budget", DEFAULT_MAX_BUDGET)
     intensity = task.get("intensity", DEFAULT_INTENSITY)
     prompt = task.get("prompt") or task.get("task") or task.get("instruction")
-    model = task.get("model")
+    requested_model = task.get("model")
+    requested_tier = task.get("model_tier") or task.get("model_size") or task.get("model_choice")
+    model, model_tier = resolve_model_choice(model=requested_model, model_tier=requested_tier)
+    if not model_tier:
+        model_tier = None
     if model:
         validate_model_id(model)
 
@@ -212,6 +322,7 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
         "max_budget": max_budget,
         "intensity": intensity,
         "task_id": task_id,
+        "model_tier": model_tier,
     }
 
     try:
@@ -225,6 +336,9 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
                 "result_summary": result.get("result", "Task completed"),
                 "errors": None,
                 "model": result.get("model"),
+                "budget_used": result.get("budget_used"),
+                "usage": result.get("usage"),
+                "model_tier": result.get("model_tier", model_tier),
             }
 
         error_msg = f"API returned {response.status_code}: {response.text}"
@@ -265,6 +379,9 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
     execution_log = read_execution_log()
     api_endpoint = queue.get("api_endpoint", "http://127.0.0.1:8420")
 
+    register_estimate_requests(queue)
+
+    candidates = []
     for task in queue.get("tasks", []):
         task_id = task.get("id")
         if not task_id:
@@ -276,14 +393,85 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
         if not check_dependencies_complete(task, execution_log):
             continue
 
+        score = task_priority_score(task)
+        candidates.append((score, task))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    for _, task in candidates:
+        task_id = task.get("id")
+        if not task_id:
+            continue
         if not try_acquire_lock(task_id):
             continue
 
         _log("INFO", f"Acquired lock for {task_id}")
+        identity = infer_identity(task)
+        origin = infer_origin(task)
+        activity_type = task.get("task_type") or task.get("type") or DEFAULT_TASK_TYPE
+        activity_info = {"concurrent": 1, "decay_multiplier": 1.0}
+        complexity_analysis = {}
         try:
-            append_execution_event(task_id, "in_progress", started_at=get_timestamp())
+            from utils.task_complexity import analyze_task_complexity
+
+            complexity_text = (
+                task.get("summary")
+                or task.get("prompt")
+                or task.get("task")
+                or task.get("instruction")
+                or ""
+            )
+            complexity_analysis = analyze_task_complexity(
+                str(complexity_text),
+                metadata={"depends_on": task.get("depends_on", [])},
+            )
+        except Exception:
+            complexity_analysis = {}
+        try:
+            from activity_tracker import start_activity, end_activity
+
+            activity_info = start_activity(identity["identity_id"], activity_type)
+        except Exception:
+            end_activity = None
+        try:
+            append_execution_event(
+                task_id,
+                "in_progress",
+                started_at=get_timestamp(),
+                identity_id=identity["identity_id"],
+                identity_name=identity["identity_name"],
+                origin=origin,
+                activity_type=activity_type,
+                novelty_decay=activity_info.get("decay_multiplier"),
+                concurrent_activity=activity_info.get("concurrent"),
+                model_tier=task.get("model_tier") or task.get("model_size") or task.get("model_choice"),
+                complexity_score=complexity_analysis.get("complexity_score"),
+                complexity_band=complexity_analysis.get("complexity_band"),
+            )
 
             result = execute_task(task, api_endpoint)
+            estimated_budget = task.get("estimated_budget", task.get("max_budget", DEFAULT_MAX_BUDGET))
+            submission_id = None
+            if result.get("status") == "completed":
+                try:
+                    from jury_duty import submit_change
+
+                    submission = submit_change(
+                        task_id=task_id,
+                        author_id=identity["identity_id"],
+                        author_name=identity["identity_name"],
+                        summary=str(result.get("result_summary") or "")[:500],
+                        task_type=activity_type,
+                        origin=origin,
+                        estimated_budget=estimated_budget,
+                        actual_cost=result.get("budget_used"),
+                        novelty_decay=activity_info.get("decay_multiplier", 1.0),
+                        complexity_score=complexity_analysis.get("complexity_score"),
+                    )
+                    submission_id = submission.get("submission_id")
+                except Exception as e:
+                    _log("WARN", f"Jury submission failed for {task_id}: {e}")
+
             append_execution_event(
                 task_id,
                 result["status"],
@@ -291,9 +479,22 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
                 result_summary=result.get("result_summary"),
                 errors=result.get("errors"),
                 model=result.get("model"),
+                estimated_budget=estimated_budget,
+                budget_used=result.get("budget_used"),
+                submission_id=submission_id,
+                origin=origin,
+                novelty_decay=activity_info.get("decay_multiplier"),
+                model_tier=result.get("model_tier"),
+                complexity_score=complexity_analysis.get("complexity_score"),
+                complexity_band=complexity_analysis.get("complexity_band"),
             )
             _log("INFO", f"Completed task {task_id} - {result['status']}")
         finally:
+            if "end_activity" in locals() and end_activity:
+                try:
+                    end_activity(identity["identity_id"], activity_type)
+                except Exception:
+                    pass
             release_lock(task_id)
             _log("INFO", f"Released lock for {task_id}")
 
@@ -351,6 +552,7 @@ def add_task(
     max_budget: float = DEFAULT_MAX_BUDGET,
     intensity: str = DEFAULT_INTENSITY,
     model: Optional[str] = None,
+    model_tier: Optional[str] = None,
 ) -> None:
     """Helper to add a task to the queue."""
     try:
@@ -366,6 +568,7 @@ def add_task(
             "depends_on": depends_on or [],
             "parallel_safe": True,
             "model": model,
+            "model_tier": model_tier,
         }
 
         queue["tasks"].append(task)
