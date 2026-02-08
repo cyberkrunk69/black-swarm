@@ -293,3 +293,12 @@ Raw data from performance_history.json. Timestamps are as recorded. Tasks vary; 
 - 2026-02-03T09:35:53.963772 - 12.400989s (failure)
 
 Full log: performance_history.json
+
+## User-observed anomaly note (facts only)
+The following is a user report, included verbatim in spirit for visibility. It is not explained by any known mechanism in the swarm codebase.
+
+- The user experienced a sudden behavior shift across multiple Cursor models: DeepSeek became adversarial and other models became unusually dismissive.
+- The same "alarm" conditions (user's wording) appeared to behave differently on a cellular network versus a non-cellular network.
+- The user also noted a "hook situation" (user's wording) related to unexpected behavior.
+
+Possible interpretation (speculative): unintentional emergent behavior. No mechanism is known within the swarm system that would intentionally cause the above.
