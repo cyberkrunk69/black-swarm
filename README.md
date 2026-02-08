@@ -243,6 +243,11 @@ This repo is a prototype. Run it in an isolated environment and review the safet
 ## Troubleshooting: unexpected `git` output (hooks, wrappers, missing remotes)
 If `git commit` prints lines that don’t look like normal Git output (for example `tr: Illegal byte sequence`, “Automatic Checkpoint …”, “Running pytest …”, etc.), that’s almost always coming from **a hook or wrapper script** running *around* Git (repo hooks, global hooks, or a shell alias/function).
 
+Lookout (user-reported symptoms that prompted this section, facts only):
+- macOS Terminal banner: "The default interactive shell is now zsh ..." (an OS-level message, not from Git).
+- `git commit -m ...` printed: `tr: Illegal byte sequence`, `--- Automatic Checkpoint: ...`, `pytest.ini found but pytest not installed. Skipping tests.`, `All checks passed. Proceeding with commit.` while Git still reported "no changes added to commit".
+- `git push` failed with "No configured push destination" after downloading a repo ZIP (no remote configured).
+
 Quick checks (run inside the repo):
 
 ```bash
