@@ -33,7 +33,8 @@ class QualityGateManager:
         self.queue_file = self.workspace / "quality_gate_queue.json"
 
     def load_state(self) -> Dict[str, Any]:
-        state = read_json(self.queue_file)
+        # Safe-by-default: missing state file should not crash callers/tests.
+        state = read_json(self.queue_file, default={})
         if not state:
             return self._default_state()
         return self._normalize_state(state)
