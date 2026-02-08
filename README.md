@@ -192,3 +192,5 @@ This repo is a prototype. Run it in an isolated environment and review the safet
 ## Credits
 - Josh (Human) - Architecture, vision, implementation
 - Swarm (multi-agent) - Implementation and documentation
+- Cursor - Heavy lifting and cleanup
+- Claude 4.5 Opus - Everything else
