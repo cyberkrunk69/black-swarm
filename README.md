@@ -6,7 +6,7 @@ the core architecture is sound. the v0.01 benchmark is impressive (not as impres
 *beboppin*
 
 Important clarification note except for the occasional "I'll just fucking fix it myself it's one line moment" I can state that I had minimal manual interaction with the actual code base. I ranted into whisper and claude took care of the heavy lifting. thanks bud.
-
+- oh yeah the security protocols might have a few "weaknesess" or oversights. Fair warning.
 
 
 # Black Swarm: Technical Documentation
