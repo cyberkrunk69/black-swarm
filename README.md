@@ -46,13 +46,13 @@ This README prioritizes observable outputs. The "Observable Facts" section inclu
 5. Control panel (optional) streams action_log.jsonl and exposes pause/kill controls.
 
 ## Why this can be efficient (and not just "bots roleplaying")
-This system is a task pipeline with a collaborative layer. The core loop is:
-queue -> worker -> API call -> logged result. On top of that, the "role-play" layer is a deliberate structure for cross-pollination, critique, and reuse.
+This system is a social simulation designed to do work. The core loop is still:
+queue -> worker -> API call -> logged result. The social layer is not window dressing; it is the mechanism that drives cross-pollination, critique, and reuse.
 
-Why the collaborative layer can add real value (the rationale):
+Why the social layer can be performant and emergent:
 - Role separation reduces blind spots. Different workers can approach the same task with different prompts, constraints, or "personas," which surfaces alternatives and catches errors.
 - Critique and synthesis improve quality. The intended loop is propose -> review -> integrate, which mirrors how human teams improve reliability.
-- Shared memory compounds. Lessons, skills, and knowledge artifacts are stored in shared files (learned_lessons.json, skill_registry.py, knowledge_graph.py), so later workers can reuse what earlier workers discovered.
+- Cross-pollination compounds. Shared memory (learned_lessons.json, skill_registry.py, knowledge_graph.py) lets discoveries propagate between agents and sessions.
 - Incentives reward quality. The system tracks outcomes and can reward efficient, high-quality outputs (see performance_history.json and swarm_enrichment.py).
 
 Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions.
