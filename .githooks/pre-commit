@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # -------------------------------------------------
-# Pre‑commit hook: run the full pytest suite.
+# Pre‑commit hook: basic security scan + tests.
 # -------------------------------------------------
-echo "Running pytest before commit..."
-pytest --quiet
-RESULT=$?
-if [ $RESULT -ne 0 ]; then
-  echo "Tests failed – commit aborted."
-  exit 1
-fi
-exit 0
+set -euo pipefail
+
+echo "Running security scan..."
+python3 tools/security_scan.py
+
+echo "Running tests..."
+python3 -m pytest -q
