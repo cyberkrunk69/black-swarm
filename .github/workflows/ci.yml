@@ -20,6 +20,10 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest pytest-cov
+      - name: Scan structured files
+        run: python tools/scan_structured_files.py
+      - name: Scan workflow semantics
+        run: python tools/scan_workflow_semantics.py
       - name: Run tests with coverage
         run: |
           pytest --cov=./ --cov-report=xml
