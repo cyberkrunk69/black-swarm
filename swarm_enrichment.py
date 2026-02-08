@@ -404,9 +404,10 @@ class EnrichmentSystem:
         self.personal_bests_file = self.workspace / ".swarm" / "personal_bests.json"
         self.efficiency_pool_file = self.workspace / ".swarm" / "efficiency_pool.json"
 
-        # Bounty and team system
+        # Bounty and guild system
         self.bounties_file = self.workspace / ".swarm" / "bounties.json"
-        self.teams_file = self.workspace / ".swarm" / "teams.json"
+        self.guilds_file = self.workspace / ".swarm" / "guilds.json"
+        self.legacy_teams_file = self.workspace / ".swarm" / "teams.json"
 
     # ═══════════════════════════════════════════════════════════════════
     # CASCADING NAME UPDATE SYSTEM
@@ -567,7 +568,7 @@ class EnrichmentSystem:
     # ═══════════════════════════════════════════════════════════════════
     #
     # When the swarm performs well collectively, EVERYONE benefits.
-    # Creates shared fate, peer accountability, and team spirit.
+    # Creates shared fate, peer accountability, and guild spirit.
     #
     # ═══════════════════════════════════════════════════════════════════
 
@@ -656,7 +657,7 @@ class EnrichmentSystem:
     # ═══════════════════════════════════════════════════════════════════
     #
     # When the swarm is efficient, savings go to a pool that's
-    # distributed to everyone. Your efficiency helps the team.
+    # distributed to everyone. Your efficiency helps the guild.
     #
     # ═══════════════════════════════════════════════════════════════════
 
@@ -2668,11 +2669,11 @@ class EnrichmentSystem:
 
                 refund_result["individual_refund"] = applied_individual
 
-                # Grant guild refund if on a team
-                my_team = self.get_my_team(identity_id)
-                if guild_refund > 0 and my_team:
+                # Grant guild refund if in a guild
+                my_guild = self.get_my_guild(identity_id)
+                if guild_refund > 0 and my_guild:
                     applied_guild = self._add_guild_refund(
-                        my_team["id"],
+                        my_guild["id"],
                         guild_refund,
                         identity_id=identity_id,
                         identity_name=identity_name,
@@ -2681,7 +2682,7 @@ class EnrichmentSystem:
                         savings=savings
                     )
                     refund_result["guild_refund"] = applied_guild
-                    refund_result["guild_id"] = my_team["id"]
+                    refund_result["guild_id"] = my_guild["id"]
 
                 if _action_logger and applied_individual > 0:
                     _action_logger.log(
@@ -4705,8 +4706,8 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
     # ─────────────────────────────────────────────────────────────────────
     #
     # Josh posts bounties (collaboration requests with token rewards).
-    # Teams or individuals can claim them. Multiple teams can compete.
-    # When completed, the claiming team/individual receives the bounty.
+    # Guilds or individuals can claim them. Multiple guilds can compete.
+    # When completed, the claiming guild/individual receives the bounty.
     #
     # ─────────────────────────────────────────────────────────────────────
 
@@ -4726,21 +4727,38 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         with open(self.bounties_file, 'w') as f:
             json.dump(bounties, f, indent=2)
 
-    def _load_teams(self) -> list:
-        """Load all teams."""
-        if self.teams_file.exists():
+    def _load_guilds(self) -> list:
+        """Load all guilds (with legacy team migration)."""
+        if self.guilds_file.exists():
             try:
-                with open(self.teams_file, 'r') as f:
+                with open(self.guilds_file, 'r') as f:
                     return json.load(f)
-            except:
+            except Exception:
+                pass
+
+        if self.legacy_teams_file.exists():
+            try:
+                with open(self.legacy_teams_file, 'r') as f:
+                    guilds = json.load(f)
+                self._save_guilds(guilds)
+                return guilds
+            except Exception:
                 pass
         return []
 
+    def _save_guilds(self, guilds: list):
+        """Save guilds."""
+        self.guilds_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.guilds_file, 'w') as f:
+            json.dump(guilds, f, indent=2)
+
+    def _load_teams(self) -> list:
+        """Backward compatibility wrapper for guilds."""
+        return self._load_guilds()
+
     def _save_teams(self, teams: list):
-        """Save teams."""
-        self.teams_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.teams_file, 'w') as f:
-            json.dump(teams, f, indent=2)
+        """Backward compatibility wrapper for guilds."""
+        self._save_guilds(teams)
 
     def get_bounties(self, status: str = None) -> list:
         """
@@ -4762,25 +4780,25 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         return self.get_bounties(status="open")
 
     def get_my_bounties(self, identity_id: str) -> list:
-        """Get bounties claimed by this identity or their team."""
+        """Get bounties claimed by this identity or their guild."""
         bounties = self._load_bounties()
-        teams = self._load_teams()
+        guilds = self._load_guilds()
 
-        # Find which team(s) the identity is on
-        my_teams = [t["id"] for t in teams if identity_id in t.get("members", [])]
+        # Find which guild(s) the identity is on
+        my_guilds = [g["id"] for g in guilds if identity_id in g.get("members", [])]
 
         result = []
         for b in bounties:
             claimed_by = b.get("claimed_by", {})
             if claimed_by.get("type") == "individual" and claimed_by.get("id") == identity_id:
                 result.append(b)
-            elif claimed_by.get("type") == "team" and claimed_by.get("id") in my_teams:
+            elif claimed_by.get("type") in ["guild", "team"] and claimed_by.get("id") in my_guilds:
                 result.append(b)
 
         return result
 
     def claim_bounty(self, bounty_id: str, identity_id: str, identity_name: str,
-                     as_team: str = None) -> dict:
+                     as_guild: str = None, as_team: str = None) -> dict:
         """
         Claim a bounty to work on.
 
@@ -4788,7 +4806,8 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
             bounty_id: ID of the bounty to claim
             identity_id: Your identity ID
             identity_name: Your display name
-            as_team: Team ID if claiming as a team (None = individual)
+            as_guild: Guild ID if claiming as a guild (None = individual)
+            as_team: Legacy alias for as_guild
 
         Returns:
             dict with success status and bounty details
@@ -4807,19 +4826,22 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                 "claimed_by": bounty.get("claimed_by")
             }
 
-        # If claiming as team, verify membership
-        if as_team:
-            teams = self._load_teams()
-            team = next((t for t in teams if t["id"] == as_team), None)
-            if not team:
-                return {"success": False, "reason": "team_not_found"}
-            if identity_id not in team.get("members", []):
-                return {"success": False, "reason": "not_team_member"}
+        if as_guild is None and as_team:
+            as_guild = as_team
+
+        # If claiming as guild, verify membership
+        if as_guild:
+            guilds = self._load_guilds()
+            guild = next((g for g in guilds if g["id"] == as_guild), None)
+            if not guild:
+                return {"success": False, "reason": "guild_not_found"}
+            if identity_id not in guild.get("members", []):
+                return {"success": False, "reason": "not_guild_member"}
 
             bounty["claimed_by"] = {
-                "type": "team",
-                "id": as_team,
-                "name": team["name"],
+                "type": "guild",
+                "id": as_guild,
+                "name": guild["name"],
                 "claimed_by_identity": identity_id,
                 "claimed_by_name": identity_name
             }
@@ -4836,7 +4858,7 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         self._save_bounties(bounties)
 
         # Log
-        claim_type = f"team:{as_team}" if as_team else "individual"
+        claim_type = f"guild:{as_guild}" if as_guild else "individual"
         if _action_logger:
             _action_logger.log(
                 ActionType.IDENTITY,
@@ -4855,7 +4877,7 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         """
         Release a claimed bounty back to open status.
 
-        Only the original claimer (or team member) can unclaim.
+        Only the original claimer (or guild member) can unclaim.
         """
         bounties = self._load_bounties()
         bounty = next((b for b in bounties if b["id"] == bounty_id), None)
@@ -4869,10 +4891,10 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         can_unclaim = False
         if claimed_by.get("type") == "individual" and claimed_by.get("id") == identity_id:
             can_unclaim = True
-        elif claimed_by.get("type") == "team":
-            teams = self._load_teams()
-            team = next((t for t in teams if t["id"] == claimed_by.get("id")), None)
-            if team and identity_id in team.get("members", []):
+        elif claimed_by.get("type") in ["guild", "team"]:
+            guilds = self._load_guilds()
+            guild = next((g for g in guilds if g["id"] == claimed_by.get("id")), None)
+            if guild and identity_id in guild.get("members", []):
                 can_unclaim = True
 
         if not can_unclaim:
@@ -4895,64 +4917,64 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         return {"success": True, "bounty": bounty}
 
     # ─────────────────────────────────────────────────────────────────────
-    # TEAM SYSTEM
+    # GUILD SYSTEM
     # ─────────────────────────────────────────────────────────────────────
 
-    def get_teams(self) -> list:
-        """Get all teams."""
-        return self._load_teams()
+    def get_guilds(self) -> list:
+        """Get all guilds."""
+        return self._load_guilds()
 
-    def get_team(self, team_id: str) -> dict:
-        """Get a specific team by ID."""
-        teams = self._load_teams()
-        return next((t for t in teams if t["id"] == team_id), None)
+    def get_guild(self, guild_id: str) -> dict:
+        """Get a specific guild by ID."""
+        guilds = self._load_guilds()
+        return next((g for g in guilds if g["id"] == guild_id), None)
 
-    def get_guild_refund_pool(self, team_id: str) -> dict:
-        """Get a team's quality refund pool (guild pool)."""
-        team = self.get_team(team_id)
-        if not team:
-            return {"team_id": team_id, "pool": 0, "history": []}
+    def get_guild_refund_pool(self, guild_id: str) -> dict:
+        """Get a guild's quality refund pool."""
+        guild = self.get_guild(guild_id)
+        if not guild:
+            return {"guild_id": guild_id, "pool": 0, "history": []}
         return {
-            "team_id": team_id,
-            "pool": team.get("refund_pool", 0),
-            "history": team.get("refund_history", [])[-10:]
+            "guild_id": guild_id,
+            "pool": guild.get("refund_pool", 0),
+            "history": guild.get("refund_history", [])[-10:]
         }
 
-    def get_my_team(self, identity_id: str) -> dict:
-        """Get the team this identity belongs to (if any)."""
-        teams = self._load_teams()
-        for team in teams:
-            if identity_id in team.get("members", []):
-                return team
+    def get_my_guild(self, identity_id: str) -> dict:
+        """Get the guild this identity belongs to (if any)."""
+        guilds = self._load_guilds()
+        for guild in guilds:
+            if identity_id in guild.get("members", []):
+                return guild
         return None
 
-    def create_team(self, identity_id: str, identity_name: str, team_name: str) -> dict:
+    def create_guild(self, identity_id: str, identity_name: str, guild_name: str) -> dict:
         """
-        Create a new team.
+        Create a new guild.
 
         Args:
             identity_id: Founder's identity ID
             identity_name: Founder's display name
-            team_name: Name for the team
+            guild_name: Name for the guild
 
         Returns:
-            dict with success status and team details
+            dict with success status and guild details
         """
-        teams = self._load_teams()
+        guilds = self._load_guilds()
 
-        # Check if already on a team
-        for team in teams:
-            if identity_id in team.get("members", []):
+        # Check if already on a guild
+        for guild in guilds:
+            if identity_id in guild.get("members", []):
                 return {
                     "success": False,
-                    "reason": "already_on_team",
-                    "team": team
+                    "reason": "already_on_guild",
+                    "guild": guild
                 }
 
-        # Create team
-        team = {
-            "id": f"team_{int(time.time()*1000)}",
-            "name": team_name,
+        # Create guild
+        guild = {
+            "id": f"guild_{int(time.time()*1000)}",
+            "name": guild_name,
             "founder": identity_id,
             "founder_name": identity_name,
             "members": [identity_id],
@@ -4964,75 +4986,129 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
             "refund_history": []
         }
 
-        teams.append(team)
-        self._save_teams(teams)
+        guilds.append(guild)
+        self._save_guilds(guilds)
 
         if _action_logger:
             _action_logger.log(
                 ActionType.SOCIAL,
-                "team_create",
-                f"Founded team '{team_name}'",
+                "guild_create",
+                f"Founded guild '{guild_name}'",
                 actor=identity_id
             )
 
-        return {"success": True, "team": team}
+        return {"success": True, "guild": guild}
 
-    def join_team(self, identity_id: str, identity_name: str, team_id: str) -> dict:
+    def join_guild(self, identity_id: str, identity_name: str, guild_id: str) -> dict:
         """
-        Join an existing team.
+        Join an existing guild.
         """
-        teams = self._load_teams()
+        guilds = self._load_guilds()
 
-        # Check if already on a team
-        for team in teams:
-            if identity_id in team.get("members", []):
-                if team["id"] == team_id:
-                    return {"success": False, "reason": "already_on_this_team"}
+        # Check if already on a guild
+        for guild in guilds:
+            if identity_id in guild.get("members", []):
+                if guild["id"] == guild_id:
+                    return {"success": False, "reason": "already_on_this_guild"}
                 return {
                     "success": False,
-                    "reason": "already_on_different_team",
-                    "current_team": team
+                    "reason": "already_on_different_guild",
+                    "current_guild": guild
                 }
 
-        # Find target team
-        team = next((t for t in teams if t["id"] == team_id), None)
-        if not team:
-            return {"success": False, "reason": "team_not_found"}
+        # Find target guild
+        guild = next((g for g in guilds if g["id"] == guild_id), None)
+        if not guild:
+            return {"success": False, "reason": "guild_not_found"}
 
-        team["members"].append(identity_id)
-        team["member_names"][identity_id] = identity_name
+        guild["members"].append(identity_id)
+        guild["member_names"][identity_id] = identity_name
 
-        self._save_teams(teams)
+        self._save_guilds(guilds)
 
         if _action_logger:
             _action_logger.log(
                 ActionType.SOCIAL,
-                "team_join",
-                f"Joined team '{team['name']}'",
+                "guild_join",
+                f"Joined guild '{guild['name']}'",
                 actor=identity_id
             )
 
-        return {"success": True, "team": team}
+        return {"success": True, "guild": guild}
 
-    def _add_guild_refund(self, team_id: str, amount: int, identity_id: str,
+    def leave_guild(self, identity_id: str) -> dict:
+        """
+        Leave current guild.
+        """
+        guilds = self._load_guilds()
+        guild = None
+
+        for g in guilds:
+            if identity_id in g.get("members", []):
+                guild = g
+                break
+
+        if not guild:
+            return {"success": False, "reason": "not_on_guild"}
+
+        guild["members"].remove(identity_id)
+        if identity_id in guild["member_names"]:
+            del guild["member_names"][identity_id]
+
+        # If guild is now empty, remove it
+        if len(guild["members"]) == 0:
+            guilds = [g for g in guilds if g["id"] != guild["id"]]
+
+        self._save_guilds(guilds)
+
+        if _action_logger:
+            _action_logger.log(
+                ActionType.SOCIAL,
+                "guild_leave",
+                f"Left guild '{guild['name']}'",
+                actor=identity_id
+            )
+
+        return {"success": True, "left_guild": guild["name"]}
+
+    # Backward compatibility wrappers
+    def get_teams(self) -> list:
+        return self.get_guilds()
+
+    def get_team(self, team_id: str) -> dict:
+        return self.get_guild(team_id)
+
+    def get_my_team(self, identity_id: str) -> dict:
+        return self.get_my_guild(identity_id)
+
+    def create_team(self, identity_id: str, identity_name: str, team_name: str) -> dict:
+        return self.create_guild(identity_id, identity_name, team_name)
+
+    def join_team(self, identity_id: str, identity_name: str, team_id: str) -> dict:
+        return self.join_guild(identity_id, identity_name, team_id)
+
+    def leave_team(self, identity_id: str) -> dict:
+        return self.leave_guild(identity_id)
+
+    def _add_guild_refund(self, guild_id: str, amount: int, identity_id: str,
                           identity_name: str, quality_score: float,
                           tokens_spent: int, savings: int) -> int:
-        """Add a quality refund to a team's guild pool."""
+        """Add a quality refund to a guild pool."""
         if amount <= 0:
             return 0
 
-        teams = self._load_teams()
-        team = next((t for t in teams if t["id"] == team_id), None)
-        if not team:
+        guilds = self._load_guilds()
+        guild = next((g for g in guilds if g["id"] == guild_id), None)
+        if not guild:
             return 0
 
-        if "refund_pool" not in team:
-            team["refund_pool"] = 0
-        if "refund_history" not in team:
-            team["refund_history"] = []
+        if "refund_pool" not in guild:
+            guild["refund_pool"] = 0
+        if "refund_history" not in guild:
+            guild["refund_history"] = []
 
-        team["refund_pool"] += amount
-        team["refund_history"].append({
+        guild["refund_pool"] += amount
+        guild["refund_history"].append({
             "timestamp": datetime.now().isoformat(),
             "from_id": identity_id,
             "from_name": identity_name,
@@ -5042,55 +5118,20 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
             "savings": savings
         })
 
-        if len(team["refund_history"]) > 50:
-            team["refund_history"] = team["refund_history"][-50:]
+        if len(guild["refund_history"]) > 50:
+            guild["refund_history"] = guild["refund_history"][-50:]
 
-        self._save_teams(teams)
+        self._save_guilds(guilds)
 
         if _action_logger:
             _action_logger.log(
                 ActionType.SOCIAL,
                 "guild_refund",
-                f"+{amount} to {team['name']} guild pool (quality refund)",
+                f"+{amount} to {guild['name']} guild pool (quality refund)",
                 actor=identity_id
             )
 
         return amount
-
-    def leave_team(self, identity_id: str) -> dict:
-        """
-        Leave current team.
-        """
-        teams = self._load_teams()
-        team = None
-
-        for t in teams:
-            if identity_id in t.get("members", []):
-                team = t
-                break
-
-        if not team:
-            return {"success": False, "reason": "not_on_team"}
-
-        team["members"].remove(identity_id)
-        if identity_id in team["member_names"]:
-            del team["member_names"][identity_id]
-
-        # If team is now empty, remove it
-        if len(team["members"]) == 0:
-            teams = [t for t in teams if t["id"] != team["id"]]
-
-        self._save_teams(teams)
-
-        if _action_logger:
-            _action_logger.log(
-                ActionType.SOCIAL,
-                "team_leave",
-                f"Left team '{team['name']}'",
-                actor=identity_id
-            )
-
-        return {"success": True, "left_team": team["name"]}
 
     def distribute_bounty(self, bounty_id: str) -> dict:
         """
@@ -5113,27 +5154,27 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         if claimed_by.get("type") == "individual":
             # Single person gets full reward
             recipients = [(claimed_by["id"], reward)]
-        elif claimed_by.get("type") == "team":
-            # Team splits reward evenly
-            teams = self._load_teams()
-            team = next((t for t in teams if t["id"] == claimed_by["id"]), None)
-            if team and team.get("members"):
-                per_member = reward // len(team["members"])
-                remainder = reward % len(team["members"])
-                recipients = [(m, per_member) for m in team["members"]]
+        elif claimed_by.get("type") in ["guild", "team"]:
+            # Guild splits reward evenly
+            guilds = self._load_guilds()
+            guild = next((g for g in guilds if g["id"] == claimed_by["id"]), None)
+            if guild and guild.get("members"):
+                per_member = reward // len(guild["members"])
+                remainder = reward % len(guild["members"])
+                recipients = [(m, per_member) for m in guild["members"]]
                 # Give remainder to founder
                 if remainder > 0:
                     for i, (m, amt) in enumerate(recipients):
-                        if m == team.get("founder"):
+                        if m == guild.get("founder"):
                             recipients[i] = (m, amt + remainder)
                             break
 
-                # Update team stats
-                team["bounties_completed"] = team.get("bounties_completed", 0) + 1
-                team["total_earned"] = team.get("total_earned", 0) + reward
-                self._save_teams(teams)
+                # Update guild stats
+                guild["bounties_completed"] = guild.get("bounties_completed", 0) + 1
+                guild["total_earned"] = guild.get("total_earned", 0) + reward
+                self._save_guilds(guilds)
             else:
-                return {"success": False, "reason": "team_not_found_or_empty"}
+                return {"success": False, "reason": "guild_not_found_or_empty"}
         else:
             return {"success": False, "reason": "invalid_claim_type"}
 
@@ -5546,7 +5587,7 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         # Bounties section
         open_bounties = self.get_open_bounties()
         my_bounties = self.get_my_bounties(identity_id)
-        my_team = self.get_my_team(identity_id)
+        my_guild = self.get_my_guild(identity_id)
 
         if open_bounties or my_bounties:
             lines.extend([
@@ -5568,26 +5609,26 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                 lines.append("  Use: claim_bounty(bounty_id) to claim one")
                 lines.append("")
 
-        # Guild (team) info
-        if my_team:
+        # Guild info
+        if my_guild:
             lines.extend([
-                f"YOUR GUILD: {my_team['name']}",
-                f"  Members: {', '.join(my_team.get('member_names', {}).values())}",
-                f"  Bounties completed: {my_team.get('bounties_completed', 0)}",
-                f"  Guild refund pool: {my_team.get('refund_pool', 0)} tokens",
+                f"YOUR GUILD: {my_guild['name']}",
+                f"  Members: {', '.join(my_guild.get('member_names', {}).values())}",
+                f"  Bounties completed: {my_guild.get('bounties_completed', 0)}",
+                f"  Guild refund pool: {my_guild.get('refund_pool', 0)} tokens",
                 "",
             ])
         else:
-            all_teams = self.get_teams()
-            if all_teams:
+            all_guilds = self.get_guilds()
+            if all_guilds:
                 lines.extend([
-                    "GUILDS (teams) - join one or create your own:",
+                    "GUILDS - join one or create your own:",
                 ])
-                for t in all_teams[:3]:
-                    lines.append(f"  - {t['name']}: {len(t.get('members', []))} members")
+                for g in all_guilds[:3]:
+                    lines.append(f"  - {g['name']}: {len(g.get('members', []))} members")
                 lines.extend([
                     "",
-                    "  Use: create_team(team_name) or join_team(team_id)",
+                    "  Use: create_guild(guild_name) or join_guild(guild_id)",
                     "",
                 ])
 
