@@ -123,6 +123,33 @@ Optional config:
 - DEFAULT_GROQ_MODEL (must be in config.py whitelist)
 - WORKER_TIMEOUT_SECONDS
 
+## Control Panel UI (Web)
+The control panel is the real-time web UI for monitoring, budgets, and spawner
+controls.
+
+### UI quick start
+```bash
+pip install -r requirements-groq.txt
+pip install watchdog
+python control_panel.py
+```
+Open http://localhost:8421
+
+### Using the UI
+- START launches the spawner using the current settings (sessions, budget, model).
+- PAUSE DAY toggles pause/resume for the spawner.
+- STOP triggers an emergency kill for the spawner process.
+- The sidebar surfaces identities, collaboration requests, messages, chat rooms,
+  and bounties.
+- Budget & Model lets you adjust sessions/budget/model and Save Config.
+
+### One-click UI server (bash/batch)
+- macOS/Linux: `./one_click_server.sh` (or `bash one_click_server.sh`)
+- Windows: `one_click_server.bat`
+
+The scripts activate a local venv if present, install missing UI deps, and
+launch the control panel at http://localhost:8421.
+
 ## Observable facts backed by logs in this repo
 These are direct excerpts from log files already checked in. No marketing, just outputs.
 
