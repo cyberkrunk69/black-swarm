@@ -47,13 +47,30 @@ import os
 ADMIN_PORT = int(os.getenv("ADMIN_PORT", "8080"))
 LAN_PORT = int(os.getenv("LAN_PORT", "8081"))
 
-# LAN whitelist – only these IPv4 addresses are allowed to talk to the LAN
-# server.  Use CIDR notation or a simple list; for simplicity we use a list.
-LAN_WHITELIST = {
-    "192.168.1.0/24",   # typical home/office LAN
-    "10.0.0.0/8",       # corporate LANs
-    "172.16.0.0/12",    # private networks
-}
+# Safe-by-default binding: do not expose LAN services unless explicitly enabled.
+ADMIN_BIND_HOST = os.getenv("ADMIN_BIND_HOST", "127.0.0.1")
+LAN_BIND_HOST = os.getenv("LAN_BIND_HOST", "127.0.0.1")
+
+def _parse_bool(value: str, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+# LAN whitelist – CIDR ranges allowed to talk to the LAN server.
+# Default is empty (no LAN access). To enable broad private ranges, set:
+#   LAN_ALLOW_PRIVATE_RANGES=1
+# or provide explicit CIDRs:
+#   LAN_WHITELIST_CIDRS="192.168.1.10/32,192.168.1.0/24"
+LAN_ALLOW_PRIVATE_RANGES = _parse_bool(os.getenv("LAN_ALLOW_PRIVATE_RANGES", "0"))
+
+def _load_lan_whitelist() -> set[str]:
+    cidrs_raw = os.getenv("LAN_WHITELIST_CIDRS", "")
+    cidrs = {c.strip() for c in cidrs_raw.split(",") if c.strip()}
+    if LAN_ALLOW_PRIVATE_RANGES:
+        cidrs |= {"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"}
+    return cidrs
+
+LAN_WHITELIST = _load_lan_whitelist()
 
 # --------------------------------------------------------------------------- #
 # Privilege model
@@ -172,7 +189,7 @@ class AdminServer:
     reaches this server is automatically considered ADMIN privilege.
     """
 
-    def __init__(self, host="127.0.0.1", port=ADMIN_PORT):
+    def __init__(self, host=ADMIN_BIND_HOST, port=ADMIN_PORT):
         self.host = host
         self.port = port
         self.httpd = HTTPServer((self.host, self.port), DualRequestHandler)
@@ -190,7 +207,7 @@ class LANServer:
     with a 403.
     """
 
-    def __init__(self, host="0.0.0.0", port=LAN_PORT):
+    def __init__(self, host=LAN_BIND_HOST, port=LAN_PORT):
         self.host = host
         self.port = port
         self.httpd = HTTPServer((self.host, self.port), DualRequestHandler)
@@ -247,4 +264,4 @@ def start_lan_servers_background():
     lan_thread = threading.Thread(target=_run_lan, daemon=True, name="LANServer")
     admin_thread.start()
     lan_thread.start()
-    print("[LAN] AdminServer (127.0.0.1:8080) and LANServer (0.0.0.0:8081) started")
+    print(f"[LAN] AdminServer ({ADMIN_BIND_HOST}:{ADMIN_PORT}) and LANServer ({LAN_BIND_HOST}:{LAN_PORT}) started")

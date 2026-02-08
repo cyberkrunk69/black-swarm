@@ -1,0 +1,16 @@
+.git
+.github
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.checkpoints/
+.grind_cache/
+server.log
+*.log
+tool_operations.json
+git_proxy_clone_output.txt

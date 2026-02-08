@@ -1,34 +1,24 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # =============================================================================
-# BLACK SWARM - Network Isolated Self-Improving AI Runtime
-# Supports both Claude Code CLI and Groq API backends
+# BLACK SWARM - Safe-by-default container runtime
+#
+# Security notes:
+# - Avoids `curl | bash` installers.
+# - Does NOT auto-install external CLIs (e.g. Claude Code) during image build.
 # =============================================================================
 
-# Install system dependencies including Node.js for Claude Code
+# Minimal system dependencies (keep this list tight)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    iptables \
-    dnsutils \
-    iproute2 \
-    procps \
-    git \
-    curl \
     ca-certificates \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js (required for Claude Code CLI)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
-
-# Install Python dependencies
-COPY requirements-groq.txt .
-RUN pip install --no-cache-dir -r requirements-groq.txt
+# Install Python dependencies (API server + optional dashboard dependencies)
+COPY requirements.txt requirements-groq.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-groq.txt
 
 # Copy application code
 COPY . .
@@ -54,4 +44,4 @@ ENV INFERENCE_ENGINE=auto
 USER swarm
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["python", "grind_spawner_unified.py", "--delegate", "--budget", "1.00", "--once"]
+CMD ["python", "-m", "uvicorn", "swarm:app", "--host", "0.0.0.0", "--port", "8420"]

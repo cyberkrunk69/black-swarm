@@ -3418,10 +3418,19 @@ def push_identities_periodically():
 
 
 if __name__ == '__main__':
+    # Safe-by-default binding:
+    # - Bind to 127.0.0.1 unless explicitly overridden (e.g., in Docker).
+    # - Debug/reloader are opt-in via environment variables.
+    host = os.getenv("SWARM_CONTROL_PANEL_HOST", "127.0.0.1")
+    port = int(os.getenv("SWARM_CONTROL_PANEL_PORT", "8421"))
+    debug = os.getenv("SWARM_CONTROL_PANEL_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+    use_reloader = os.getenv("SWARM_CONTROL_PANEL_RELOADER", "0").lower() in ("1", "true", "yes", "on")
+
     print("=" * 60)
     print("SWARM CONTROL PANEL")
     print("=" * 60)
-    print(f"Open: http://localhost:8421")
+    # For convenience, always print a localhost URL even if binding to 0.0.0.0.
+    print(f"Open: http://localhost:{port}")
     print(f"Watching: {ACTION_LOG}")
     print("=" * 60)
 
@@ -3429,5 +3438,4 @@ if __name__ == '__main__':
     threading.Thread(target=background_watcher, daemon=True).start()
     threading.Thread(target=push_identities_periodically, daemon=True).start()
 
-    # debug=True enables auto-reload when files change
-    socketio.run(app, host='0.0.0.0', port=8421, debug=True, use_reloader=True)
+    socketio.run(app, host=host, port=port, debug=debug, use_reloader=use_reloader)

@@ -20,8 +20,7 @@ class NetworkGuard:
         self.whitelist: Set[str] = {
             '127.0.0.1',
             'localhost',
-            '::1',
-            '0.0.0.0'
+            '::1'
         }
 
         # Blocked patterns: external network protocols
