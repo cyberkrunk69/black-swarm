@@ -128,6 +128,10 @@ Optional config:
 - RESIDENT_SCAN_LIMIT (max tasks scanned per loop; 0 = full)
 - RESIDENT_SUBTASK_PARALLELISM (parallelism for delegated subtasks)
 
+Optional queue sharding:
+- Create queue_shards/queue_<shard_id>.json files and set RESIDENT_SHARD_COUNT.
+- When queue_shards/ exists, residents read only their shard file.
+
 ## Control Panel UI (Web)
 The control panel is the real-time web UI for monitoring, budgets, and spawner
 controls.

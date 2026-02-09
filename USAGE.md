@@ -34,6 +34,10 @@ Add tasks manually and run residents to execute them.
 - RESIDENT_SUBTASK_PARALLELISM: parallelism for delegated subtasks.
 - RESIDENT_BACKOFF_MAX / RESIDENT_JITTER_MAX: tune idle backoff.
 
+Queue shard files (optional):
+- Create queue_shards/queue_<shard_id>.json files and set RESIDENT_SHARD_COUNT.
+- When queue_shards/ exists, residents read only their shard file.
+
 ### Step 1: Clear Previous State (optional)
 ```bash
 rm -f task_locks/*.lock

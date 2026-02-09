@@ -49,6 +49,7 @@ except ImportError:
 # ============================================================================
 WORKSPACE: Path = Path(__file__).parent
 QUEUE_FILE: Path = WORKSPACE / "queue.json"
+QUEUE_SHARDS_DIR: Path = WORKSPACE / "queue_shards"
 LOCKS_DIR: Path = WORKSPACE / "task_locks"
 EXECUTION_LOG: Path = WORKSPACE / "execution_log.jsonl"
 
@@ -105,9 +106,18 @@ def ensure_directories() -> None:
         raise
 
 
-def read_queue() -> Dict[str, Any]:
+def _resolve_queue_path(shard_id: Optional[int]) -> Tuple[Path, bool]:
+    if shard_id is None:
+        return QUEUE_FILE, False
+    if QUEUE_SHARDS_DIR.exists():
+        return QUEUE_SHARDS_DIR / f"queue_{shard_id}.json", True
+    return QUEUE_FILE, False
+
+
+def read_queue(shard_id: Optional[int] = None) -> Dict[str, Any]:
     """Read the shared queue file (never write to it from residents)."""
-    data = read_json(QUEUE_FILE, default=None)
+    queue_path, _ = _resolve_queue_path(shard_id)
+    data = read_json(queue_path, default=None)
     if not data:
         return {"tasks": [], "completed": [], "failed": []}
     return data
@@ -740,7 +750,7 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
                 break
 
             try:
-                queue = read_queue()
+                queue = read_queue(shard_id=shard_id)
 
                 if find_and_execute_task(queue, resident_ctx, DEFAULT_MIN_SCORE, shard_id):
                     iterations += 1
