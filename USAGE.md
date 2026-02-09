@@ -5,7 +5,7 @@ This guide covers common workflows for the Vivarium parallel task orchestration 
 ## Architecture Overview
 
 - **swarm.py** - FastAPI server with `/grind`, `/plan`, and `/status` endpoints
-- **worker.py** - Volunteer worker that claims and executes tasks using file locks
+- **worker.py** - Resident runtime that claims and executes tasks using file locks
 - **queue.json** - Shared task board
 - **task_locks/** - Atomic lock files for parallel coordination
 - **execution_log.jsonl** - Append-only task events
@@ -25,16 +25,12 @@ export GROQ_API_KEY=your_key_here
 
 ## Workflow 1: Manual Task Execution (Volunteer Pull)
 
-Add tasks manually and run workers to execute them.
+Add tasks manually and run residents to execute them.
 
 ### Step 1: Clear Previous State (optional)
 ```bash
 rm -f task_locks/*.lock
 > execution_log.jsonl
-```
-Optional legacy helper:
-```bash
-python orchestrator.py clear
 ```
 
 ### Step 2: Add Tasks
@@ -53,19 +49,15 @@ python swarm.py
 # Server runs at http://127.0.0.1:8420
 ```
 
-### Step 4: Run Volunteer Workers (in other terminals)
+### Step 4: Run Resident Runtimes (in other terminals)
 ```bash
 python worker.py run
 ```
-Run as many worker processes as you want in parallel.
+Run as many resident processes as you want in parallel.
 
 ### Step 5: Check Status
 ```bash
 curl http://127.0.0.1:8420/status
-```
-Optional legacy helper:
-```bash
-python orchestrator.py status
 ```
 
 ---
@@ -89,16 +81,16 @@ This will:
 2. Send metadata to Llama 3.3 70B for analysis
 3. Write 3-5 improvement tasks to `queue.json`
 
-### Step 3: Run Volunteer Workers
+### Step 3: Run Resident Runtimes
 ```bash
 python worker.py run
 ```
 
 ---
 
-## Workflow 3: Single Worker Execution
+## Workflow 3: Single Resident Session
 
-Run a single worker for debugging or lightweight tasks.
+Run a single resident session for debugging or lightweight tasks.
 
 ```bash
 # Run indefinitely until no tasks remain
@@ -136,7 +128,7 @@ Sample output (JSONL entries):
 Review `execution_log.jsonl` for failed statuses.
 
 ### Clear Stale Locks
-If workers crashed, locks may be stale. They auto-expire after 5 minutes, or:
+If resident sessions crashed, locks may be stale. They auto-expire after 5 minutes, or:
 ```bash
 rm task_locks/*.lock
 ```
@@ -144,7 +136,7 @@ rm task_locks/*.lock
 ### Retry Failed Tasks
 1. Check `execution_log.jsonl` for failed task IDs
 2. Reset their status manually or clear and re-add
-3. Run workers again
+3. Run residents again
 
 ---
 
@@ -182,7 +174,7 @@ Open http://localhost:8421
 
 | File | Purpose |
 |------|---------|
-| `queue.json` | Task queue (read by workers, written by humans or /plan) |
+| `queue.json` | Task queue (read by residents, written by humans or /plan) |
 | `execution_log.jsonl` | Task status and progress tracking |
 | `task_locks/*.lock` | File-based locks for parallel coordination |
 
@@ -200,7 +192,7 @@ Open http://localhost:8421
 ```bash
 curl -X POST http://127.0.0.1:8420/grind \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Summarize the worker queue design"}'
+  -d '{"prompt": "Summarize the resident queue design"}'
 ```
 
 Response:
@@ -220,7 +212,7 @@ Response:
 - Ensure `swarm.py` is running: `python swarm.py`
 - Check it's on port 8420: `curl http://127.0.0.1:8420/status`
 
-### Workers Exit Immediately
+### Residents Exit Immediately
 - Check `queue.json` has tasks: `cat queue.json`
 - Verify tasks aren't already completed in `execution_log.jsonl`
 

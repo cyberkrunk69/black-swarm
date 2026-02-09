@@ -3,7 +3,7 @@
 ## System Overview
 
 Vivarium is a volunteer-first system: tasks are posted to a shared queue and
-workers self-select what to do. There is no mandatory central orchestrator.
+residents self-select what to do. There is no mandatory central coordinator.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -14,7 +14,7 @@ workers self-select what to do. There is no mandatory central orchestrator.
                  │                                  │
                  │                                  │
 ┌────────────────┴───────────────┐       ┌──────────┴───────────┐
-│ Volunteer Worker(s)            │       │ Optional Planner     │
+│ Resident Runtime(s)            │       │ Optional Planning    │
 │ worker.py run                  │       │ /plan (swarm.py)     │
 │ - Claims tasks via lock files  │       │ - Groq task planning │
 │ - Calls /grind                 │       │ - Writes queue.json  │
@@ -39,7 +39,7 @@ workers self-select what to do. There is no mandatory central orchestrator.
 - **queue.json**: Shared task board. Anyone can post tasks (manual edit or CLI helper).
 - **task_locks/**: Atomic file locks prevent duplicate execution.
 - **execution_log.jsonl**: Append-only task event log.
-- **worker.py**: Volunteer workers that pull tasks, lock, execute, and log.
+- **worker.py**: Resident runtimes that pull tasks, lock, execute, and log.
 - **swarm.py**: API that executes tasks (Groq LLM or local command).
 - **control_panel.py** (optional): UI to monitor, pause, and coordinate runs.
 
@@ -48,16 +48,16 @@ workers self-select what to do. There is no mandatory central orchestrator.
 1. **Task creation**
    - A human posts tasks to queue.json, or
    - `/plan` uses Groq to generate tasks and writes queue.json.
-2. **Volunteers join**
-   - Any number of workers run `python worker.py run`.
+2. **Residents join**
+   - Any number of residents run `python worker.py run`.
 3. **Lock-based claiming**
-   - Workers scan queue.json and acquire `task_locks/<task_id>.lock`.
+   - Residents scan queue.json and acquire `task_locks/<task_id>.lock`.
 4. **Execution**
-   - Workers call `/grind` with either:
+   - Residents call `/grind` with either:
      - LLM prompt (Groq) or
      - Local command (mode = local).
 5. **Logging**
-   - Workers append events to execution_log.jsonl and release locks.
+   - Residents append events to execution_log.jsonl and release locks.
 
 ## Proven Coordination Technique (Locks)
 
@@ -71,7 +71,7 @@ This preserves the reliability of parallel runs without a central controller.
 ## Ethics & Safety (New Design)
 
 The system is intentionally volunteer-first and consent-based:
-- **No coercion**: Workers choose tasks; no forced execution.
+- **No coercion**: Residents choose tasks; no forced execution.
 - **Transparent audits**: Logs are append-only and human-readable.
 - **Budget enforcement**: Hard limits in config and API wrapper.
 - **Sandboxing**: File and network safety checks before execution.

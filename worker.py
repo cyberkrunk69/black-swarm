@@ -1,7 +1,7 @@
 """
-Parallel Worker for Vivarium Volunteer Community
+Resident Runtime for Vivarium
 
-Uses file-based lock protocol for coordination between multiple workers.
+Uses file-based lock protocol for coordination between multiple residents.
 Lock Protocol from: EXECUTION_SWARM_SYSTEM.md (legacy orchestrator spec)
 
 Target API: http://127.0.0.1:8420 (Vivarium)
@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 import httpx
+from typing import Callable
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -25,6 +26,15 @@ from config import (
     validate_model_id,
     validate_config,
 )
+try:
+    from resident_onboarding import spawn_resident, ResidentContext
+except ImportError:
+    spawn_resident = None
+    ResidentContext = None
+try:
+    from resident_facets import decompose_task as resident_decompose_task
+except ImportError:
+    resident_decompose_task = None
 
 # ============================================================================
 # CONSTANTS
@@ -39,9 +49,11 @@ WORKER_CHECK_INTERVAL: float = 2.0  # Delay between queue checks in seconds
 MAX_IDLE_CYCLES: int = 10  # Exit after N consecutive idle checks
 DEFAULT_INTENSITY: str = "medium"
 DEFAULT_TASK_TYPE: str = "grind"
+DEFAULT_MIN_SCORE: float = float(os.environ.get("RESIDENT_MIN_SCORE", "0"))
 
-# Generate unique worker ID
-WORKER_ID: str = f"worker_{uuid.uuid4().hex[:8]}"
+# Generate unique resident ID (keep worker_id for compatibility in logs)
+RESIDENT_ID: str = f"resident_{uuid.uuid4().hex[:8]}"
+WORKER_ID: str = RESIDENT_ID
 
 
 # ============================================================================
@@ -56,7 +68,7 @@ def _log(level: str, message: str) -> None:
         message: Message to log
     """
     timestamp = get_timestamp()
-    print(f"[{timestamp}] [{level}] [{WORKER_ID}] {message}")
+    print(f"[{timestamp}] [{level}] [{RESIDENT_ID}] {message}")
 
 
 
@@ -71,7 +83,7 @@ def ensure_directories() -> None:
 
 
 def read_queue() -> Dict[str, Any]:
-    """Read the shared queue file (never write to it from workers)."""
+    """Read the shared queue file (never write to it from residents)."""
     data = read_json(QUEUE_FILE, default=None)
     if not data:
         return {"tasks": [], "completed": [], "failed": []}
@@ -104,6 +116,7 @@ def append_execution_event(task_id: str, status: str, **fields: Any) -> None:
     """Append an execution event to the JSONL log."""
     record = {
         "task_id": task_id,
+        "resident_id": RESIDENT_ID,
         "worker_id": WORKER_ID,
         "status": status,
         "timestamp": get_timestamp(),
@@ -149,9 +162,10 @@ def try_acquire_lock(task_id: str) -> bool:
             return False
 
     lock_data = {
+        "resident_id": RESIDENT_ID,
         "worker_id": WORKER_ID,
         "started_at": get_timestamp(),
-        "task_id": task_id
+        "task_id": task_id,
     }
 
     try:
@@ -196,7 +210,32 @@ def is_task_done(task_id: str, execution_log: Dict[str, Any]) -> bool:
     return task_status in ("completed", "failed")
 
 
-def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
+def _build_facet_plan_text(plan: Any) -> str:
+    lines = [
+        "RESIDENT FACET PLAN",
+        "Facets are optional focus modes. The resident remains the same identity.",
+        "",
+    ]
+    subtasks = getattr(plan, "subtasks", []) or []
+    for sub in subtasks:
+        desc = getattr(sub, "description", "")
+        focus = getattr(sub, "suggested_focus", None)
+        shard = getattr(sub, "shard_id", None)
+        line = f"- {desc}"
+        if focus:
+            line += f" (focus: {focus}"
+            if shard:
+                line += f", shard: {shard}"
+            line += ")"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def execute_task(
+    task: Dict[str, Any],
+    api_endpoint: str,
+    resident_ctx: Optional["ResidentContext"] = None,
+) -> Dict[str, Any]:
     """Execute a task by sending it to the Vivarium API."""
     task_id = task.get("id", "unknown")
     min_budget = task.get("min_budget", DEFAULT_MIN_BUDGET)
@@ -229,6 +268,18 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
 
     _log("INFO", f"Executing task {task_id} (budget: ${min_budget}-${max_budget}, intensity: {intensity})")
 
+    should_decompose = bool(task.get("decompose") or task.get("split") or task.get("facet"))
+    if resident_ctx and prompt and resident_decompose_task and should_decompose:
+        plan = resident_decompose_task(
+            prompt,
+            resident_id=resident_ctx.resident_id,
+            identity_id=resident_ctx.identity.identity_id,
+        )
+        prompt = f"{prompt}\n\n{_build_facet_plan_text(plan)}"
+
+    if resident_ctx and prompt:
+        prompt = resident_ctx.apply_to_prompt(prompt)
+
     payload = {
         "prompt": prompt,
         "model": model,
@@ -237,6 +288,9 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
         "intensity": intensity,
         "task_id": task_id,
     }
+    if resident_ctx:
+        payload["resident_id"] = resident_ctx.resident_id
+        payload["identity_id"] = resident_ctx.identity.identity_id
     if command:
         payload["task"] = command
     if mode:
@@ -288,7 +342,29 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
         }
 
 
-def find_and_execute_task(queue: Dict[str, Any]) -> bool:
+def _should_accept_task(
+    task: Dict[str, Any],
+    resident_ctx: Optional["ResidentContext"],
+    min_score: float,
+) -> Tuple[bool, str]:
+    if not resident_ctx:
+        return True, "no resident context"
+
+    identity_id = task.get("identity_id") or task.get("resident_identity")
+    if identity_id and identity_id != resident_ctx.identity.identity_id:
+        return False, "identity mismatch"
+
+    score, reason = resident_ctx.score_task(task)
+    if score < min_score:
+        return False, f"score {score:.2f} < {min_score:.2f} ({reason})"
+    return True, reason
+
+
+def find_and_execute_task(
+    queue: Dict[str, Any],
+    resident_ctx: Optional["ResidentContext"],
+    min_score: float,
+) -> bool:
     """Find an available task, lock it, execute it, and report results."""
     execution_log = read_execution_log()
     api_endpoint = queue.get("api_endpoint", "http://127.0.0.1:8420")
@@ -304,14 +380,27 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
         if not check_dependencies_complete(task, execution_log):
             continue
 
+        accept, reason = _should_accept_task(task, resident_ctx, min_score)
+        if not accept:
+            _log("INFO", f"Skipping {task_id} (voluntary): {reason}")
+            continue
+
         if not try_acquire_lock(task_id):
             continue
 
         _log("INFO", f"Acquired lock for {task_id}")
         try:
-            append_execution_event(task_id, "in_progress", started_at=get_timestamp())
+            identity_fields = {}
+            if resident_ctx:
+                identity_fields["identity_id"] = resident_ctx.identity.identity_id
+            append_execution_event(
+                task_id,
+                "in_progress",
+                started_at=get_timestamp(),
+                **identity_fields,
+            )
 
-            result = execute_task(task, api_endpoint)
+            result = execute_task(task, api_endpoint, resident_ctx=resident_ctx)
             append_execution_event(
                 task_id,
                 result["status"],
@@ -319,6 +408,7 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
                 result_summary=result.get("result_summary"),
                 errors=result.get("errors"),
                 model=result.get("model"),
+                **identity_fields,
             )
             _log("INFO", f"Completed task {task_id} - {result['status']}")
         finally:
@@ -331,10 +421,25 @@ def find_and_execute_task(queue: Dict[str, Any]) -> bool:
 
 
 def worker_loop(max_iterations: Optional[int] = None) -> None:
-    """Main worker loop. Continuously looks for and executes tasks."""
+    """Main resident loop. Continuously looks for and executes tasks."""
     try:
         ensure_directories()
-        _log("INFO", "Starting worker loop")
+        resident_ctx = None
+        if spawn_resident:
+            try:
+                resident_ctx = spawn_resident(WORKSPACE)
+                if not resident_ctx:
+                    _log("WARN", "No identity available this cycle; exiting.")
+                    return
+                _log(
+                    "INFO",
+                    f"Resident {resident_ctx.identity.name} ({resident_ctx.identity.identity_id}) "
+                    f"day {resident_ctx.day_count}, cycle {resident_ctx.cycle_id}",
+                )
+            except Exception as exc:
+                _log("WARN", f"Resident onboarding failed: {exc}")
+
+        _log("INFO", "Starting resident loop")
 
         iterations = 0
         idle_count = 0
@@ -347,7 +452,7 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
             try:
                 queue = read_queue()
 
-                if find_and_execute_task(queue):
+                if find_and_execute_task(queue, resident_ctx, DEFAULT_MIN_SCORE):
                     iterations += 1
                     idle_count = 0
                 else:
@@ -361,10 +466,10 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
                 _log("INFO", "Interrupted by user")
                 break
             except Exception as e:
-                _log("ERROR", f"Unexpected error in worker loop: {type(e).__name__}: {e}")
+                _log("ERROR", f"Unexpected error in resident loop: {type(e).__name__}: {e}")
                 raise
 
-        _log("INFO", f"Worker finished. Executed {iterations} tasks.")
+        _log("INFO", f"Resident finished. Executed {iterations} tasks.")
     except Exception as e:
         _log("ERROR", f"Fatal error in worker_loop: {type(e).__name__}: {e}")
         sys.exit(1)
@@ -423,8 +528,8 @@ if __name__ == "__main__":
                     sys.exit(1)
             else:
                 print("Usage:")
-                print("  python worker.py run [max_iterations]  - Start worker")
-                print("  python worker.py add <id> <instruction> [deps]  - Add task")
+            print("  python worker.py run [max_iterations]  - Start resident runtime")
+            print("  python worker.py add <id> <instruction> [deps]  - Add task")
                 sys.exit(1)
         else:
             worker_loop()

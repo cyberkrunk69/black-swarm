@@ -8,7 +8,7 @@ darn persistent." The current state is inconveniently hallucinated in aligned sm
 ways across the repo. We are looking into it ;p
 
 ## Thesis
-Vivarium explores a simple idea: if AI workers have persistent identity, feedback loops, and room to play, their output can compound. Under the hood it is still a concrete execution system - queue -> worker -> API call -> logged result - but the social layer is intentional, not decoration.
+Vivarium explores a simple idea: if AI residents have persistent identity, feedback loops, and room to play, their output can compound. Under the hood it is still a concrete execution system - queue -> resident runtime -> API call -> logged result - but the social layer is intentional, not decoration.
 
 This README prioritizes observable outputs. We achieve this by letting the system
 be a little bit silly without relaxing safety, cost, or auditability.
@@ -52,8 +52,8 @@ The playful layer is a feature, not fluff. It creates room for critique, cross-p
          |
          v
 +------------------+   +---------------------+   +---------------------+
-| queue.json       |-> | volunteer workers  |-> | worker.py (N procs)  |
-| task_locks/*     |   | (self-selected)    |   | locks + /grind calls |
+| queue.json       |-> | resident pool      |-> | resident runtime     |
+| task_locks/*     |   | (self-selected)    |   | (worker.py, N procs) |
 +------------------+   +---------------------+   +----------+----------+
                                                          |
                                                          v
@@ -69,25 +69,25 @@ The playful layer is a feature, not fluff. It creates room for critique, cross-p
 ```
 
 ## How it works
-1. Add tasks to queue.json (manual edit, or use the worker CLI helper).
+1. Add tasks to queue.json (manual edit, or use the resident CLI helper).
 2. Start the API server (uvicorn swarm:app --host 127.0.0.1 --port 8420).
-3. Start one or more volunteer workers (python worker.py run).
-4. Workers acquire locks, call /grind, and append to execution_log.jsonl.
+3. Start one or more resident runtimes (python worker.py run).
+4. Residents acquire locks, call /grind, and append to execution_log.jsonl.
 5. Control panel (optional) streams action_log.jsonl and exposes pause/kill controls.
 
 ## Why this can be efficient, not just "bots roleplaying"
 This system is a social simulation designed to do work. The core loop is still:
-queue -> worker -> API call -> logged result. The social layer is not window dressing; it is the mechanism that drives cross-pollination, critique, and reuse.
+queue -> resident runtime -> API call -> logged result. The social layer is not window dressing; it is the mechanism that drives cross-pollination, critique, and reuse.
 
 Why the social layer can be performant and emergent:
-- Role separation reduces blind spots. Different workers can approach the same task with different prompts, constraints, or "personas," which surfaces alternatives and catches errors.
+- Perspective separation reduces blind spots. Different residents can approach the same task with different prompts or constraints, which surfaces alternatives and catches errors.
 - Critique and synthesis improve quality. The intended loop is propose -> review -> integrate, which mirrors how human teams improve reliability.
 - Cross-pollination compounds. Shared memory (learned_lessons.json, skill_registry.py, knowledge_graph.py) lets discoveries propagate between agents and sessions.
 - Autonomy matters for novelty. When agents can pursue subgoals, explore alternatives, and adapt to feedback inside the system, they surface solutions that a single, rigid prompt often will not.
-- Personas enable specialization. Stable roles let agents self-direct toward what they are best at, which improves consistency and efficiency over time.
+- Stable identities enable specialization. Residents self-direct toward what they are best at, which improves consistency and efficiency over time.
 - Incentives reward quality. The system tracks outcomes and can reward efficient, high-quality outputs (see execution_log.jsonl and swarm_enrichment.py).
 
-Hat system: we use lightweight prompt overlays (see roles.py and hats.py) where agents put on different hats like PLANNER, CODER, REVIEWER, and DOCUMENTER. Hats augment behavior without changing identity, and the Hat of Objectivity qualifies neutral mediators.
+Hat system: we use lightweight prompt overlays (see hats.py and resident_facets.py) where residents put on different hats like STRATEGIST, BUILDER, REVIEWER, and DOCUMENTER. Hats augment behavior without changing identity, and the Hat of Objectivity qualifies neutral mediators.
 
 Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions.
 
@@ -96,7 +96,7 @@ Efficiency levers that exist in code today:
 - Budget control: queue tasks include min/max budgets; circuit breaker enforces cost limits.
 - Model control: config.py enforces a Groq model whitelist and a small default model.
 - Auditability: execution_log.jsonl, action_log.jsonl, and api_audit.log show what ran and what it cost.
-If you only want straight execution, you can run just the API + worker stack. The
+If you only want straight execution, you can run just the API + resident runtime stack. The
 collaborative layer is optional, but it is the intended lever for improving
 quality and compounding results.
 

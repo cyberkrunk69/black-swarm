@@ -2,11 +2,11 @@
 Vivarium Legacy Orchestrator (Optional)
 
 This file is retained for backwards compatibility. The preferred model is a
-volunteer community: workers self-select tasks from the queue without a central
+volunteer community: residents self-select tasks from the queue without a central
 controller. Use worker.py directly or the control panel for coordination.
 
 Usage:
-    python orchestrator.py start [num_workers] [--dry-run]  - Start legacy workers
+    python orchestrator.py start [num_workers] [--dry-run]  - Start legacy residents
     python orchestrator.py status                           - Show execution status
     python orchestrator.py add <id> <type> --prompt "..."  - Add a task to queue
     python orchestrator.py clear                            - Clear all tasks and logs

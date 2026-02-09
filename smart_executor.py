@@ -219,7 +219,7 @@ Create the file now."""
 
     def _build_prompt(self, task_text: str) -> str:
         """Build execution prompt for a task."""
-        return f"""You are an EXECUTION worker. DO THE WORK - don't just describe it.
+        return f"""You are an EXECUTION resident. DO THE WORK - don't just describe it.
 
 WORKSPACE: {self.workspace}
 
@@ -274,7 +274,7 @@ EXECUTE THE TASK NOW. Make real changes."""
         print("  SMART EXECUTOR - Dynamic Dependency Resolution")
         print("=" * 60)
         print(f"  Tasks: {len(self.task_templates)}")
-        print(f"  Workers: {self.scheduler.max_workers}")
+        print(f"  Residents: {self.scheduler.max_workers}")
         print("-" * 60)
 
         self.scheduler.run(block=True)

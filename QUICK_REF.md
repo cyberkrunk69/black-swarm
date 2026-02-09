@@ -6,17 +6,11 @@
 | `python brain.py health` | Check swarm health status | `python brain.py health` |
 | `python brain.py grind --budget AMOUNT` | Start a grind with specified budget | `python brain.py grind --budget 0.10` |
 
-## orchestrator.py (legacy helper)
+## resident runtime (worker.py)
 | Command | Description | Example |
 |---------|-------------|---------|
-| `python orchestrator.py status` | Show execution status summary | `python orchestrator.py status` |
-| `python orchestrator.py clear` | Clear all tasks, logs, and locks | `python orchestrator.py clear` |
-
-## worker.py
-| Command | Description | Example |
-|---------|-------------|---------|
-| `python worker.py run` | Start worker, run until no tasks (default) | `python worker.py run` |
-| `python worker.py run [N]` | Start worker, execute max N tasks | `python worker.py run 5` |
+| `python worker.py run` | Start resident runtime, run until no tasks (default) | `python worker.py run` |
+| `python worker.py run [N]` | Start resident runtime, execute max N tasks | `python worker.py run 5` |
 | `python worker.py add <id> <instruction>` | Add task programmatically | `python worker.py add task_001 "Run unit tests"` |
 | `python worker.py add <id> <instruction> <deps>` | Add task with dependencies (comma-separated) | `python worker.py add task_002 "Deploy" task_001` |
 
@@ -34,7 +28,7 @@
 ## Key Configuration Files
 | File | Purpose |
 |------|---------|
-| `queue.json` | Task queue (workers read; humans or /plan write) |
+| `queue.json` | Task queue (residents read; humans or /plan write) |
 | `execution_log.jsonl` | Task execution status and progress |
 | `task_locks/` | Lock files for parallel coordination |
 | `grind_logs/` | Session output logs (spawner only) |
@@ -45,14 +39,16 @@
 
 ### Single Sequential Task
 ```
-python orchestrator.py clear
+rm -f task_locks/*.lock
+> execution_log.jsonl
 python worker.py add task_001 "Run unit tests"
 python worker.py run 1
 ```
 
-### Parallel Multi-Worker Tasks
+### Parallel Multi-Resident Tasks
 ```
-python orchestrator.py clear
+rm -f task_locks/*.lock
+> execution_log.jsonl
 python worker.py add task_001 "Audit safety rules"
 python worker.py add task_002 "Review API docs"
 python worker.py run
@@ -67,5 +63,5 @@ python grind_spawner_unified.py --delegate --model llama-3.3-70b-versatile --bud
 ### Check System Status
 ```
 python brain.py health
-python orchestrator.py status
+curl http://127.0.0.1:8420/status
 ```

@@ -214,7 +214,7 @@ def _worker_loop(
             session.execute()
         except Exception as e:
             # Keep the spawner alive; surface error to stdout for logs.
-            print(f"[spawner] worker {worker_id} task failed: {e}", file=sys.stderr)
+            print(f"[spawner] resident {worker_id} task failed: {e}", file=sys.stderr)
         finally:
             q.task_done()
 

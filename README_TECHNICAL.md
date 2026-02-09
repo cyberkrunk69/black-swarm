@@ -17,7 +17,8 @@ Vivarium is a multi-agent AI orchestration system with persistent identity, toke
 ┌─────────────────────────────────────────────────────────────────┐
 │                    VOLUNTEER POOL                               │
 │         (grind_spawner_unified.py is optional)                  │
-│   Workers can also join directly via worker.py run              │
+│   Residents can also join directly via resident runtime         │
+│   (worker.py run)                                              │
 └─────────────────────────────────────────────────────────────────┘
                                │
            ┌───────────────────┼───────────────────┐
@@ -154,7 +155,7 @@ def auto_select_model(complexity_score: float, complexity_level: str) -> str:
 
 **Task Decomposition:**
 - Analyzes task complexity (0.0-1.0 score)
-- Determines hat chain (PLANNER hat → CODER hat → REVIEWER hat)
+- Determines hat chain (STRATEGIST hat → CODER hat → REVIEWER hat)
 - Injects identity context, morning messages, Sunday status
 
 ### 4. Control Panel (`control_panel.py`)
@@ -284,7 +285,7 @@ Vivarium/
 python control_panel.py
 # → http://localhost:8421
 
-# Start volunteer workers (via control panel or CLI)
+# Start resident runtimes (via control panel or CLI)
 python worker.py run
 # Optional: start spawner (convenience launcher)
 python grind_spawner_unified.py --task "Your task" --budget 0.10 --sessions 3
