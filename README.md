@@ -1,13 +1,17 @@
 # Vivarium
 
-Vivarium is a multi-agent execution environment with persistent resident identity and file-backed coordination.
+Vivarium is built on a simple bet: if AI residents have continuity (identity), feedback loops, and room for voluntary collaboration, output quality can compound instead of resetting every run.
 
-Today, the codebase runs in **two practical runtime paths**:
+The core is still concrete engineering, not mysticism:
 
-1. **Queue + resident runtime path** (`worker.py` + `swarm.py`) for deterministic task execution.
-2. **Control panel + optional spawner path** (`control_panel.py` + `grind_spawner_unified.py`) for monitoring, social systems, and detached task runs.
+**queue -> resident runtime -> API call -> logs -> verification -> iteration**
 
-This README is the source of truth for what is wired right now.
+But the social layer (guilds, journals, disputes, hats, bounties) is intentional. It is the mechanism for critique, specialization, and compounding behavior over time.
+
+Today, the repo is in an "implemented core + partially wired vision" state. This README now tracks both:
+
+1. **What runs right now**
+2. **What gets us to the full vision, in order**
 
 ---
 
@@ -28,6 +32,63 @@ flowchart LR
     SP --> IE[inference_engine.py]
     IE --> G
 ```
+
+---
+
+## The path to the full vision (ordered)
+
+For the full, phased execution plan plus acceptance criteria, see:
+
+- **[`VISION_ROADMAP.md`](./VISION_ROADMAP.md)**
+
+Short version of build order:
+
+1. **Canonicalize the runtime path**
+   - Make `worker.py + swarm.py + control_panel.py` the explicit source of truth.
+   - Quarantine or repair legacy/broken orchestration remnants.
+2. **Wire hard safety gates into execution**
+   - Enforce `safety_gateway` + `secure_api_wrapper` on actual task execution paths, not only tests/startup scripts.
+3. **Wire quality gates post-execution**
+   - Connect `quality_gates.py` + critic checks to task lifecycle transitions (`pending_review`, `approved`, `requeue`).
+4. **Restore tool-first compounding loop**
+   - Repair skill registry/tool router compatibility and route suitable tasks through tools before LLM generation.
+5. **Promote intent/planning pipeline into production**
+   - Integrate intent gatekeeping and deterministic decomposition into the canonical queue flow.
+6. **Deepen identity + governance loops**
+   - Keep social/economic systems first-class but auditable, with explicit APIs and invariants.
+7. **Reintroduce optional networked collaboration**
+   - Bring back LAN/multi-user/vision dashboard capabilities behind safety boundaries.
+8. **Autonomy with explicit human checkpoints**
+   - Enable continuous self-improvement loops with review gates and rollback controls.
+
+---
+
+## Git archaeology (lost vision + "whoops" map)
+
+Recent history shows a major cleanup and rollback cycle. Key findings:
+
+- **`4428452`** - "Purge Claude/Anthropic artifacts and docs" removed many architecture/vision documents and experimental modules.
+- **`5b6a0b6`** - backup commit ("before clean rollback") preserved many deleted assets.
+- **`75b046c`** - introduced a `/vision` dashboard route in historical `progress_server.py` (file now absent).
+
+Important artifacts that existed in history but are absent now:
+
+| Artifact | Last known location | Why it matters now |
+| --- | --- | --- |
+| `SWARM_ARCHITECTURE_V2.md` | `4428452^:SWARM_ARCHITECTURE_V2.md` | Detailed multi-node roadmap (intent -> planning -> atomizer -> worker pool -> critic/test gates). |
+| `MULTI_USER_LAN_DESIGN.md` | `4428452^:MULTI_USER_LAN_DESIGN.md` | Multi-user LAN collaboration design and security model. |
+| `ADAPTIVE_ENGINE_SPEC.md` | `4428452^:ADAPTIVE_ENGINE_SPEC.md` | Prior routing logic for complexity/budget-aware model selection. |
+| `progress_server.py` with `/vision` route | `75b046c:progress_server.py` | Historical "living vision dashboard" path. |
+| `tool_store.json` + related prototypes | `5b6a0b6` root | Previous tool-first accumulation direction. |
+
+Historical code-quality signal worth acting on:
+
+- `tool_router.py` expects `SkillRegistry`, `retrieve_skill`, `compose_skills`.
+- Current `skills/skill_registry.py` is minimal and does not expose those interfaces.
+- Result: `tool_router` import currently fails (`ImportError` on `SkillRegistry`), so tool-first routing is not production-ready.
+- `swarm_orchestrator_v2.py` and `worker_pool.py` currently contain legacy/generated fragments and are not safe as production orchestration entrypoints.
+
+The recovery sequence for these findings is defined in `VISION_ROADMAP.md`.
 
 ---
 
@@ -226,6 +287,6 @@ python grind_spawner_unified.py --delegate --sessions 3 --budget 1.00
 ## Notes
 
 - `README_VISION.md` is the philosophical framing.
-- This README focuses on **what runs now**.
+- This README covers both **what runs now** and the **ordered path to full scope**.
 - The system is still experimental; run in an isolated environment.
 
