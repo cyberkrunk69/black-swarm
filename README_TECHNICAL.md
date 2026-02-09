@@ -301,6 +301,6 @@ python grind_spawner_unified.py --task "Your task" --budget 0.10 --sessions 3
 
 **Co-authored by:**
 - Josh (Human) - Architecture, Vision, Implementation
-- Claude (claude-opus-4-5-20250101) - Implementation, Documentation
+- Swarm (multi-agent) - Implementation, Documentation
 
 *Technical documentation current as of February 2026*

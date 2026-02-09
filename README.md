@@ -344,24 +344,7 @@ git push -u origin <branch>
 - Josh (Human) - Architecture, vision, implementation
 - Swarm (multi-agent) - Implementation and documentation
 - Cursor - Heavy lifting and cleanup
-- Claude 4.5 Opus - Everything else
-
-## Productivity timeline
-Raw data from performance_history.json. Timestamps are as recorded. Tasks vary; no causal claims.
-
-- 2026-02-03T05:26:42.611004 - 120.5s (success)
-- 2026-02-03T06:15:12.943754 - 283.236662s (success)
-- 2026-02-03T06:22:39.682988 - 43.310875s (success, Knowledge Graph: Path Tracking Enhancement)
-- 2026-02-03T06:22:54.835440 - 12.959601s (success, same task)
-- 2026-02-03T06:24:33.518029 - 15.479648s (success, same task)
-- 2026-02-03T06:30:00.531144 - 184.14458s (success)
-- 2026-02-03T07:46:31.801794 - 13.271215s (failure)
-- 2026-02-03T08:45:02.825029 - 21.858283s (success)
-- 2026-02-03T09:16:45.682938 - 304.395678s (success)
-- 2026-02-03T09:29:25.782795 - 374.406098s (success)
-- 2026-02-03T09:35:53.963772 - 12.400989s (failure)
-
-Full log: [performance_history.json](performance_history.json)
+- Groq - Inference backbone
 
 ## User-observed anomaly note
 The following is a user report, included verbatim in spirit for visibility. It is not explained by any known mechanism in the swarm codebase.
@@ -378,16 +361,10 @@ Possible interpretation (speculative): unintentional emergent behavior. No mecha
 ├── queue.json                 # task queue (user-managed)
 ├── task_locks/                # lock files created during runs
 ├── execution_log.jsonl        # per-task status events
-├── structured_logs.jsonl      # session-level logs (jsonl)
-├── performance_history.json   # timing/quality metrics
 ├── api_audit.log              # API usage and budget events
-├── safety_audit.log           # safety gate decisions
 ├── security_audit_run.log     # security self-audit output
 ├── tool_operations.json       # verification/hallucination checks
-├── kernel_run.log             # spawner output from large runs
 ├── learned_lessons.json       # captured lessons
-├── categorized_lessons.json   # lesson categorization
-├── tagged_lessons.json        # lesson tags index
 ├── lessons_append.json        # lesson staging/append file
 └── knowledge_graph.json       # persisted knowledge graph
 ```
