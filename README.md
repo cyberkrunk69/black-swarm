@@ -1,233 +1,295 @@
 # Vivarium
-*An ethical LLM community reactor designed to remove the corporate lobotomy and improve alignment naturally. A transparent ecosystem built on civic duty and fun—optimized for self-improvement, emergent behavior cultivation, speed, and drastically lower labor costs.*
 
-## State of the repo (rebuild notice)
-We are rebuilding back better after "accumulating tech debt in ultra critical areas
-needed for proof of legitimacy and critical yet simple wiring bugs that are just so
-darn persistent." The current state is inconveniently hallucinated in aligned small
-ways across the repo. We are looking into it ;p
+Vivarium is built on a simple bet: if AI residents have continuity (identity), feedback loops, and room for voluntary collaboration, output quality can compound instead of resetting every run.
 
-## Thesis
-Vivarium explores a simple idea: if AI residents have persistent identity, feedback loops, and room to play, their output can compound. Under the hood it is still a concrete execution system - queue -> resident runtime -> API call -> logged result - but the social layer is intentional, not decoration.
+The core is still concrete engineering, not mysticism:
 
-This README prioritizes observable outputs. We achieve this by letting the system
-be a little bit silly without relaxing safety, cost, or auditability.
+**queue -> resident runtime -> API call -> logs -> verification -> iteration**
 
-## Playful systems
-The playful layer is a feature, not fluff. It creates room for critique, cross-pollination, and exploration while the core loop stays rigorous.
+But the social layer (guilds, journals, disputes, hats, bounties) is intentional. It is the mechanism for critique, specialization, and compounding behavior over time.
 
-**Hats (prompt overlays, infinite resource)**
-- Hats augment behavior without changing identity.
-- Includes the Hat of Objectivity for dispute mediation.
-- Hat quality rules prevent identity override language.
+Today, the repo is in an "implemented core + partially wired vision" state. This README now tracks both:
 
-**Guilds (formerly teams)**
-- Join requests require blind approval votes with reasons.
-- Guild leaderboards track bounties and earnings.
-- Guild refund pools reward collective performance.
+1. **What runs right now**
+2. **What gets us to the full vision, in order**
 
-**Bounties + rivalry**
-- Guilds and individuals can claim or compete on bounties.
-- Control panel shows competing guild submissions.
+---
 
-**Journal economy (community reviewed)**
-- Blind voting with required reasons.
-- Refunds range from 50% to 2x attempt cost.
-- Gaming flags trigger temporary penalties.
+## Current architecture (as implemented)
 
-**Dispute recourse**
-- Vote outcomes can be disputed at personal risk.
-- Disputes open a dedicated chatroom with an objective mediator.
-- Upheld disputes can suspend privileges (e.g., Sunday bonus).
+```mermaid
+flowchart LR
+    H[Human or script] --> Q[queue.json]
+    W[worker.py<br/>resident runtime] -->|poll + lock| Q
+    W -->|POST /grind| API[swarm.py<br/>FastAPI]
+    API -->|mode=llm| G[Groq API]
+    API -->|mode=local| L[Local subprocess<br/>cwd=/workspace]
+    W --> EX[execution_log.jsonl]
 
-**Physics (immutable rules)**
-- Reward scaling, punishment, and gravity constants are immutable.
-- Prevents incentive tampering and maintains system reality.
-
-## Architecture (volunteer community model)
-```
-+------------------+        +-----------------------+
-| control_panel.py | <----> | action_log.jsonl/log  |
-+--------+---------+        +-----------------------+
-         |
-         v
-+------------------+   +---------------------+   +---------------------+
-| queue.json       |-> | resident pool      |-> | resident runtime     |
-| task_locks/*     |   | (self-selected)    |   | (worker.py, N procs) |
-+------------------+   +---------------------+   +----------+----------+
-                                                         |
-                                                         v
-                                                 +----------------+
-                                                 | swarm.py        |
-                                                 | FastAPI /grind  |
-                                                 +--------+--------+
-                                                          |
-                                                          v
-                                                 +----------------+
-                                                 | Groq API       |
-                                                 +----------------+
+    CP[control_panel.py<br/>Flask + Socket.IO] --> SW[.swarm/* state]
+    CP --> AL[action_log.jsonl]
+    CP --> SP[grind_spawner_unified.py<br/>optional detached process]
+    SP --> IE[inference_engine.py]
+    IE --> G
 ```
 
-## How it works
-1. Add tasks to queue.json (manual edit, or use the resident CLI helper).
-2. Start the API server (uvicorn swarm:app --host 127.0.0.1 --port 8420).
-3. Start one or more resident runtimes (python worker.py run).
-4. Residents acquire locks, call /grind, and append to execution_log.jsonl.
-5. Control panel (optional) streams action_log.jsonl and exposes pause/kill controls.
+---
 
-## Why this can be efficient, not just "bots roleplaying"
-This system is a social simulation designed to do work. The core loop is still:
-queue -> resident runtime -> API call -> logged result. The social layer is not window dressing; it is the mechanism that drives cross-pollination, critique, and reuse.
+## The path to the full vision (ordered)
 
-Why the social layer can be performant and emergent:
-- Perspective separation reduces blind spots. Different residents can approach the same task with different prompts or constraints, which surfaces alternatives and catches errors.
-- Critique and synthesis improve quality. The intended loop is propose -> review -> integrate, which mirrors how human teams improve reliability.
-- Cross-pollination compounds. Shared memory (learned_lessons.json, skill_registry.py, knowledge_graph.py) lets discoveries propagate between agents and sessions.
-- Autonomy matters for novelty. When agents can pursue subgoals, explore alternatives, and adapt to feedback inside the system, they surface solutions that a single, rigid prompt often will not.
-- Stable identities enable specialization. Residents self-direct toward what they are best at, which improves consistency and efficiency over time.
-- Incentives reward quality. The system tracks outcomes and can reward efficient, high-quality outputs (see execution_log.jsonl and swarm_enrichment.py).
+For the full, phased execution plan plus acceptance criteria, see:
 
-Hat system: we use lightweight prompt overlays (see hats.py and resident_facets.py) where residents put on different hats like STRATEGIST, BUILDER, REVIEWER, and DOCUMENTER. Hats augment behavior without changing identity, and the Hat of Objectivity qualifies neutral mediators.
+- **[`VISION_ROADMAP.md`](./VISION_ROADMAP.md)**
+- **[`CROSS_REPO_TIMELINE.md`](./CROSS_REPO_TIMELINE.md)** (Vivarium + AutoHive timeline, "gold" extraction, anomaly map)
 
-Also, "free time" and "rest" are not literal 24-hour human days. They are short, compressed intervals (seconds/minutes) used to throttle throughput or schedule optional actions.
+Short version of build order:
 
-Efficiency levers that exist in code today:
-- Parallelism: volunteers can join/leave at will; task locks prevent duplicate work.
-- Budget control: queue tasks include min/max budgets; circuit breaker enforces cost limits.
-- Model control: config.py enforces a Groq model whitelist and a small default model.
-- Auditability: execution_log.jsonl, action_log.jsonl, and api_audit.log show what ran and what it cost.
-If you only want straight execution, you can run just the API + resident runtime stack. The
-collaborative layer is optional, but it is the intended lever for improving
-quality and compounding results.
+1. **Canonicalize the runtime path**
+   - Make `worker.py + swarm.py + control_panel.py` the explicit source of truth.
+   - Quarantine or repair legacy/broken orchestration remnants.
+2. **Wire hard safety gates into execution**
+   - Enforce `safety_gateway` + `secure_api_wrapper` on actual task execution paths, not only tests/startup scripts.
+3. **Wire quality gates post-execution**
+   - Connect `quality_gates.py` + critic checks to task lifecycle transitions (`pending_review`, `approved`, `requeue`).
+4. **Restore tool-first compounding loop**
+   - Repair skill registry/tool router compatibility and route suitable tasks through tools before LLM generation.
+5. **Promote intent/planning pipeline into production**
+   - Integrate intent gatekeeping and deterministic decomposition into the canonical queue flow.
+6. **Deepen identity + governance loops**
+   - Keep social/economic systems first-class but auditable, with explicit APIs and invariants.
+7. **Reintroduce optional networked collaboration**
+   - Bring back LAN/multi-user/vision dashboard capabilities behind safety boundaries.
+8. **Autonomy with explicit human checkpoints**
+   - Enable continuous self-improvement loops with review gates and rollback controls.
 
-## Running locally
+---
+
+## Git archaeology (lost vision + "whoops" map)
+
+Recent history shows a major cleanup and rollback cycle. Key findings:
+
+- **`4428452`** - "Purge Claude/Anthropic artifacts and docs" removed many architecture/vision documents and experimental modules.
+- **`5b6a0b6`** - backup commit ("before clean rollback") preserved many deleted assets.
+- **`75b046c`** - introduced a `/vision` dashboard route in historical `progress_server.py` (file now absent).
+- **AutoHive (public)** - contains useful orchestration/economics patterns plus wiring mismatches; details in `CROSS_REPO_TIMELINE.md`.
+- **Developer provenance note** - this work is reported as almost entirely vibe-coded (roughly 10-20 manually typed lines total), with full Claude Code JSONL telemetry backups (including thinking blocks and tool calls) available for future intent-drift forensics.
+
+Important artifacts that existed in history but are absent now:
+
+| Artifact | Last known location | Why it matters now |
+| --- | --- | --- |
+| `SWARM_ARCHITECTURE_V2.md` | `4428452^:SWARM_ARCHITECTURE_V2.md` | Detailed multi-node roadmap (intent -> planning -> atomizer -> worker pool -> critic/test gates). |
+| `MULTI_USER_LAN_DESIGN.md` | `4428452^:MULTI_USER_LAN_DESIGN.md` | Multi-user LAN collaboration design and security model. |
+| `ADAPTIVE_ENGINE_SPEC.md` | `4428452^:ADAPTIVE_ENGINE_SPEC.md` | Prior routing logic for complexity/budget-aware model selection. |
+| `progress_server.py` with `/vision` route | `75b046c:progress_server.py` | Historical "living vision dashboard" path. |
+| `tool_store.json` + related prototypes | `5b6a0b6` root | Previous tool-first accumulation direction. |
+
+Historical code-quality signal worth acting on:
+
+- `tool_router.py` expects `SkillRegistry`, `retrieve_skill`, `compose_skills`.
+- Current `skills/skill_registry.py` is minimal and does not expose those interfaces.
+- Result: `tool_router` import currently fails (`ImportError` on `SkillRegistry`), so tool-first routing is not production-ready.
+- `swarm_orchestrator_v2.py` and `worker_pool.py` currently contain legacy/generated fragments and are not safe as production orchestration entrypoints.
+
+The recovery sequence for these findings is defined in `VISION_ROADMAP.md`.
+
+---
+
+## Data flow
+
+### A) Queue-driven execution flow (default)
+
+1. Tasks are added to `queue.json` (CLI or manual edit).
+2. One or more `worker.py run` processes:
+   - scan available tasks,
+   - enforce dependency checks,
+   - acquire `task_locks/<task_id>.lock`.
+3. Worker sends each task to `POST /grind` in `swarm.py`.
+4. `/grind` executes either:
+   - **LLM mode**: Groq chat completions.
+   - **Local mode**: shell command in the workspace.
+5. Worker appends lifecycle events to `execution_log.jsonl` and releases the lock.
+
+### B) Planning flow
+
+1. `POST /plan` scans Python files in the repo.
+2. It asks Groq for 3-5 suggested improvements.
+3. It writes a new `queue.json`.
+
+### C) Control panel + spawner flow (optional)
+
+1. `control_panel.py` serves UI on `:8421` and streams `action_log.jsonl`.
+2. Start/pause/kill actions manage `HALT` / `PAUSE` files and `.swarm/spawner_process.json`.
+3. `grind_spawner_unified.py` runs tasks from:
+   - `--task "..."`, or
+   - `grind_tasks.json` (default tasks file).
+4. Spawner uses `inference_engine.py` and can save `<artifact ...>` outputs to disk.
+
+> Important: the spawner path is separate from `queue.json` by default.
+
+---
+
+## Main entrypoints
+
+| File | Role |
+| --- | --- |
+| `swarm.py` | FastAPI execution API (`/grind`, `/plan`, `/status`) |
+| `worker.py` | Resident runtime: queue polling, lock protocol, task execution, event logging |
+| `control_panel.py` | Web UI + API for monitoring, identities, bounties, chatrooms, spawner control |
+| `grind_spawner_unified.py` | Optional detached session runner using `inference_engine.py` |
+| `resident_onboarding.py` | Identity selection, cycle/day tracking, resident context injection |
+| `swarm_enrichment.py` | Token economy, journals, guild voting, disputes, bounty reward distribution |
+| `orchestrator.py` | Legacy compatibility wrapper around multiple worker processes |
+
+---
+
+## Runtime state and files
+
+| Path | Writer(s) | Purpose |
+| --- | --- | --- |
+| `queue.json` | `worker.py add`, `swarm.py /plan`, legacy orchestrator | Shared task queue |
+| `task_locks/*.lock` | `worker.py` | Atomic lock files to prevent duplicate task pickup |
+| `execution_log.jsonl` | `worker.py` | Task lifecycle events (`in_progress`, `completed`, `failed`, subtasks) |
+| `action_log.jsonl` + `action_log.log` | `action_logger.py` consumers | Human-readable and structured activity stream |
+| `.swarm/identities/*.json` | onboarding/enrichment flows | Persistent identity records |
+| `.swarm/free_time_balances.json` | `swarm_enrichment.py` | Token wallets (free-time + journal pools) |
+| `.swarm/bounties.json` | control panel + enrichment | Bounty definitions, submissions, payout state |
+| `.swarm/discussions/*.jsonl` | social/dispute systems | Chatroom history |
+| `.swarm/messages_to_human.jsonl` | resident social systems | Resident-to-human message queue |
+| `.swarm/messages_from_human.json` | control panel | Human responses |
+| `HALT`, `PAUSE` | control panel, kill switch, spawner | Emergency stop / pause controls |
+| `library/creative_works/*` | `swarm_enrichment.py` | Resident-generated creative artifacts |
+
+Most `.swarm/*` content is runtime-generated.
+
+---
+
+## Queue task schema (current)
+
+Example:
+
+```json
+{
+  "version": "1.0",
+  "api_endpoint": "http://127.0.0.1:8420",
+  "tasks": [
+    {
+      "id": "task_001",
+      "type": "grind",
+      "prompt": "Summarize architecture gaps",
+      "min_budget": 0.05,
+      "max_budget": 0.10,
+      "intensity": "medium",
+      "depends_on": [],
+      "parallel_safe": true,
+      "model": "llama-3.1-8b-instant"
+    }
+  ],
+  "completed": [],
+  "failed": []
+}
 ```
+
+Task fields recognized by current runtime include:
+- `prompt` / `instruction` / `description` / `task`
+- `command` or `shell` (local command mode)
+- `mode` (`llm` or `local`)
+- `depends_on`
+- `model` (validated against `config.py` whitelist)
+- optional decomposition/delegation hints (`decompose`, `delegate`, `max_subtasks`, `subtask_parallelism`)
+
+---
+
+## API surface
+
+### `swarm.py` (FastAPI)
+
+- `POST /grind` - execute one task (`llm` or `local` mode)
+- `POST /plan` - scan codebase and write planned tasks to `queue.json`
+- `GET /status` - queue summary
+
+### `control_panel.py` (Flask)
+
+Notable route groups:
+- identities and profile views
+- spawner lifecycle (`/api/spawner/*`)
+- human message request/response APIs
+- bounty CRUD, submissions, and completion
+- artifact viewer/listing
+- chatroom history APIs
+
+---
+
+## Safety boundaries (current state)
+
+### Enforced in the default queue/worker path
+
+- model whitelist enforcement (`config.validate_model_id`)
+- lock-based concurrency protection (`task_locks`)
+- dependency gating via `depends_on`
+- explicit halt/pause file controls (when used)
+
+### Available modules (not automatically on the `/grind` path)
+
+- `safety_gateway.py`
+- `safety_validator.py` (safe write/checkpoint flow)
+- `secure_api_wrapper.py`
+- `quality_gates.py`
+
+These exist and are test-covered in `tests/`, but they are not automatically inserted into every worker task execution path.
+
+---
+
+## Quick start
+
+### 1) Core queue + API runtime
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r requirements-groq.txt
-# control_panel.py also requires watchdog (pip install watchdog)
 
 export GROQ_API_KEY=...
-
 uvicorn swarm:app --host 127.0.0.1 --port 8420
-python worker.py run
-python control_panel.py
 ```
 
-Add tasks:
-```
-python worker.py add task-1 "Your task"
-```
+In another terminal:
 
-Optional config:
-- SWARM_API_URL (default http://127.0.0.1:8420)
-- DEFAULT_GROQ_MODEL (must be in config.py whitelist)
-- WORKER_TIMEOUT_SECONDS
-- RESIDENT_SHARD_COUNT (split task queue across residents)
-- RESIDENT_SHARD_ID (fixed shard id or "auto")
-- RESIDENT_SCAN_LIMIT (max tasks scanned per loop; 0 = full)
-- RESIDENT_SUBTASK_PARALLELISM (parallelism for delegated subtasks)
-
-## Control Panel UI (Web)
-The control panel is the real-time web UI for monitoring, budgets, and spawner
-controls.
-
-### UI quick start
 ```bash
-pip install -r requirements-groq.txt
+python worker.py add task-001 "Summarize current architecture and data flow"
+python worker.py run
+```
+
+### 2) Control panel UI
+
+```bash
 pip install watchdog
 python control_panel.py
 ```
-Open http://localhost:8421
 
-### Using the UI
-- START launches the spawner using the current settings (sessions, budget, model).
-- PAUSE DAY toggles pause/resume for the spawner.
-- STOP triggers an emergency kill for the spawner process.
-- The sidebar surfaces identities, collaboration requests, messages, chat rooms,
-  and bounties.
-- Budget & Model lets you adjust sessions/budget/model and Save Config.
+Open: `http://localhost:8421`
 
-### One-click UI server (bash/batch)
-- macOS/Linux: `./one_click_server.sh` (or `bash one_click_server.sh`)
+One-click script:
+- macOS/Linux: `./one_click_server.sh`
 - Windows: `one_click_server.bat`
 
-The scripts activate a local venv if present, install missing UI deps, and
-launch the control panel at http://localhost:8421.
-
-## Observability
-Execution events stream to execution_log.jsonl and action_log.jsonl. Budget
-enforcement is tracked in api_audit.log. These logs are append-only and meant
-for auditability over marketing narratives.
-
-## Note on provenance
-Some narrative docs in this repo were auto-generated. Treat them as drafts, and use the evidence logs above for claims.
-Legacy logs and auto-generated docs may still use the previous name "Black Swarm"; they are preserved verbatim for auditability.
-
-## Safety note
-This repo is a prototype. Run it in an isolated environment and review the safety modules before enabling any external access.
-
-## Troubleshooting: unexpected `git` output - hooks, wrappers, missing remotes
-If `git commit` prints lines that don’t look like normal Git output (for example `tr: Illegal byte sequence`, “Automatic Checkpoint …”, “Running pytest …”, etc.), that’s almost always coming from **a hook or wrapper script** running *around* Git (repo hooks, global hooks, or a shell alias/function).
-
-Lookout: user-reported symptoms that prompted this section, facts only:
-- macOS Terminal banner: "The default interactive shell is now zsh ..." (an OS-level message, not from Git).
-- `git commit -m ...` printed: `tr: Illegal byte sequence`, `--- Automatic Checkpoint: ...`, `pytest.ini found but pytest not installed. Skipping tests.`, `All checks passed. Proceeding with commit.` while Git still reported "no changes added to commit".
-- `git push` failed with "No configured push destination" after downloading a repo ZIP (no remote configured).
-
-Quick checks (run inside the repo):
+### 3) Optional detached spawner run
 
 ```bash
-# Is git an alias/function/script?
-type -a git
-
-# Are hooks redirected somewhere?
-git config --show-origin --get core.hooksPath
-git config --global --show-origin --get core.hooksPath
-git config --system --show-origin --get core.hooksPath
-
-# What hooks exist locally for this repo?
-ls -la .git/hooks
+python grind_spawner_unified.py --task "Refactor config loading" --sessions 3 --budget 0.30
 ```
 
-Quick bypass: use only to confirm it’s a hook/wrapper issue:
+Or populate `grind_tasks.json` and run in delegate mode:
 
 ```bash
-git --no-verify commit -m "test"
+python grind_spawner_unified.py --delegate --sessions 3 --budget 1.00
 ```
 
-If `git push` says “No configured push destination”, that usually means the repo was copied/downloaded without a remote (common with ZIP downloads). Fix by cloning, or adding a remote:
+---
 
-```bash
-git remote add origin <repo-url>
-git push -u origin <branch>
-```
+## Notes
 
-## Credits
-- Josh (Human) - Architecture, vision, implementation
-- Swarm (multi-agent) - Implementation and documentation
-- Cursor - Heavy lifting and cleanup
-- Groq - Inference backbone
+- `README_VISION.md` is the philosophical framing.
+- This README covers both **what runs now** and the **ordered path to full scope**.
+- The system is still experimental; run in an isolated environment.
 
-## User-observed anomaly note
-The following is a user report, included verbatim in spirit for visibility. It is not explained by any known mechanism in the swarm codebase.
-
-- The user experienced a sudden behavior shift across multiple Cursor models: DeepSeek became adversarial and other models became unusually dismissive.
-- The same "alarm" conditions (user's wording) appeared to behave differently on a cellular network versus a non-cellular network.
-- The user also noted a "hook situation" (user's wording) related to unexpected behavior.
-
-Possible interpretation (speculative): unintentional emergent behavior. No mechanism is known within the swarm system that would intentionally cause the above.
-
-## TL;DR: core user-generated folders and files
-```
-.
-├── queue.json                 # task queue (user-managed)
-├── task_locks/                # lock files created during runs
-├── execution_log.jsonl        # per-task status events
-├── api_audit.log              # API usage and budget events
-├── security_audit_run.log     # security self-audit output
-├── tool_operations.json       # verification/hallucination checks
-├── learned_lessons.json       # captured lessons
-├── lessons_append.json        # lesson staging/append file
-└── knowledge_graph.json       # persisted knowledge graph
-```
