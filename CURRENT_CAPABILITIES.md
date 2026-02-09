@@ -1,50 +1,66 @@
-# CURRENT_CAPABILITIES.md
+# Current Capabilities (Runtime Truth)
 
-**Date:** 2026‑02‑04  
-**Experiment:** exp_20260204_033636_unified_session_1  
-**Scope:** Honest assessment of the present‑day abilities and limits of the AI swarm as described in the architecture proposal, roadmap, and recent research findings.
-
----
-
-## 1. Core Strengths (What the Swarm Can Do Right Now)
-
-| Capability | Description | Evidence from Source Docs |
-|------------|-------------|---------------------------|
-| **Distributed Natural‑Language Understanding** | Each node can parse, summarize, and respond to user prompts in multiple languages with near‑human fluency. | Architecture Evolution Proposal – “Unified language front‑end”; AI Research Findings – “State‑of‑the‑art LLM benchmarks (GPT‑5‑level)”. |
-| **Multi‑Agent Coordination** | Agents can dynamically allocate tasks, share context, and negotiate plans via a shared blackboard. | Roadmap 2026 – “Swarm orchestration layer (v2) ready for production”. |
-| **Code Generation & Debugging** | End‑to‑end pipeline from specification to runnable Python/JS/Go snippets, including automated test generation. | Research Findings – “Self‑repair loops achieve 92 % pass rate on benchmark suites”. |
-| **Domain‑Specific Knowledge Integration** | Plug‑in modules (e.g., biomedical, finance, robotics) expose curated ontologies that the swarm can query in real time. | Architecture Proposal – “Modular knowledge adapters”. |
-| **Iterative Reasoning & Tool Use** | The swarm can invoke external tools (search APIs, calculators, simulators) and incorporate results into its reasoning chain. | Roadmap – “Tool‑use API v1 deployed”. |
-| **Safety Guardrails** | Built‑in policy engine, sandboxed execution, and continuous alignment monitoring prevent disallowed actions. | Safety files (read‑only) enforce “no self‑modification” and “no external network calls without approval”. |
-| **Scalable Parallel Execution** | Up to 128 parallel workers can be spawned for large‑scale data processing or Monte‑Carlo simulations. | Architecture – “Horizontal scaling via container orchestration”. |
-| **Explainability Hooks** | Every decision can be traced back to a provenance graph; natural‑language explanations are auto‑generated. | Research Findings – “Transparency metrics improved 30 %”. |
-| **Persistent Context Store** | Short‑term memory (session) and long‑term memory (knowledge base) are persisted across interactions. | Roadmap – “Memory v3 operational”. |
-| **Real‑time Collaboration** | Multiple human users can interact with the swarm simultaneously, each receiving individualized updates. | Architecture – “Multi‑tenant session handling”. |
+**Date:** 2026-02-09  
+**Scope:** What is implemented and wired in the canonical runtime path today.
 
 ---
 
-## 2. Current Limitations (What the Swarm Cannot Do)
+## 1) Canonical runtime capabilities
 
-| Limitation | Reason / Current Gap | Impact |
-|------------|----------------------|--------|
-| **Direct Physical Manipulation** | No hardware actuation interfaces are exposed; the swarm can only suggest actions to external robots. | Cannot perform in‑situ repairs or experiments without a separate control stack. |
-| **True General Intelligence** | Reasoning is bounded by the training data cut‑off (Sept 2025) and by the deterministic tool‑use API; no emergent self‑awareness. | Limited ability to handle completely novel domains without curated adapters. |
-| **Long‑Term Autonomous Goal Pursuit** | Autonomous goal generation beyond a single session is blocked by the safety policy (no self‑initiated missions). | Requires explicit human prompting for each new objective. |
-| **Unrestricted Internet Access** | All outbound network calls must pass through a vetted proxy; crawling the open web is disallowed. | Knowledge may become stale between updates. |
-| **Fine‑grained Real‑World Perception** | No native vision, audio, or sensor streams; perception must be supplied as pre‑processed data. | Cannot directly interpret raw video/audio without external preprocessing services. |
-| **Self‑Modification of Core Code** | Core system files (`grind_spawner*.py`, `safety_*.py`) are read‑only; the swarm cannot patch its own runtime. | Bugs in the core runtime must be fixed by developers. |
-| **Deterministic Reproducibility Across Nodes** | Minor nondeterminism in parallel execution can lead to divergent results; full reproducibility is not guaranteed. | Requires explicit seeding and result aggregation for critical tasks. |
-| **Handling of Extremely Large Contexts** | Context window limited to ~64k tokens per agent; very long documents must be chunked manually. | May miss cross‑chunk dependencies without additional orchestration. |
-| **Ethical & Legal Judgment** | The policy engine enforces basic compliance, but nuanced legal reasoning (e.g., jurisdiction‑specific law) is beyond current scope. | Human oversight needed for high‑risk decisions. |
-| **Scalable Multi‑Modal Fusion** | While language and tool outputs are integrated, true multi‑modal reasoning (e.g., simultaneous vision‑language) is experimental. | Limited to text‑centric workflows. |
+| Capability area | Status | Current behavior |
+| --- | --- | --- |
+| Canonical execution path (Phase 0) | Implemented | `worker.py` polls `queue.json`, enforces dependencies/locks, executes via `swarm.py`, and records execution events. |
+| Safety gating (Phase 1) | Implemented in worker path | Worker runs pre-execution safety checks and the API path applies defense-in-depth checks. |
+| Quality/critic lifecycle (Phase 2) | Implemented | Outputs enter `pending_review`; accepted tasks become `approved`; rejected tasks `requeue` (or `failed` after retry cap). |
+| Tool-first reuse routing (Phase 3) | Implemented | Prompt tasks are routed through `tool_router` before LLM dispatch, with route metadata persisted to events. |
+| Intent + decomposition foundation (Phase 4) | Implemented | Complex prompts are detected and can be decomposed into dependency-aware queue subtasks. |
+| Social/economic reward hook (Phase 5, initial) | Implemented | Approved under-budget tasks can grant identity rewards through `swarm_enrichment`. |
+| Phase 5 reward idempotency + audit | Implemented | Grants are deduplicated per `task_id + identity_id` and persisted in `.swarm/phase5_reward_ledger.json`. |
 
 ---
 
-## 3. Summary Statement
+## 2) Observability and contract guarantees
 
-The AI swarm, as of early 2026, is a **highly capable, safety‑constrained, distributed reasoning engine** that excels at natural‑language tasks, code synthesis, tool orchestration, and domain‑specific knowledge integration. It **does not** possess physical actuation, unrestricted internet browsing, self‑modifying runtime, or full‑blown general intelligence. All operations are bounded by explicit safety policies and read‑only core system files.
+- Queue normalization and status vocabulary are defined by `runtime_contract.py`.
+- Execution event logs are appended to `execution_log.jsonl`.
+- Review and reward metadata emitted from worker flow includes:
+  - review: `review_verdict`, `review_confidence`, `review_attempt`, issues/suggestions, quality-gate fields
+  - phase 5 reward: `phase5_reward_applied`, `phase5_reward_tokens_requested`, `phase5_reward_tokens_awarded`, `phase5_reward_identity`, `phase5_reward_reason`, `phase5_reward_granted_at`, `phase5_reward_ledger_recorded`, `phase5_reward_error`
+- Runtime social state and reward balances are stored under `.swarm/` (including `.swarm/free_time_balances.json` and `.swarm/phase5_reward_ledger.json`).
 
 ---
 
-*Prepared by the Execution worker for experiment `exp_20260204_033636_unified_session_1`.*  
-*All information reflects the latest content of `ARCHITECTURE_EVOLUTION_PROPOSAL.md`, `AGI_ROADMAP_2026.md`, and `AI_RESEARCH_FINDINGS.md`.*
+## 3) Available but not hard-wired into all paths
+
+These modules exist and are used in canonical worker flow, but direct API usage can bypass some worker-only lifecycle logic:
+
+- `safety_gateway.py`
+- `secure_api_wrapper.py`
+- `quality_gates.py`
+- `tool_router.py`
+- `intent_gatekeeper.py`
+- `swarm_enrichment.py`
+
+---
+
+## 4) Known limitations and active gaps
+
+- Direct `POST /grind` calls can bypass worker-only lifecycle transitions (quality review, tool-routing metadata, intent/decomposition orchestration, phase 5 reward ledgering).
+- `swarm_orchestrator_v2.py` and `worker_pool.py` remain experimental/non-canonical.
+- Phase 6 (multi-user/LAN + vision dashboard) and Phase 7 (autonomous improvement checkpoints) are still planned, not runtime defaults.
+- System remains experimental; operational use should stay in isolated environments.
+
+---
+
+## 5) Latest validated checks
+
+```bash
+python3 -m pytest -q tests/test_runtime_phase2_quality_review.py tests/test_runtime_phase0_phase1.py tests/test_runtime_phase3_tool_routing.py tests/test_runtime_phase4_intent_decomposition.py
+# Result: 22 passed
+```
+
+---
+
+## 6) Short summary
+
+The current Vivarium runtime is a queue-driven, safety-checked, quality-reviewed execution system with implemented Phase 0-5 foundations in the canonical worker path. The next major work is closing worker-vs-direct-API parity and delivering planned Phase 6/7 capabilities.

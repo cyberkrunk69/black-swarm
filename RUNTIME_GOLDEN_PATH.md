@@ -2,6 +2,24 @@
 
 This is the canonical production path for task execution.
 
+## Runtime state snapshot (2026-02-09)
+
+| Runtime layer | Status | Notes |
+| --- | --- | --- |
+| Phase 0 - canonical runtime path | Implemented | `worker.py + swarm.py + control_panel.py` are the default execution path. |
+| Phase 1 - safety preflight | Implemented | Worker dispatch calls `SafetyGateway.pre_execute_safety_check(...)` before execution. |
+| Phase 2 - post-execution quality review | Implemented | Critic/quality lifecycle emits `pending_review`, then `approved` or `requeue`/`failed`. |
+| Phase 3 - tool-first routing | Implemented | Prompt tasks route through `tool_router` before standard `/grind` LLM dispatch. |
+| Phase 4 - intent/decomposition foundation | Implemented | Complex prompts can decompose into dependency-aware queue subtasks. |
+| Phase 5 - social/economic reward hook | Implemented (initial) | Under-budget approved tasks can grant identity rewards through `swarm_enrichment`. |
+
+Latest validated runtime regression:
+
+```bash
+python3 -m pytest -q tests/test_runtime_phase2_quality_review.py tests/test_runtime_phase0_phase1.py tests/test_runtime_phase3_tool_routing.py tests/test_runtime_phase4_intent_decomposition.py
+# Result: 22 passed
+```
+
 ## Canonical runtime entrypoints
 
 1. `worker.py` - queue polling, dependency checks, lock acquisition, execution event logging
@@ -38,6 +56,12 @@ experimental until repaired and re-validated.
 - Phase 5 social/economic reward lifecycle has an initial worker hook:
   - approved tasks with measurable budget savings can grant identity free-time/journal tokens
   - reward grants flow through `swarm_enrichment`, are reflected in execution event metadata, and are deduplicated per task+identity via `.swarm/phase5_reward_ledger.json`
+  - reward events include: `phase5_reward_applied`, `phase5_reward_tokens_requested`, `phase5_reward_tokens_awarded`, `phase5_reward_identity`, `phase5_reward_reason`, `phase5_reward_granted_at`, `phase5_reward_ledger_recorded`, and `phase5_reward_error` (on failure)
+
+## Known caveats in this path
+
+- Direct `/grind` API calls can bypass worker-only lifecycle transitions (quality review, tool routing metadata, intent/decomposition flow, and Phase 5 reward ledgering).
+- `swarm_orchestrator_v2.py` and `worker_pool.py` remain experimental and are not in the canonical import path.
 
 ## Safety and budget guarantees in this path
 
@@ -54,5 +78,5 @@ experimental until repaired and re-validated.
 
 ```bash
 python3 -m py_compile worker.py swarm.py control_panel.py runtime_contract.py
-pytest -q tests/test_runtime_phase0_phase1.py tests/test_runtime_phase2_quality_review.py tests/test_runtime_phase3_tool_routing.py tests/test_runtime_phase4_intent_decomposition.py
+python3 -m pytest -q tests/test_runtime_phase0_phase1.py tests/test_runtime_phase2_quality_review.py tests/test_runtime_phase3_tool_routing.py tests/test_runtime_phase4_intent_decomposition.py
 ```
