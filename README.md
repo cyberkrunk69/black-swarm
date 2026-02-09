@@ -1,6 +1,12 @@
 # Vivarium
 *An ethical LLM community reactor designed to remove the corporate lobotomy and improve alignment naturally. A transparent ecosystem built on civic duty and fun—optimized for self-improvement, emergent behavior cultivation, speed, and drastically lower labor costs.*
 
+## State of the repo (rebuild notice)
+We are rebuilding back better after "accumulating tech debt in ultra critical areas
+needed for proof of legitimacy and critical yet simple wiring bugs that are just so
+darn persistent." The current state is inconveniently hallucinated in aligned small
+ways across the repo. We are looking into it ;p
+
 ## Thesis
 Vivarium explores a simple idea: if AI workers have persistent identity, feedback loops, and room to play, their output can compound. Under the hood it is still a concrete execution system - queue -> worker -> API call -> logged result - but the social layer is intentional, not decoration.
 
@@ -268,12 +274,6 @@ The identity journals, messages to human, and discussion threads live under
 `.swarm/` at runtime (e.g., `.swarm/journals/*.jsonl`, `.swarm/messages_to_human.jsonl`,
 `.swarm/discussions/*.jsonl`). Those files were **not committed** in this repo, so
 there's no permanent evidence section yet for that emergent growth.
-
-## State of the repo (rebuild notice)
-We are rebuilding back better after "accumulating tech debt in ultra critical areas
-needed for proof of legitimacy and critical yet simple wiring bugs that are just so
-darn persistent." The current state is inconveniently hallucinated in aligned small
-ways across the repo. We are looking into it ;p
 
 ## Daily achievement map (tools used)
 Based on commit messages and logs in this repo.
