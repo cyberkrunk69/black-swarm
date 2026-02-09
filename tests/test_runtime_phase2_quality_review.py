@@ -7,7 +7,7 @@ import worker
 from quality_gates import QualityGateManager
 from runtime_contract import KNOWN_EXECUTION_STATUSES
 from task_verifier import VerificationResult, Verdict
-from utils import read_jsonl
+from utils import read_json, read_jsonl
 
 
 class _StaticVerifier:
@@ -124,6 +124,7 @@ def test_post_execution_review_requeue_then_fail_after_max_attempts(monkeypatch,
 def test_post_execution_review_approved_applies_phase5_reward(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "WORKER_QUALITY_GATES", None)
     monkeypatch.setattr(worker, "EXECUTION_LOG", tmp_path / "execution_log.jsonl")
+    monkeypatch.setattr(worker, "PHASE5_REWARD_LEDGER", tmp_path / "phase5_reward_ledger.json")
     monkeypatch.setattr(
         worker,
         "WORKER_TASK_VERIFIER",
@@ -159,6 +160,7 @@ def test_post_execution_review_approved_applies_phase5_reward(monkeypatch, tmp_p
     assert review["phase5_reward_tokens_requested"] > 0
     assert review["phase5_reward_tokens_awarded"] == review["phase5_reward_tokens_requested"]
     assert review["phase5_reward_identity"] == "identity_phase5"
+    assert review["phase5_reward_ledger_recorded"] is True
     assert enrichment.calls
     assert enrichment.calls[0]["reason"].startswith("worker_approved_under_budget:task_phase5_reward")
 
@@ -166,6 +168,7 @@ def test_post_execution_review_approved_applies_phase5_reward(monkeypatch, tmp_p
 def test_post_execution_review_approved_skips_phase5_reward_without_budget_savings(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "WORKER_QUALITY_GATES", None)
     monkeypatch.setattr(worker, "EXECUTION_LOG", tmp_path / "execution_log.jsonl")
+    monkeypatch.setattr(worker, "PHASE5_REWARD_LEDGER", tmp_path / "phase5_reward_ledger.json")
     monkeypatch.setattr(
         worker,
         "WORKER_TASK_VERIFIER",
@@ -200,4 +203,59 @@ def test_post_execution_review_approved_skips_phase5_reward_without_budget_savin
     assert review["phase5_reward_applied"] is False
     assert review["phase5_reward_reason"] == "not_under_budget"
     assert enrichment.calls == []
+
+
+def test_post_execution_review_approved_phase5_reward_is_idempotent(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker, "WORKER_QUALITY_GATES", None)
+    monkeypatch.setattr(worker, "EXECUTION_LOG", tmp_path / "execution_log.jsonl")
+    monkeypatch.setattr(worker, "PHASE5_REWARD_LEDGER", tmp_path / "phase5_reward_ledger.json")
+    monkeypatch.setattr(
+        worker,
+        "WORKER_TASK_VERIFIER",
+        _StaticVerifier(
+            VerificationResult(
+                verdict=Verdict.APPROVE,
+                confidence=0.92,
+                issues=[],
+                suggestions=[],
+            )
+        ),
+    )
+    enrichment = _StubEnrichment()
+    monkeypatch.setattr(worker, "WORKER_ENRICHMENT", enrichment)
+
+    task = {"id": "task_phase5_once", "prompt": "Ship patch", "max_budget": 0.30}
+    result = {
+        "status": "completed",
+        "result_summary": "done",
+        "errors": None,
+        "model": "local",
+        "budget_used": 0.10,
+    }
+
+    first_review = worker._run_post_execution_review(
+        task,
+        result,
+        resident_ctx=_StubResidentContext(),
+        previous_review_attempt=0,
+    )
+    second_review = worker._run_post_execution_review(
+        task,
+        result,
+        resident_ctx=_StubResidentContext(),
+        previous_review_attempt=0,
+    )
+
+    assert first_review["phase5_reward_applied"] is True
+    assert first_review["phase5_reward_ledger_recorded"] is True
+    assert second_review["phase5_reward_applied"] is False
+    assert second_review["phase5_reward_reason"] == "already_granted"
+    assert second_review["phase5_reward_ledger_recorded"] is True
+    assert second_review["phase5_reward_tokens_awarded"] == first_review["phase5_reward_tokens_awarded"]
+    assert len(enrichment.calls) == 1
+
+    ledger = read_json(worker.PHASE5_REWARD_LEDGER, default={})
+    assert ledger.get("version") == 1
+    grants = ledger.get("grants", {})
+    assert "task_phase5_once::identity_phase5" in grants
 
