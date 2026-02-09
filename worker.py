@@ -111,6 +111,18 @@ PHASE4_LEADING_FILLER_RE = re.compile(
     r"^(?:please|can you|could you|i want you to|let's|lets)\s+",
     flags=re.IGNORECASE,
 )
+PHASE4_COMMA_NON_ACTION_PREFIXES: Tuple[str, ...] = (
+    "with ",
+    "using ",
+    "via ",
+    "for ",
+    "including ",
+    "without ",
+    "where ",
+    "when ",
+    "while ",
+    "because ",
+)
 
 _EXECUTION_LOG_STATE: Dict[str, Any] = {"offset": 0, "size": 0, "tasks": {}}
 _SCAN_CURSOR: int = 0
@@ -561,6 +573,22 @@ def _phase4_gut_check(prompt: str) -> Dict[str, Any]:
     }
 
 
+def _phase4_should_split_comma_clauses(parts: List[str], source_text: str) -> bool:
+    if len(parts) >= 3:
+        return True
+    if len(parts) < 2:
+        return False
+    if PHASE4_SEQUENCE_SPLIT_RE.search(source_text):
+        return True
+
+    normalized_parts = [part.strip().lower() for part in parts if part.strip()]
+    if len(normalized_parts) < 2:
+        return False
+    if any(part.startswith(PHASE4_COMMA_NON_ACTION_PREFIXES) for part in normalized_parts):
+        return False
+    return all(len(part.split()) >= 2 for part in normalized_parts)
+
+
 def _phase4_feature_breakdown(prompt: str, intent_goal: str, max_features: int = 5) -> List[str]:
     text = (prompt or "").strip()
     if not text:
@@ -577,10 +605,21 @@ def _phase4_feature_breakdown(prompt: str, intent_goal: str, max_features: int =
     candidates: List[str] = []
     for segment in raw_segments:
         for clause in re.split(r"[;:]", segment):
-            for piece in PHASE4_SEQUENCE_SPLIT_RE.split(clause):
-                cleaned = PHASE4_LEADING_FILLER_RE.sub("", piece.strip()).strip(" .,-")
-                if len(cleaned) >= 8:
-                    candidates.append(cleaned)
+            clause = clause.strip()
+            if not clause:
+                continue
+
+            comma_parts = [piece.strip() for piece in clause.split(",") if piece.strip()]
+            if _phase4_should_split_comma_clauses(comma_parts, clause):
+                clause_candidates = comma_parts
+            else:
+                clause_candidates = [clause]
+
+            for clause_candidate in clause_candidates:
+                for piece in PHASE4_SEQUENCE_SPLIT_RE.split(clause_candidate):
+                    cleaned = PHASE4_LEADING_FILLER_RE.sub("", piece.strip()).strip(" .,-")
+                    if len(cleaned) >= 8:
+                        candidates.append(cleaned)
 
     if not candidates:
         fallback = (intent_goal or text).strip()
