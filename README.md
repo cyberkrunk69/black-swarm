@@ -90,7 +90,7 @@ Historical code-quality signal worth acting on:
 - `tool_router.py` expects `SkillRegistry`, `retrieve_skill`, `compose_skills` (now restored in `skills/skill_registry.py`).
 - Canonical `worker.py` now runs tool-first routing before LLM dispatch and logs routing metadata (`tool_route`, `tool_name`, `tool_confidence`).
 - Canonical `worker.py` now performs deterministic Phase 4 intent/decomposition planning for complex prompts, compiling dependency-aware subtasks into `queue.json` before parent execution.
-- Canonical `worker.py` now includes an initial Phase 5 hook: approved under-budget tasks can grant auditable identity rewards via `swarm_enrichment`.
+- Canonical `worker.py` now includes an initial Phase 5 hook: approved under-budget tasks can grant auditable identity rewards via `swarm_enrichment`, with idempotent task+identity reward grants recorded in `.swarm/phase5_reward_ledger.json`.
 - `swarm_orchestrator_v2.py` and `worker_pool.py` currently contain legacy/generated fragments and are not safe as production orchestration entrypoints.
 
 The recovery sequence for these findings is defined in `VISION_ROADMAP.md`.
@@ -155,6 +155,7 @@ The recovery sequence for these findings is defined in `VISION_ROADMAP.md`.
 | `action_log.jsonl` + `action_log.log` | `action_logger.py` consumers | Human-readable and structured activity stream |
 | `.swarm/identities/*.json` | onboarding/enrichment flows | Persistent identity records |
 | `.swarm/free_time_balances.json` | `swarm_enrichment.py` | Token wallets (free-time + journal pools) |
+| `.swarm/phase5_reward_ledger.json` | `worker.py` | Auditable, idempotent ledger for worker-driven under-budget reward grants |
 | `.swarm/bounties.json` | control panel + enrichment | Bounty definitions, submissions, payout state |
 | `.swarm/discussions/*.jsonl` | social/dispute systems | Chatroom history |
 | `.swarm/messages_to_human.jsonl` | resident social systems | Resident-to-human message queue |

@@ -87,6 +87,7 @@ WORKSPACE: Path = Path(__file__).parent
 QUEUE_FILE: Path = WORKSPACE / "queue.json"
 LOCKS_DIR: Path = WORKSPACE / "task_locks"
 EXECUTION_LOG: Path = WORKSPACE / "execution_log.jsonl"
+PHASE5_REWARD_LEDGER: Path = WORKSPACE / ".swarm" / "phase5_reward_ledger.json"
 
 API_REQUEST_TIMEOUT: float = API_TIMEOUT_SECONDS
 WORKER_CHECK_INTERVAL: float = 2.0  # Delay between queue checks in seconds
@@ -929,6 +930,50 @@ def _record_quality_gate_review(
         }
 
 
+def _phase5_reward_key(task_id: str, identity_id: str) -> str:
+    return f"{task_id}::{identity_id}"
+
+
+def _load_phase5_reward_ledger() -> Dict[str, Any]:
+    try:
+        data = read_json(PHASE5_REWARD_LEDGER, default={})
+    except Exception as exc:
+        _log("WARN", f"Phase 5 reward ledger unreadable; using empty state: {exc}")
+        return {"version": 1, "grants": {}}
+    if not isinstance(data, dict):
+        return {"version": 1, "grants": {}}
+
+    grants = data.get("grants")
+    if not isinstance(grants, dict):
+        grants = {}
+    return {"version": int(_safe_float(data.get("version"), 1.0)), "grants": grants}
+
+
+def _get_phase5_reward_grant(task_id: str, identity_id: str) -> Optional[Dict[str, Any]]:
+    grants = _load_phase5_reward_ledger().get("grants", {})
+    entry = grants.get(_phase5_reward_key(task_id, identity_id))
+    return entry if isinstance(entry, dict) else None
+
+
+def _record_phase5_reward_grant(entry: Dict[str, Any]) -> bool:
+    task_id = str(entry.get("task_id") or "unknown").strip() or "unknown"
+    identity_id = str(entry.get("identity_id") or "").strip()
+    if not identity_id:
+        return False
+
+    try:
+        ledger = _load_phase5_reward_ledger()
+        grants = ledger.get("grants", {})
+        grants[_phase5_reward_key(task_id, identity_id)] = entry
+        ledger["grants"] = grants
+        ledger["version"] = 1
+        write_json(PHASE5_REWARD_LEDGER, ledger)
+        return True
+    except Exception as exc:
+        _log("WARN", f"Failed to persist phase5 reward ledger for {task_id}: {exc}")
+        return False
+
+
 def _phase5_estimate_reward_tokens(
     task: Dict[str, Any],
     result: Dict[str, Any],
@@ -982,6 +1027,22 @@ def _maybe_apply_phase5_reward(
         }
 
     task_id = str(task.get("id") or "unknown")
+    existing_grant = _get_phase5_reward_grant(task_id, identity_id)
+    if existing_grant:
+        return {
+            "phase5_reward_applied": False,
+            "phase5_reward_tokens_requested": int(
+                _safe_float(existing_grant.get("tokens_requested"), 0.0)
+            ),
+            "phase5_reward_tokens_awarded": int(
+                _safe_float(existing_grant.get("tokens_awarded"), 0.0)
+            ),
+            "phase5_reward_identity": identity_id,
+            "phase5_reward_reason": "already_granted",
+            "phase5_reward_granted_at": existing_grant.get("granted_at"),
+            "phase5_reward_ledger_recorded": True,
+        }
+
     reward_reason = f"worker_approved_under_budget:{task_id}"
     try:
         reward_result = WORKER_ENRICHMENT.grant_free_time(identity_id, tokens, reason=reward_reason)
@@ -996,12 +1057,29 @@ def _maybe_apply_phase5_reward(
     granted = reward_result.get("granted", {}) if isinstance(reward_result, dict) else {}
     granted_free = int(_safe_float(granted.get("free_time"), 0.0))
     granted_journal = int(_safe_float(granted.get("journal"), 0.0))
+    granted_total = max(0, granted_free + granted_journal)
+    granted_at = get_timestamp()
+    ledger_recorded = _record_phase5_reward_grant(
+        {
+            "task_id": task_id,
+            "identity_id": identity_id,
+            "tokens_requested": tokens,
+            "tokens_awarded": granted_total,
+            "budget_used": _safe_float(result.get("budget_used"), -1.0),
+            "max_budget": _safe_float(task.get("max_budget"), 0.0),
+            "review_confidence": _safe_float(review_confidence, 0.0),
+            "reason": reward_reason,
+            "granted_at": granted_at,
+        }
+    )
     return {
         "phase5_reward_applied": True,
         "phase5_reward_tokens_requested": tokens,
-        "phase5_reward_tokens_awarded": max(0, granted_free + granted_journal),
+        "phase5_reward_tokens_awarded": granted_total,
         "phase5_reward_identity": identity_id,
         "phase5_reward_reason": reward_reason,
+        "phase5_reward_granted_at": granted_at,
+        "phase5_reward_ledger_recorded": ledger_recorded,
     }
 
 
@@ -1619,6 +1697,8 @@ def find_and_execute_task(
                     phase5_reward_tokens_awarded=review_result.get("phase5_reward_tokens_awarded"),
                     phase5_reward_identity=review_result.get("phase5_reward_identity"),
                     phase5_reward_reason=review_result.get("phase5_reward_reason"),
+                    phase5_reward_granted_at=review_result.get("phase5_reward_granted_at"),
+                    phase5_reward_ledger_recorded=review_result.get("phase5_reward_ledger_recorded"),
                     phase5_reward_error=review_result.get("phase5_reward_error"),
                     tool_route=result.get("tool_route"),
                     tool_name=result.get("tool_name"),

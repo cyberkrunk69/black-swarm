@@ -37,7 +37,7 @@ experimental until repaired and re-validated.
   - extracted intent is persisted and injected into downstream prompts to reduce drift
 - Phase 5 social/economic reward lifecycle has an initial worker hook:
   - approved tasks with measurable budget savings can grant identity free-time/journal tokens
-  - reward grants flow through `swarm_enrichment` and are reflected in execution event metadata
+  - reward grants flow through `swarm_enrichment`, are reflected in execution event metadata, and are deduplicated per task+identity via `.swarm/phase5_reward_ledger.json`
 
 ## Safety and budget guarantees in this path
 
