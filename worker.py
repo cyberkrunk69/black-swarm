@@ -562,6 +562,8 @@ def _phase4_gut_check(prompt: str) -> Dict[str, Any]:
     if has_sequence_connector:
         signals.append("sequencing_connectors")
     punctuation_hits = text.count(",") + text.count(";")
+    if punctuation_hits >= 2:
+        signals.append("comma_enumeration")
     if punctuation_hits >= 2 or ":" in text or (has_sequence_connector and punctuation_hits >= 1):
         signals.append("compound_clauses")
 

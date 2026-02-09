@@ -49,6 +49,14 @@ def test_phase4_gut_check_identifies_multi_clause_prompt():
     assert "sequencing_connectors" in gut_check["signals"] or "compound_clauses" in gut_check["signals"]
 
 
+def test_phase4_gut_check_identifies_comma_enumeration_prompt():
+    gut_check = worker._phase4_gut_check(
+        "Implement auth API, add integration tests, update deployment docs."
+    )
+    assert gut_check["should_decompose"] is True
+    assert "comma_enumeration" in gut_check["signals"]
+
+
 def test_phase4_feature_breakdown_splits_comma_delimited_actions():
     features = worker._phase4_feature_breakdown(
         "Implement auth API, add integration tests, update deployment docs.",
