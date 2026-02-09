@@ -1,8 +1,8 @@
 """
-Smart Task Executor - Integrates Claude/Groq with Dynamic Scheduler
+Smart Task Executor - Integrates Groq with Dynamic Scheduler
 
 This bridges the inference engines with the dynamic scheduler:
-- Wraps Claude/Groq execution
+- Wraps model execution
 - Detects when output indicates a missing dependency
 - Spawns subtasks automatically
 - Manages checkpointing for long tasks
@@ -37,7 +37,7 @@ DEPENDENCY_PATTERNS = [
     (r'[Dd]epends?\s+on\s+(\S+)', 'task'),
 ]
 
-# Patterns in Claude's output indicating it couldn't proceed
+# Patterns in model output indicating it couldn't proceed
 BLOCKED_OUTPUT_PATTERNS = [
     r"file.*(?:doesn't|does not|not)\s+exist",
     r"couldn't find",
@@ -123,7 +123,7 @@ class SmartExecutor:
     def _create_task_executor(self, task_text: str, task_id: str) -> Callable:
         """
         Create an executor function for a task.
-        This wraps the Claude/Groq call with dependency checking.
+        This wraps the model call with dependency checking.
         """
         def executor(ctx: TaskContext) -> Dict[str, Any]:
             # Check for file dependencies
@@ -298,7 +298,7 @@ if __name__ == "__main__":
     executor = SmartExecutor(
         workspace=Path("."),
         max_parallel=4,
-        engine_type=EngineType.CLAUDE
+        engine_type=EngineType.GROQ,
     )
 
     # Add tasks with dependencies

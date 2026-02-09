@@ -2,7 +2,7 @@
 Parallel Worker for Vivarium Orchestrator
 
 Uses file-based lock protocol for coordination between multiple workers.
-Lock Protocol from: claude-code-orchestrator EXECUTION_SWARM_SYSTEM.md
+Lock Protocol from: EXECUTION_SWARM_SYSTEM.md (legacy orchestrator spec)
 
 Target API: http://127.0.0.1:8420 (Vivarium)
 """
@@ -72,21 +72,32 @@ def ensure_directories() -> None:
 
 def read_queue() -> Dict[str, Any]:
     """Read the shared queue file (never write to it from workers)."""
-    data = read_json(QUEUE_FILE)
+    data = read_json(QUEUE_FILE, default=None)
     if not data:
-        raise ValueError("Queue file is empty")
+        return {"tasks": [], "completed": [], "failed": []}
     return data
 
 
 def read_execution_log() -> Dict[str, Any]:
     """Read the execution log (JSONL) and return latest status per task."""
-    events = read_jsonl(EXECUTION_LOG)
+    events = read_jsonl(EXECUTION_LOG, default=[])
     task_index: Dict[str, Any] = {}
     for event in events:
         task_id = event.get("task_id")
         if task_id:
             task_index[task_id] = event
-    return {"tasks": task_index}
+    if task_index:
+        return {"tasks": task_index}
+
+    # Legacy fallback: JSON execution log
+    legacy_path = WORKSPACE / "execution_log.json"
+    legacy_log = read_json(legacy_path, default=None)
+    if legacy_log and isinstance(legacy_log, dict):
+        legacy_tasks = legacy_log.get("tasks", {})
+        if isinstance(legacy_tasks, dict):
+            return {"tasks": legacy_tasks}
+
+    return {"tasks": {}}
 
 
 def append_execution_event(task_id: str, status: str, **fields: Any) -> None:
@@ -191,16 +202,29 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
     min_budget = task.get("min_budget", DEFAULT_MIN_BUDGET)
     max_budget = task.get("max_budget", DEFAULT_MAX_BUDGET)
     intensity = task.get("intensity", DEFAULT_INTENSITY)
-    prompt = task.get("prompt") or task.get("task") or task.get("instruction")
+    prompt = (
+        task.get("prompt")
+        or task.get("instruction")
+        or task.get("description")
+        or task.get("atomic_instruction")
+        or task.get("task")
+    )
+    command = task.get("command") or task.get("shell")
+    mode = (task.get("mode") or "").lower().strip() or None
     model = task.get("model")
     if model:
         validate_model_id(model)
 
-    if not prompt:
+    if mode == "local" and not command:
+        command = task.get("task")
+    if command and not mode:
+        mode = "local"
+
+    if not prompt and not command:
         return {
             "status": "failed",
             "result_summary": None,
-            "errors": "Task missing prompt/instruction"
+            "errors": "Task missing prompt/command"
         }
 
     _log("INFO", f"Executing task {task_id} (budget: ${min_budget}-${max_budget}, intensity: {intensity})")
@@ -213,6 +237,10 @@ def execute_task(task: Dict[str, Any], api_endpoint: str) -> Dict[str, Any]:
         "intensity": intensity,
         "task_id": task_id,
     }
+    if command:
+        payload["task"] = command
+    if mode:
+        payload["mode"] = mode
 
     try:
         with httpx.Client(timeout=API_REQUEST_TIMEOUT) as client:

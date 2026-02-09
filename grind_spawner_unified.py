@@ -234,7 +234,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--engine",
         type=str,
         default=os.environ.get("INFERENCE_ENGINE", "auto"),
-        help="auto|groq|claude",
+        help="auto|groq",
     )
 
     args = parser.parse_args(argv)
@@ -247,8 +247,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     engine_type = EngineType.AUTO
     if engine_str == "groq":
         engine_type = EngineType.GROQ
-    elif engine_str == "claude":
-        engine_type = EngineType.CLAUDE
 
     # Determine tasks
     tasks: List[Dict[str, Any]] = []
