@@ -12,6 +12,8 @@ import os
 import sys
 import time
 import uuid
+import hashlib
+import random
 import httpx
 from typing import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -63,6 +65,14 @@ FOCUS_HAT_MAP = {
     "document": "Documenter",
 }
 DEFAULT_SUBTASK_PARALLELISM: int = int(os.environ.get("RESIDENT_SUBTASK_PARALLELISM", "3"))
+RESIDENT_SHARD_COUNT: int = int(os.environ.get("RESIDENT_SHARD_COUNT", "1"))
+RESIDENT_SHARD_ID_RAW: str = os.environ.get("RESIDENT_SHARD_ID", "auto").strip().lower()
+RESIDENT_SCAN_LIMIT: int = int(os.environ.get("RESIDENT_SCAN_LIMIT", "0"))
+RESIDENT_BACKOFF_MAX: int = int(os.environ.get("RESIDENT_BACKOFF_MAX", "5"))
+RESIDENT_JITTER_MAX: float = float(os.environ.get("RESIDENT_JITTER_MAX", "0.5"))
+
+_EXECUTION_LOG_STATE: Dict[str, Any] = {"offset": 0, "size": 0, "tasks": {}}
+_SCAN_CURSOR: int = 0
 
 # Generate unique resident ID (keep worker_id for compatibility in logs)
 RESIDENT_ID: str = f"resident_{uuid.uuid4().hex[:8]}"
@@ -105,6 +115,32 @@ def read_queue() -> Dict[str, Any]:
 
 def read_execution_log() -> Dict[str, Any]:
     """Read the execution log (JSONL) and return latest status per task."""
+    if EXECUTION_LOG.exists():
+        try:
+            size = EXECUTION_LOG.stat().st_size
+            if size < _EXECUTION_LOG_STATE["size"]:
+                _EXECUTION_LOG_STATE["offset"] = 0
+                _EXECUTION_LOG_STATE["tasks"] = {}
+            with open(EXECUTION_LOG, "r", encoding="utf-8") as f:
+                f.seek(_EXECUTION_LOG_STATE["offset"])
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    task_id = event.get("task_id")
+                    if task_id:
+                        _EXECUTION_LOG_STATE["tasks"][task_id] = event
+                _EXECUTION_LOG_STATE["offset"] = f.tell()
+            _EXECUTION_LOG_STATE["size"] = size
+            if _EXECUTION_LOG_STATE["tasks"]:
+                return {"tasks": dict(_EXECUTION_LOG_STATE["tasks"])}
+        except OSError:
+            pass
+
     events = read_jsonl(EXECUTION_LOG, default=[])
     task_index: Dict[str, Any] = {}
     for event in events:
@@ -221,6 +257,41 @@ def is_task_done(task_id: str, execution_log: Dict[str, Any]) -> bool:
     """Check if a task is already completed or failed."""
     task_status = execution_log.get("tasks", {}).get(task_id, {}).get("status")
     return task_status in ("completed", "failed")
+
+
+def _task_shard(task_id: str, shard_count: int) -> int:
+    digest = hashlib.sha1(task_id.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % shard_count
+
+
+def _resolve_shard_id(resident_id: str) -> Optional[int]:
+    if RESIDENT_SHARD_COUNT <= 1:
+        return None
+    if RESIDENT_SHARD_ID_RAW and RESIDENT_SHARD_ID_RAW != "auto":
+        try:
+            return int(RESIDENT_SHARD_ID_RAW) % RESIDENT_SHARD_COUNT
+        except ValueError:
+            return None
+    digest = hashlib.sha1(resident_id.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % RESIDENT_SHARD_COUNT
+
+
+def _select_tasks_for_scan(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not tasks:
+        return tasks
+    if RESIDENT_SCAN_LIMIT <= 0 or RESIDENT_SCAN_LIMIT >= len(tasks):
+        return tasks
+    global _SCAN_CURSOR
+    start = _SCAN_CURSOR % len(tasks)
+    _SCAN_CURSOR = (_SCAN_CURSOR + RESIDENT_SCAN_LIMIT) % len(tasks)
+    rotated = tasks[start:] + tasks[:start]
+    return rotated[:RESIDENT_SCAN_LIMIT]
+
+
+def _compute_idle_sleep(idle_count: int) -> float:
+    backoff = min(idle_count, max(1, RESIDENT_BACKOFF_MAX))
+    jitter = random.random() * max(0.0, RESIDENT_JITTER_MAX)
+    return WORKER_CHECK_INTERVAL * (1 + backoff) + jitter
 
 
 def _build_facet_plan_text(plan: Any) -> str:
@@ -570,14 +641,18 @@ def find_and_execute_task(
     queue: Dict[str, Any],
     resident_ctx: Optional["ResidentContext"],
     min_score: float,
+    shard_id: Optional[int],
 ) -> bool:
     """Find an available task, lock it, execute it, and report results."""
     execution_log = read_execution_log()
     api_endpoint = queue.get("api_endpoint", "http://127.0.0.1:8420")
 
-    for task in queue.get("tasks", []):
+    tasks = _select_tasks_for_scan(queue.get("tasks", []))
+    for task in tasks:
         task_id = task.get("id")
         if not task_id:
+            continue
+        if shard_id is not None and _task_shard(task_id, RESIDENT_SHARD_COUNT) != shard_id:
             continue
 
         if is_task_done(task_id, execution_log):
@@ -645,6 +720,15 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
             except Exception as exc:
                 _log("WARN", f"Resident onboarding failed: {exc}")
 
+        shard_source = resident_ctx.resident_id if resident_ctx else RESIDENT_ID
+        shard_id = _resolve_shard_id(shard_source)
+        if shard_id is not None:
+            _log(
+                "INFO",
+                f"Shard assignment {shard_id}/{RESIDENT_SHARD_COUNT} "
+                f"(scan_limit={RESIDENT_SCAN_LIMIT or 'full'})",
+            )
+
         _log("INFO", "Starting resident loop")
 
         iterations = 0
@@ -658,7 +742,7 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
             try:
                 queue = read_queue()
 
-                if find_and_execute_task(queue, resident_ctx, DEFAULT_MIN_SCORE):
+                if find_and_execute_task(queue, resident_ctx, DEFAULT_MIN_SCORE, shard_id):
                     iterations += 1
                     idle_count = 0
                 else:
@@ -667,7 +751,7 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
                         _log("INFO", f"No tasks available after {MAX_IDLE_CYCLES} checks. Exiting.")
                         break
                     _log("INFO", f"No tasks available, waiting... ({idle_count}/{MAX_IDLE_CYCLES})")
-                    time.sleep(WORKER_CHECK_INTERVAL)
+                    time.sleep(_compute_idle_sleep(idle_count))
             except KeyboardInterrupt:
                 _log("INFO", "Interrupted by user")
                 break

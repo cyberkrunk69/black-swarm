@@ -123,6 +123,10 @@ Optional config:
 - SWARM_API_URL (default http://127.0.0.1:8420)
 - DEFAULT_GROQ_MODEL (must be in config.py whitelist)
 - WORKER_TIMEOUT_SECONDS
+- RESIDENT_SHARD_COUNT (split task queue across residents)
+- RESIDENT_SHARD_ID (fixed shard id or "auto")
+- RESIDENT_SCAN_LIMIT (max tasks scanned per loop; 0 = full)
+- RESIDENT_SUBTASK_PARALLELISM (parallelism for delegated subtasks)
 
 ## Control Panel UI (Web)
 The control panel is the real-time web UI for monitoring, budgets, and spawner

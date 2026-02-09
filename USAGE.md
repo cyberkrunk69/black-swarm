@@ -27,6 +27,13 @@ export GROQ_API_KEY=your_key_here
 
 Add tasks manually and run residents to execute them.
 
+## Scaling knobs (for large resident counts)
+- RESIDENT_SHARD_COUNT: divide queue into shards by task id hash.
+- RESIDENT_SHARD_ID: fixed shard id or "auto" (default).
+- RESIDENT_SCAN_LIMIT: cap tasks scanned per loop (0 = full scan).
+- RESIDENT_SUBTASK_PARALLELISM: parallelism for delegated subtasks.
+- RESIDENT_BACKOFF_MAX / RESIDENT_JITTER_MAX: tune idle backoff.
+
 ### Step 1: Clear Previous State (optional)
 ```bash
 rm -f task_locks/*.lock
