@@ -218,6 +218,7 @@ The recovery sequence for these findings is defined in `docs/VISION_ROADMAP.md`.
 | `.swarm/messages_to_human.jsonl` | resident social systems | Resident-to-human message queue |
 | `.swarm/messages_from_human.json` | control panel | Human responses |
 | `HALT`, `PAUSE` | kill switch / runtime safety | Emergency stop / pause controls |
+| `library/community_library/**` | worker + resident docs flows | Community Library docs + resident suggestions |
 | `library/creative_works/*` | `vivarium/runtime/swarm_enrichment.py` | Resident-generated creative artifacts |
 
 Most `.swarm/*` content is runtime-generated.

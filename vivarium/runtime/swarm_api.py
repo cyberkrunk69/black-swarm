@@ -55,7 +55,8 @@ IGNORE_DIRS = {
     "venv",
     "__pycache__",
     "node_modules",
-    "knowledge",
+    "community_library",
+    "knowledge",  # legacy path; retained for backward compatibility
     ".checkpoints",
     ".cycle_cache",
 }

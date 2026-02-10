@@ -2545,6 +2545,7 @@ CONTROL_PANEL_HTML = '''
                         const iconByType = {
                             journal: 'J',
                             creative_work: 'W',
+                            community_doc: 'D',
                             skill: 'S',
                         };
                         const icon = iconByType[artifact.type] || 'F';
@@ -4130,7 +4131,7 @@ def api_view_artifact():
 def api_list_artifacts():
     """List recent artifacts (files created/modified by the swarm)."""
     try:
-        # Get files from journals and library
+        # Get files from journals and Community Library
         artifacts = []
 
         # Journals
@@ -4144,7 +4145,7 @@ def api_list_artifacts():
                     'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
 
-        # Library/creative works
+        # Community creative works
         library_dir = WORKSPACE / "library" / "creative_works"
         if library_dir.exists():
             for f in sorted(library_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
@@ -4154,6 +4155,28 @@ def api_list_artifacts():
                     'type': 'creative_work',
                     'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
+
+        # Community library docs and resident suggestions
+        community_root = WORKSPACE / "library" / "community_library"
+        if community_root.exists():
+            docs_dir = community_root / "swarm_docs"
+            if docs_dir.exists():
+                for f in sorted(docs_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                    artifacts.append({
+                        'path': str(f.relative_to(WORKSPACE)),
+                        'name': f.name,
+                        'type': 'community_doc',
+                        'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                    })
+            suggestions_dir = community_root / "resident_suggestions"
+            if suggestions_dir.exists():
+                for f in sorted(suggestions_dir.glob("**/*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                    artifacts.append({
+                        'path': str(f.relative_to(WORKSPACE)),
+                        'name': f.name,
+                        'type': 'community_doc',
+                        'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                    })
 
         # Skills created
         skills_dir = WORKSPACE / "skills"

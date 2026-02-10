@@ -43,6 +43,7 @@ from vivarium.runtime.config import (
 from vivarium.runtime.runtime_contract import normalize_queue, normalize_task, is_known_execution_status
 from vivarium.runtime.vivarium_scope import (
     AUDIT_ROOT,
+    MUTABLE_COMMUNITY_LIBRARY_ROOT,
     MUTABLE_LOCKS_DIR,
     MUTABLE_QUEUE_FILE,
     MUTABLE_ROOT,
@@ -156,12 +157,17 @@ MVP_DOCS_ONLY_MODE: bool = (
     not in {"0", "false", "no"}
 )
 MVP_JOURNALS_DIR: Path = MUTABLE_SWARM_DIR / "journals"
-MVP_LIBRARY_DOCS_DIR: Path = WORKSPACE / "library" / "swarm_docs"
-MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT: Path = WORKSPACE / "library" / "resident_suggestions"
+MVP_COMMUNITY_LIBRARY_ROOT: Path = MUTABLE_COMMUNITY_LIBRARY_ROOT
+MVP_LIBRARY_DOCS_DIR: Path = MVP_COMMUNITY_LIBRARY_ROOT / "swarm_docs"
+MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT: Path = MVP_COMMUNITY_LIBRARY_ROOT / "resident_suggestions"
+MVP_LEGACY_LIBRARY_DOCS_DIR: Path = WORKSPACE / "library" / "swarm_docs"
+MVP_LEGACY_RESIDENT_SUGGESTIONS_ROOT: Path = WORKSPACE / "library" / "resident_suggestions"
 MVP_ALLOWED_DOC_ROOTS: Tuple[Path, ...] = (
     MVP_JOURNALS_DIR,
     MVP_LIBRARY_DOCS_DIR,
     MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT,
+    MVP_LEGACY_LIBRARY_DOCS_DIR,
+    MVP_LEGACY_RESIDENT_SUGGESTIONS_ROOT,
 )
 
 _EXECUTION_LOG_STATE: Dict[str, Any] = {"offset": 0, "size": 0, "tasks": {}}
@@ -1857,7 +1863,9 @@ def execute_task(
                 "MVP MODE: You are currently limited to documentation artifacts.\n"
                 "- Do NOT perform direct code changes.\n"
                 "- You MAY read non-physics repository files for context.\n"
-                "- Store improvement proposals as markdown in your resident library folder.\n"
+                "- Community Library root: library/community_library/\n"
+                "- Store improvement proposals as markdown in library/community_library/resident_suggestions/<identity_id>/\n"
+                "- Shared docs live in library/community_library/swarm_docs/ (legacy library/swarm_docs still readable).\n"
                 "- Produce markdown proposals, plans, or review notes.\n"
                 "- Prefer concrete change suggestions and acceptance criteria.\n\n"
                 f"{prompt}"

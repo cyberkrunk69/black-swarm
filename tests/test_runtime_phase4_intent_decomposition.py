@@ -445,8 +445,8 @@ def test_worker_execute_task_persists_mvp_markdown_artifacts(monkeypatch, tmp_pa
             return prompt
 
     journals_dir = tmp_path / ".swarm" / "journals"
-    library_docs_dir = tmp_path / "library" / "swarm_docs"
-    resident_suggestions_root = tmp_path / "library" / "resident_suggestions"
+    library_docs_dir = tmp_path / "library" / "community_library" / "swarm_docs"
+    resident_suggestions_root = tmp_path / "library" / "community_library" / "resident_suggestions"
 
     monkeypatch.setattr(worker, "WORKER_INTENT_GATEKEEPER", None)
     monkeypatch.setattr(worker, "WORKER_TOOL_ROUTER", None)
@@ -488,7 +488,7 @@ def test_worker_execute_task_persists_mvp_markdown_artifacts(monkeypatch, tmp_pa
             "prompt": "Draft an MVP UI plan without making code changes.",
             "mode": "llm",
             "model": "llama-3.1-8b-instant",
-            "doc_path": "library/swarm_docs/mvp_ui_plan.md",
+            "doc_path": "library/community_library/swarm_docs/mvp_ui_plan.md",
         },
         api_endpoint="http://127.0.0.1:8420",
         resident_ctx=_StubResidentContext(),
@@ -498,7 +498,7 @@ def test_worker_execute_task_persists_mvp_markdown_artifacts(monkeypatch, tmp_pa
     assert "MVP MODE:" in captured["payload"]["prompt"]
     artifacts = result["mvp_markdown_artifacts"]
     assert artifacts["written"] is True
-    assert artifacts["doc_path"].endswith("library/swarm_docs/mvp_ui_plan.md")
+    assert artifacts["doc_path"].endswith("library/community_library/swarm_docs/mvp_ui_plan.md")
 
     doc_path = Path(artifacts["doc_path"])
     assert doc_path.exists()
@@ -550,8 +550,8 @@ def test_worker_execute_task_defaults_suggestions_to_resident_library_folder(mon
             return prompt
 
     journals_dir = tmp_path / ".swarm" / "journals"
-    library_docs_dir = tmp_path / "library" / "swarm_docs"
-    resident_suggestions_root = tmp_path / "library" / "resident_suggestions"
+    library_docs_dir = tmp_path / "library" / "community_library" / "swarm_docs"
+    resident_suggestions_root = tmp_path / "library" / "community_library" / "resident_suggestions"
 
     monkeypatch.setattr(worker, "WORKER_INTENT_GATEKEEPER", None)
     monkeypatch.setattr(worker, "WORKER_TOOL_ROUTER", None)
@@ -601,4 +601,4 @@ def test_worker_execute_task_defaults_suggestions_to_resident_library_folder(mon
     assert result["status"] == "completed"
     artifacts = result["mvp_markdown_artifacts"]
     assert artifacts["written"] is True
-    assert "library/resident_suggestions/identity_docs/" in artifacts["doc_path"]
+    assert "library/community_library/resident_suggestions/identity_docs/" in artifacts["doc_path"]

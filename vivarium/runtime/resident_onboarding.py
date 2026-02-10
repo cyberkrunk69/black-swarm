@@ -1,7 +1,7 @@
 """
 Resident onboarding and daily wake-up context.
 
-Residents are born at runtime, choose an identity from the library, and receive
+Residents are born at runtime, choose an identity from the Community Library, and receive
 a world summary that helps them decide what to do today. This is voluntary and
 reward-based: no coercion, no forced assignments.
 """
@@ -30,6 +30,7 @@ IDENTITY_LIBRARY_FILE = "identity_library.json"
 RESIDENT_DAYS_FILE = Path(".swarm") / "resident_days.json"
 IDENTITIES_DIR = Path(".swarm") / "identities"
 IDENTITY_LOCKS_FILE = Path(".swarm") / "identity_locks.json"
+COMMUNITY_LIBRARY_ROOT = "library/community_library"
 # One simulated "day" length (seconds). Default compressed to 1 minute.
 RESIDENT_CYCLE_SECONDS = int(
     os.environ.get(
@@ -95,6 +96,9 @@ class ResidentContext:
             "",
             "Reframed as your morning briefing:",
             f"- Market hint: {self.market_hint}",
+            f"- Community Library: {COMMUNITY_LIBRARY_ROOT}/",
+            "- Personal proposals: library/community_library/resident_suggestions/<your_identity_id>/",
+            "- Shared docs: library/community_library/swarm_docs/",
         ]
         if self.notifications:
             lines.append("As you roll out of bed and check your phone you notice:")

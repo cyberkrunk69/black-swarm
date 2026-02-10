@@ -7,7 +7,7 @@ When workers complete tasks under budget, they earn free time to:
 - Pursue personal interests
 - Add to the shared universe
 
-Creative works are stored in the library for all to enjoy.
+Creative works and shared docs are stored in the Community Library for all to enjoy.
 
 Usage:
     from vivarium.runtime.swarm_enrichment import EnrichmentSystem, get_enrichment
@@ -119,7 +119,7 @@ class SocialInvite:
     to_name: str
     activity: str                   # "writing", "worldbuilding", "philosophy", "games"
     message: str
-    location: str                   # "library", "watercooler", "creative_room"
+    location: str                   # "community_library", "watercooler", "creative_room"
     created_at: str
     status: str = "pending"         # "pending", "accepted", "declined", "expired"
 
@@ -368,6 +368,8 @@ class EnrichmentSystem:
         self.workspace = Path(workspace)
         self.library_dir = self.workspace / "library" / "creative_works"
         self.library_dir.mkdir(parents=True, exist_ok=True)
+        self.community_library_dir = self.workspace / "library" / "community_library"
+        self.community_library_dir.mkdir(parents=True, exist_ok=True)
         self.discussions_dir = self.workspace / ".swarm" / "discussions"
         self.discussions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -5795,7 +5797,7 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         to_name: str,
         activity: str,
         message: str,
-        location: str = "library"
+        location: str = "community_library"
     ) -> SocialInvite:
         """Send a social invitation to another identity."""
         invite = SocialInvite(
@@ -6127,6 +6129,15 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                 lines.append(f"  - {invite.from_name} wants to {invite.activity} at the {invite.location}")
                 lines.append(f"    \"{invite.message}\"")
             lines.append("")
+
+        lines.extend([
+            "COMMUNITY LIBRARY PATHS:",
+            "  Community root: library/community_library/",
+            "  Shared docs: library/community_library/swarm_docs/",
+            "  Your suggestions: library/community_library/resident_suggestions/<your_identity_id>/",
+            "  Creative works archive: library/creative_works/",
+            "",
+        ])
 
         if catalog["works"]:
             lines.append(f"Library has {len(catalog['works'])} works")
