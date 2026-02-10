@@ -187,3 +187,55 @@ AutoHive growth:
 git -C /workspace/autohive log origin/main --date=short --pretty=format:'%ad' | sort | uniq -c
 git -C /workspace/autohive log origin/main --shortstat --pretty=format:'%h|%ad|%s' --date=iso
 ```
+
+---
+
+## 6) Requested lens only: self-learning, speed gains, cost/task reduction
+
+### 6.1 Self-learning: what is verifiably supported
+
+**Vivarium (historical log @ `5b6a0b6:performance_history.json`)**
+- 45/45 sessions contain a `lessons_learned` field.
+- Frequent recurring learned outcomes are logged, e.g.:
+  - `PASS: Exit code 0, found 4 success indicators` (9 occurrences)
+  - `PASS: Exit code 0, found 5 success indicators` (9 occurrences)
+  - `FAIL: exit code 1, no files modified` (7 occurrences)
+- Quality trend in same file:
+  - first 10 sessions average quality = `0.858`
+  - last 10 sessions average quality = `0.995`
+  - change = `+15.97%`
+
+**AutoHive**
+- `session_reports.json` provides iterative, timestamped reporting (87 reports),
+  but does not provide a structured quality score time-series suitable for a
+  robust learning-rate claim.
+
+### 6.2 Speed gains: what is verifiably supported
+
+**No clean, stable speed-gain claim is supported across available logs.**
+
+Observed (Vivarium historical):
+- `performance_history.json` duration trend (chronological):
+  - first 10 avg = `122.805s`
+  - last 10 avg = `145.757s`
+  - this is slower, not faster.
+- `structured_logs.jsonl` completed-session elapsed trend:
+  - first 10 avg = `80.123s`
+  - last 10 avg = `46.958s`
+  - however success rate in the same windows drops from `100%` to `20%`.
+
+Because elapsed-time and success trend in opposite directions, the logs do not
+support a trustworthy headline like "the system got faster" without caveats.
+
+### 6.3 Cost per task reduction: what is verifiably supported
+
+**No before/after per-task cost reduction claim is supported across available logs.**
+
+- Vivarium `api_audit.log` has only 4 successful calls with cost fields:
+  - total cost = `0.05331729`
+  - average cost per successful call = `0.01332932`
+  - useful as a point estimate, not a reduction trend.
+- Vivarium `performance_history.json` does not contain a cost field.
+- AutoHive `session_reports.json` includes occasional free-text cost mentions
+  (for example `"Total cost: $0.000000"`), but no structured per-task cost
+  series for trend analysis.
