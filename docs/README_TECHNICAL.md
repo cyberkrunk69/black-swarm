@@ -138,7 +138,7 @@ for personal gain breaks system reality and is not allowed.
 - Attempt cost and refund curve (`JOURNAL_ATTEMPT_COST`, `JOURNAL_MIN_REFUND_RATE`,
   `JOURNAL_MAX_REFUND_RATE`, `JOURNAL_MAX_BONUS_RATE`, `JOURNAL_BONUS_CURVE`)
 
-### 3. World Physics (`physics/world_physics.py`)
+### 3. World Physics (`vivarium/physics/world_physics.py`)
 
 Defines swarm-simulation world invariants and control knobs.
 
@@ -153,7 +153,7 @@ Defines swarm-simulation world invariants and control knobs.
 - Max metadata size/key count
 - Max result payload size
 
-These values are consumed by `swarm_environment/fresh_environment.py` and
+These values are consumed by `vivarium/swarm_environment/fresh_environment.py` and
 materialized into fresh environment manifests.
 
 ### 4. Control Panel (`control_panel.py`)

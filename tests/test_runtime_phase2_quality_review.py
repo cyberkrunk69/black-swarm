@@ -7,7 +7,7 @@ import worker
 from vivarium.runtime.quality_gates import QualityGateManager
 from vivarium.runtime.runtime_contract import KNOWN_EXECUTION_STATUSES
 from vivarium.runtime.task_verifier import VerificationResult, Verdict
-from utils import read_json, read_jsonl
+from vivarium.utils import read_json, read_jsonl
 
 
 class _StaticVerifier:

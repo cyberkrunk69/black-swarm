@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from physics import SWARM_WORLD_PHYSICS, SwarmWorldControls, SwarmWorldPhysics
+from vivarium.physics import SWARM_WORLD_PHYSICS, SwarmWorldControls, SwarmWorldPhysics
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()

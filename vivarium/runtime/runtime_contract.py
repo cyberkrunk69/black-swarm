@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from physics import SWARM_WORLD_PHYSICS
+from vivarium.physics import SWARM_WORLD_PHYSICS
 
 QUEUE_CONTRACT_VERSION = SWARM_WORLD_PHYSICS.queue_contract_version
 DEFAULT_API_ENDPOINT = "http://127.0.0.1:8420"

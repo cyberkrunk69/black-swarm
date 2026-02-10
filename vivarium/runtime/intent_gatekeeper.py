@@ -12,7 +12,7 @@ from datetime import datetime
 
 # Import skill registry for semantic comparison
 try:
-    from skills.skill_registry import SkillRegistry
+    from vivarium.skills.skill_registry import SkillRegistry
     REGISTRY_AVAILABLE = True
 except ImportError:
     REGISTRY_AVAILABLE = False
@@ -282,7 +282,7 @@ class IntentGatekeeper:
         registry = self._get_skill_registry()
         if registry and registry.vectorizer:
             try:
-                from physics.math_utils import cosine_similarity_vectors
+                from vivarium.physics.math_utils import cosine_similarity_vectors
                 emb1 = registry.compute_embedding(text1)
                 emb2 = registry.compute_embedding(text2)
                 if emb1 is not None and emb2 is not None:

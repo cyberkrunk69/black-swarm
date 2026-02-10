@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from urllib.parse import urlparse
-from utils import (
+from vivarium.utils import (
     read_json,
     write_json,
     append_jsonl,
