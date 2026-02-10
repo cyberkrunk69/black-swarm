@@ -319,12 +319,13 @@ def _build_pre_identity_summary(world: WorldState) -> str:
 
 def _select_identity(identities: List[IdentityTemplate], world: WorldState) -> Tuple[IdentityTemplate, str]:
     if not identities:
+        suffix = uuid.uuid4().hex[:4]
         fallback = IdentityTemplate(
-            identity_id="resident_default",
-            name="Resident",
-            summary="Default resident identity.",
+            identity_id=f"resident_{suffix}",
+            name=f"resident-{suffix}",
+            summary="Emergent identity bootstrapped from resident context.",
         )
-        return fallback, "default identity"
+        return fallback, "emergent fallback identity"
 
     best = identities[0]
     best_score = -1.0
@@ -388,32 +389,41 @@ def create_identity_from_resident(
     affinities: Optional[List[str]] = None,
     values: Optional[List[str]] = None,
     preferred_activities: Optional[List[str]] = None,
+    identity_statement: Optional[str] = None,
     available_cycle: Optional[int] = None,
 ) -> str:
     """Create a new resident identity (OC) authored by a resident."""
     identity_id = f"oc_{uuid.uuid4().hex[:8]}"
     cycle_id = _current_cycle_id()
-    available_at = available_cycle if available_cycle is not None else cycle_id + 1
+    available_at = available_cycle if available_cycle is not None else cycle_id
+
+    clean_name = (name or "").strip() or identity_id
+    clean_summary = (summary or "").strip() or "Self-authored resident identity."
+    clean_statement = (identity_statement or "").strip() or clean_summary
 
     identity_data = {
         "id": identity_id,
-        "name": name or identity_id,
-        "summary": summary or "Resident-created identity.",
+        "name": clean_name,
+        "summary": clean_summary,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "created_by": {
             "resident_id": creator_resident_id,
             "identity_id": creator_identity_id,
         },
-        "origin": "resident_oc",
+        "origin": "resident_authored",
         "available_cycle": available_at,
         "preferred_activities": preferred_activities or [],
         "attributes": {
             "core": {
                 "personality_traits": affinities or [],
                 "core_values": values or [],
+                "identity_statement": clean_statement,
             },
             "profile": {},
             "mutable": {},
+        },
+        "meta": {
+            "creative_self_authored": True,
         },
     }
 

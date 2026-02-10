@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vivarium.runtime import swarm_api as swarm
 from vivarium.runtime import worker_runtime as worker
+from vivarium.runtime import config as runtime_config
 from vivarium.runtime.runtime_contract import normalize_queue, validate_queue_contract
 from vivarium.runtime.safety_gateway import SafetyGateway
 
@@ -93,6 +94,20 @@ def test_worker_idle_wait_uses_runtime_speed_file(monkeypatch, tmp_path):
 
     runtime_speed_file.write_text('{"wait_seconds": -1}', encoding="utf-8")
     assert worker._resolve_idle_wait_seconds(3) == pytest.approx(2.0, rel=0.001)
+
+
+def test_runtime_config_loads_groq_key_from_security_file(monkeypatch, tmp_path):
+    key_file = tmp_path / "security" / "groq_api_key.txt"
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_text("gsk_unit_test_123456789\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_config, "GROQ_API_KEY_FILE", key_file)
+    runtime_config.set_groq_api_key(None)
+
+    loaded = runtime_config.get_groq_api_key()
+    assert loaded == "gsk_unit_test_123456789"
+    runtime_config.validate_config(require_groq_key=True)
+    runtime_config.set_groq_api_key(None)
 
 
 def test_cycle_endpoint_requires_internal_execution_token(monkeypatch):

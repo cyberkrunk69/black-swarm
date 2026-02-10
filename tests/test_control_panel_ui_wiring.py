@@ -30,6 +30,9 @@ def _configure_control_panel_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cp, "BOUNTIES_FILE", swarm_dir / "bounties.json")
     monkeypatch.setattr(cp, "DISCUSSIONS_DIR", swarm_dir / "discussions")
     monkeypatch.setattr(cp, "RUNTIME_SPEED_FILE", swarm_dir / "runtime_speed.json")
+    monkeypatch.setattr(cp, "GROQ_API_KEY_FILE", tmp_path / "security" / "groq_api_key.txt")
+    monkeypatch.setattr(cp.runtime_config, "GROQ_API_KEY_FILE", cp.GROQ_API_KEY_FILE)
+    cp.runtime_config.set_groq_api_key(None)
 
     cp.app.config["TESTING"] = True
     return cp.app.test_client()
@@ -299,3 +302,54 @@ def test_runtime_speed_api_round_trip(monkeypatch, tmp_path):
 
     refreshed = client.get("/api/runtime_speed", **_localhost_request_kwargs()).get_json()
     assert refreshed["wait_seconds"] == 11
+
+
+def test_groq_key_api_round_trip_and_clear(monkeypatch, tmp_path):
+    client = _configure_control_panel_paths(monkeypatch, tmp_path)
+
+    initial = client.get("/api/groq_key", **_localhost_request_kwargs()).get_json()
+    assert initial["configured"] is False
+
+    saved = client.post(
+        "/api/groq_key",
+        json={"api_key": "gsk_test_key_1234567890"},
+        **_localhost_request_kwargs(),
+    ).get_json()
+    assert saved["success"] is True
+    assert saved["configured"] is True
+    assert cp.GROQ_API_KEY_FILE.exists()
+
+    loaded = client.get("/api/groq_key", **_localhost_request_kwargs()).get_json()
+    assert loaded["configured"] is True
+    assert loaded["masked_key"].startswith("gsk_")
+
+    cleared = client.delete("/api/groq_key", **_localhost_request_kwargs()).get_json()
+    assert cleared["success"] is True
+    assert cleared["configured"] is False
+    assert not cp.GROQ_API_KEY_FILE.exists()
+
+
+def test_identity_create_api_creates_resident_authored_identity(monkeypatch, tmp_path):
+    client = _configure_control_panel_paths(monkeypatch, tmp_path)
+
+    created = client.post(
+        "/api/identities/create",
+        json={
+            "name": "EchoFlux",
+            "summary": "A curious mapper of swarm behavior and creative prompts.",
+            "traits_csv": "curious, collaborative, reflective",
+            "values_csv": "clarity, generosity",
+            "activities_csv": "journal writing, bounty strategy",
+        },
+        **_localhost_request_kwargs(),
+    ).get_json()
+    assert created["success"] is True
+    identity_id = created["identity"]["id"]
+
+    identity_path = cp.IDENTITIES_DIR / f"{identity_id}.json"
+    assert identity_path.exists()
+    data = json.loads(identity_path.read_text(encoding="utf-8"))
+    assert data["name"] == "EchoFlux"
+    assert data["origin"] == "resident_authored"
+    assert data["meta"]["creative_self_authored"] is True
+    assert "curious" in data["attributes"]["core"]["personality_traits"]

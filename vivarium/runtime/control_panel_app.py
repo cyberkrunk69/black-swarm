@@ -26,7 +26,15 @@ from flask import Flask, render_template_string, jsonify, request
 from flask_socketio import SocketIO, emit
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from vivarium.runtime.vivarium_scope import AUDIT_ROOT, MUTABLE_ROOT, MUTABLE_SWARM_DIR, ensure_scope_layout
+from vivarium.runtime import config as runtime_config
+from vivarium.runtime import resident_onboarding
+from vivarium.runtime.vivarium_scope import (
+    AUDIT_ROOT,
+    MUTABLE_ROOT,
+    MUTABLE_SWARM_DIR,
+    SECURITY_ROOT,
+    ensure_scope_layout,
+)
 
 ensure_scope_layout()
 
@@ -49,6 +57,7 @@ FREE_TIME_BALANCES = MUTABLE_SWARM_DIR / "free_time_balances.json"
 IDENTITIES_DIR = MUTABLE_SWARM_DIR / "identities"
 DISCUSSIONS_DIR = WORKSPACE / ".swarm" / "discussions"
 RUNTIME_SPEED_FILE = MUTABLE_SWARM_DIR / "runtime_speed.json"
+GROQ_API_KEY_FILE = SECURITY_ROOT / "groq_api_key.txt"
 
 # Track last read position
 last_log_position = 0
@@ -72,6 +81,30 @@ def _safe_float_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _parse_csv_items(raw: str, *, max_items: int = 10, max_len: int = 64) -> list[str]:
+    if not raw:
+        return []
+    items: list[str] = []
+    for part in str(raw).split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if len(value) > max_len:
+            value = value[:max_len].rstrip()
+        if value not in items:
+            items.append(value)
+        if len(items) >= max_items:
+            break
+    return items
+
+
+def _mask_secret(secret: str) -> str:
+    value = (secret or "").strip()
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:4]}...{value[-4:]}"
 
 
 CONTROL_PANEL_HOST = os.environ.get("VIVARIUM_CONTROL_PANEL_HOST", "127.0.0.1").strip() or "127.0.0.1"
@@ -908,6 +941,77 @@ CONTROL_PANEL_HTML = '''
                 </div>
             </details>
 
+            <!-- Collapsible: Groq API Key -->
+            <details class="sidebar-section">
+                <summary>
+                    Groq API
+                    <span id="groqKeyBadge" style="font-size: 0.65rem; color: var(--text-dim);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card">
+                        <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.4rem;">
+                            Attach your own Groq key for live LLM calls.
+                        </div>
+                        <input type="password" id="groqApiKeyInput" placeholder="gsk_..."
+                            style="width: 100%; padding: 0.35rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+                                   font-size: 0.8rem; margin-bottom: 0.35rem;">
+                        <div style="display: flex; gap: 0.35rem;">
+                            <button onclick="saveGroqApiKey()"
+                                style="flex: 1; padding: 0.3rem; background: var(--teal); border: none;
+                                       color: var(--bg-dark); border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">
+                                Save Key
+                            </button>
+                            <button onclick="clearGroqApiKey()"
+                                style="padding: 0.3rem 0.5rem; background: var(--bg-hover); border: 1px solid var(--border);
+                                       color: var(--text); border-radius: 4px; cursor: pointer; font-size: 0.72rem;">
+                                Clear
+                            </button>
+                        </div>
+                        <div id="groqKeyStatus" style="font-size: 0.65rem; margin-top: 0.35rem; color: var(--text-dim);"></div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Identity Forge -->
+            <details class="sidebar-section">
+                <summary>Identity Forge</summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card">
+                        <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.35rem;">
+                            Resident-driven identity creation. No preset names.
+                        </div>
+                        <select id="identityCreatorSelect"
+                            style="width: 100%; padding: 0.32rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.78rem;">
+                            <option value="">Creator identity (optional)</option>
+                        </select>
+                        <input type="text" id="newIdentityName" placeholder="Name (self-chosen)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.8rem;">
+                        <textarea id="newIdentitySummary" placeholder="Creative identity spark / summary"
+                            style="width: 100%; height: 56px; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+                                   padding: 0.35rem; font-size: 0.78rem; resize: vertical;"></textarea>
+                        <input type="text" id="newIdentityTraits" placeholder="Traits (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.25rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <input type="text" id="newIdentityValues" placeholder="Values (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.25rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <input type="text" id="newIdentityActivities" placeholder="Preferred activities (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <button onclick="createResidentIdentity()"
+                            style="width: 100%; padding: 0.3rem; background: var(--purple); border: none;
+                                   color: white; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">
+                            Create Identity
+                        </button>
+                        <div id="identityCreateStatus" style="font-size: 0.65rem; margin-top: 0.35rem; color: var(--text-dim);"></div>
+                    </div>
+                </div>
+            </details>
+
             <!-- Collapsible: Messages -->
             <details class="sidebar-section">
                 <summary>
@@ -1054,6 +1158,7 @@ CONTROL_PANEL_HTML = '''
             loadSpawnerStatus();
             loadStopStatus();
             loadRuntimeSpeed();
+            loadGroqKeyStatus();
             loadSwarmInsights();
         });
 
@@ -1200,6 +1305,7 @@ CONTROL_PANEL_HTML = '''
             const container = document.getElementById('identities');
             const countEl = document.getElementById('identityCount');
             if (countEl) countEl.textContent = `(${identities.length})`;
+            populateIdentityCreatorOptions(identities);
 
             // Sort by level (highest first), then by sessions
             identities.sort((a, b) => {
@@ -1233,6 +1339,22 @@ CONTROL_PANEL_HTML = '''
                     </div>
                 </div>
             `).join('');
+        }
+
+        function populateIdentityCreatorOptions(identities) {
+            const select = document.getElementById('identityCreatorSelect');
+            if (!select) return;
+            const previous = select.value;
+            const options = ['<option value="">Creator identity (optional)</option>'];
+            identities.forEach((identity) => {
+                options.push(
+                    `<option value="${identity.id}">${identity.name} (${identity.id})</option>`
+                );
+            });
+            select.innerHTML = options.join('');
+            if (previous && identities.some((identity) => identity.id === previous)) {
+                select.value = previous;
+            }
         }
 
         function showProfile(identityId) {
@@ -1557,6 +1679,119 @@ CONTROL_PANEL_HTML = '''
                     status.style.color = 'var(--green)';
                     setTimeout(() => { status.textContent = ''; }, 2500);
                 }
+            });
+        }
+
+        function loadGroqKeyStatus() {
+            fetch('/api/groq_key')
+                .then(r => r.json())
+                .then(data => {
+                    const badge = document.getElementById('groqKeyBadge');
+                    const status = document.getElementById('groqKeyStatus');
+                    if (badge) {
+                        badge.textContent = data.configured ? 'CONFIGURED' : 'NOT SET';
+                        badge.style.color = data.configured ? 'var(--green)' : 'var(--text-dim)';
+                    }
+                    if (status) {
+                        if (data.configured) {
+                            status.textContent = `Active key: ${data.masked_key || 'configured'} (${data.source || 'runtime'})`;
+                            status.style.color = 'var(--green)';
+                        } else {
+                            status.textContent = 'No key configured yet';
+                            status.style.color = 'var(--text-dim)';
+                        }
+                    }
+                });
+        }
+
+        function saveGroqApiKey() {
+            const input = document.getElementById('groqApiKeyInput');
+            const status = document.getElementById('groqKeyStatus');
+            const raw = input ? input.value.trim() : '';
+            if (!raw) {
+                if (status) {
+                    status.textContent = 'Enter a key first';
+                    status.style.color = 'var(--red)';
+                }
+                return;
+            }
+            fetch('/api/groq_key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({api_key: raw})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    if (status) {
+                        status.textContent = data.error || 'Failed to save key';
+                        status.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                if (input) input.value = '';
+                loadGroqKeyStatus();
+            });
+        }
+
+        function clearGroqApiKey() {
+            fetch('/api/groq_key', {method: 'DELETE'})
+                .then(r => r.json())
+                .then(data => {
+                    const status = document.getElementById('groqKeyStatus');
+                    if (!data.success) {
+                        if (status) {
+                            status.textContent = data.error || 'Failed to clear key';
+                            status.style.color = 'var(--red)';
+                        }
+                        return;
+                    }
+                    loadGroqKeyStatus();
+                });
+        }
+
+        function createResidentIdentity() {
+            const creator = document.getElementById('identityCreatorSelect');
+            const name = document.getElementById('newIdentityName');
+            const summary = document.getElementById('newIdentitySummary');
+            const traits = document.getElementById('newIdentityTraits');
+            const values = document.getElementById('newIdentityValues');
+            const activities = document.getElementById('newIdentityActivities');
+            const status = document.getElementById('identityCreateStatus');
+
+            const payload = {
+                creator_identity_id: creator ? creator.value : '',
+                name: name ? name.value : '',
+                summary: summary ? summary.value : '',
+                traits_csv: traits ? traits.value : '',
+                values_csv: values ? values.value : '',
+                activities_csv: activities ? activities.value : '',
+            };
+
+            fetch('/api/identities/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    if (status) {
+                        status.textContent = data.error || 'Identity creation failed';
+                        status.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                if (status) {
+                    status.textContent = `Created ${data.identity?.name || 'identity'} (${data.identity?.id || ''})`;
+                    status.style.color = 'var(--green)';
+                }
+                if (name) name.value = '';
+                if (summary) summary.value = '';
+                if (traits) traits.value = '';
+                if (values) values.value = '';
+                if (activities) activities.value = '';
+                fetch('/api/identities').then(r => r.json()).then(updateIdentities);
             });
         }
 
@@ -2430,6 +2665,7 @@ CONTROL_PANEL_HTML = '''
         loadArtifacts();
         loadStopStatus();
         loadRuntimeSpeed();
+        loadGroqKeyStatus();
         loadSwarmInsights();
 
         // Refresh bounties, spawner status, and chat rooms periodically
@@ -2439,6 +2675,7 @@ CONTROL_PANEL_HTML = '''
         setInterval(loadArtifacts, 15000);
         setInterval(loadStopStatus, 5000);
         setInterval(loadRuntimeSpeed, 15000);
+        setInterval(loadGroqKeyStatus, 30000);
         setInterval(loadSwarmInsights, 10000);
     </script>
 </body>
@@ -2574,6 +2811,89 @@ def on_socket_connect():
 @app.route('/api/identities')
 def api_identities():
     return jsonify(get_identities())
+
+
+@app.route('/api/identities/create', methods=['POST'])
+def api_create_identity():
+    """Create a resident-authored identity from UI input (creative, no presets)."""
+    data = request.json or {}
+
+    name = str(data.get("name", "")).strip()
+    summary = str(data.get("summary", "")).strip()
+    identity_statement = str(data.get("identity_statement", "")).strip()
+    creator_identity_id = str(data.get("creator_identity_id", "")).strip()
+    creator_resident_id = str(data.get("creator_resident_id", "")).strip()
+
+    if not name:
+        return jsonify({"success": False, "error": "name is required"}), 400
+    if len(name) > 80:
+        return jsonify({"success": False, "error": "name is too long (max 80 chars)"}), 400
+    if len(summary) > 600:
+        return jsonify({"success": False, "error": "summary is too long (max 600 chars)"}), 400
+
+    if creator_identity_id:
+        creator_path = IDENTITIES_DIR / f"{creator_identity_id}.json"
+        if not creator_path.exists():
+            return jsonify({"success": False, "error": "creator_identity_id not found"}), 400
+
+    if not creator_identity_id:
+        creator_identity_id = "resident_identity_forge"
+    if not creator_resident_id:
+        creator_resident_id = f"resident_{creator_identity_id}"
+
+    affinities = data.get("affinities")
+    if not isinstance(affinities, list):
+        affinities = _parse_csv_items(data.get("traits_csv", ""))
+    else:
+        affinities = _parse_csv_items(",".join(str(x) for x in affinities))
+
+    values = data.get("values")
+    if not isinstance(values, list):
+        values = _parse_csv_items(data.get("values_csv", ""))
+    else:
+        values = _parse_csv_items(",".join(str(x) for x in values))
+
+    activities = data.get("preferred_activities")
+    if not isinstance(activities, list):
+        activities = _parse_csv_items(data.get("activities_csv", ""))
+    else:
+        activities = _parse_csv_items(",".join(str(x) for x in activities))
+
+    try:
+        identity_id = resident_onboarding.create_identity_from_resident(
+            workspace=WORKSPACE,
+            creator_resident_id=creator_resident_id,
+            creator_identity_id=creator_identity_id,
+            name=name,
+            summary=summary or "Creative self-authored resident identity.",
+            affinities=affinities,
+            values=values,
+            preferred_activities=activities,
+            identity_statement=identity_statement or summary,
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+    identity_file = IDENTITIES_DIR / f"{identity_id}.json"
+    identity_name = name
+    if identity_file.exists():
+        try:
+            with open(identity_file, "r", encoding="utf-8") as f:
+                identity_name = json.load(f).get("name", name)
+        except Exception:
+            pass
+
+    return jsonify(
+        {
+            "success": True,
+            "identity": {
+                "id": identity_id,
+                "name": identity_name,
+                "summary": summary,
+                "creator_identity_id": creator_identity_id,
+            },
+        }
+    )
 
 
 @app.route('/api/identity/<identity_id>/profile')
@@ -2937,6 +3257,100 @@ def api_set_runtime_speed():
         return jsonify({"success": False, "error": "wait_seconds must be a number"}), 400
     saved = save_runtime_speed(wait_seconds)
     return jsonify({"success": True, **saved})
+
+
+def _reload_groq_runtime_clients() -> None:
+    """Reset Groq client singleton so new key is used immediately."""
+    try:
+        from vivarium.runtime import groq_client
+        groq_client._groq_engine = None
+    except Exception:
+        pass
+
+
+def _persist_groq_api_key(api_key: str) -> None:
+    GROQ_API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GROQ_API_KEY_FILE.write_text(api_key.strip() + "\n", encoding="utf-8")
+    try:
+        os.chmod(GROQ_API_KEY_FILE, 0o600)
+    except OSError:
+        pass
+
+
+def _delete_persisted_groq_api_key() -> None:
+    try:
+        if GROQ_API_KEY_FILE.exists():
+            GROQ_API_KEY_FILE.unlink()
+    except OSError:
+        pass
+
+
+def _load_persisted_groq_api_key() -> str:
+    if not GROQ_API_KEY_FILE.exists():
+        return ""
+    try:
+        return GROQ_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _ensure_groq_key_loaded() -> dict:
+    live_key = (runtime_config.get_groq_api_key() or "").strip()
+    if live_key:
+        return {"configured": True, "key": live_key, "source": "env"}
+
+    persisted = _load_persisted_groq_api_key()
+    if persisted:
+        runtime_config.set_groq_api_key(persisted)
+        _reload_groq_runtime_clients()
+        return {"configured": True, "key": persisted, "source": "security_file"}
+
+    return {"configured": False, "key": "", "source": None}
+
+
+@app.route('/api/groq_key', methods=['GET'])
+def api_get_groq_key_status():
+    state = _ensure_groq_key_loaded()
+    return jsonify(
+        {
+            "success": True,
+            "configured": state["configured"],
+            "source": state["source"],
+            "masked_key": _mask_secret(state["key"]) if state["configured"] else None,
+        }
+    )
+
+
+@app.route('/api/groq_key', methods=['POST'])
+def api_set_groq_key():
+    data = request.json or {}
+    api_key = str(data.get("api_key", "")).strip()
+    if not api_key:
+        return jsonify({"success": False, "error": "api_key is required"}), 400
+    if len(api_key) < 16:
+        return jsonify({"success": False, "error": "api_key is too short"}), 400
+    if len(api_key) > 256:
+        return jsonify({"success": False, "error": "api_key is too long"}), 400
+
+    _persist_groq_api_key(api_key)
+    runtime_config.set_groq_api_key(api_key)
+    _reload_groq_runtime_clients()
+    return jsonify(
+        {
+            "success": True,
+            "configured": True,
+            "masked_key": _mask_secret(api_key),
+            "source": "security_file",
+        }
+    )
+
+
+@app.route('/api/groq_key', methods=['DELETE'])
+def api_delete_groq_key():
+    _delete_persisted_groq_api_key()
+    runtime_config.set_groq_api_key(None)
+    _reload_groq_runtime_clients()
+    return jsonify({"success": True, "configured": False})
 
 
 # Human request storage
