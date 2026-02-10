@@ -1,8 +1,8 @@
 # Vivarium Vision Roadmap
 
-This is the implementation path from current state to full-scope vision.
+Last updated: 2026-02-10
 
-It is intentionally ordered to maximize safety and compounding, while minimizing "big rewrite" risk.
+This roadmap now reflects the **current real runtime state** (what is actually wired and tested), not only the intended architecture.
 
 Cross-repo archaeology and anomaly evidence are tracked in `./CROSS_REPO_TIMELINE.md`.
 
@@ -11,211 +11,175 @@ Cross-repo archaeology and anomaly evidence are tracked in `./CROSS_REPO_TIMELIN
 ## North-star outcomes
 
 1. **Reliable execution core**  
-   Deterministic, auditable, rollback-capable task execution.
+   Deterministic, auditable task execution with clear runtime contracts.
 
 2. **Aligned autonomy**  
-   Agents can self-direct and specialize, but always inside explicit human-defined boundaries.
+   Residents can act creatively, but inside explicit human-defined safety boundaries.
 
 3. **Compounding capability**  
-   Repeated tasks become tools/skills, reducing cost and increasing speed over time.
+   Repeated work should become reusable capability over time.
 
 4. **Civic social layer**  
-   Identity, journals, guilds, dispute mediation, and rewards shape higher-quality collaboration.
+   Identity, journals, bounties, guilds, discussions, and dispute systems improve coordination quality.
 
 5. **Transparent governance**  
-   Safety checks, votes, audits, and logs make behavior inspectable and correctable.
+   Safety checks, review states, and social/economic actions are inspectable from logs/state.
 
 ---
 
-## Current hard truths (from code + history)
+## Runtime snapshot (verified)
 
-- Canonical runtime exists (`vivarium/runtime/worker_runtime.py` + `vivarium/runtime/swarm_api.py` + `vivarium/runtime/control_panel_app.py`), but several advanced modules are not wired into that path.
-- `tool_router.py` now imports cleanly against `vivarium/skills/skill_registry.py`, and `worker_runtime.py` now adds first-pass Phase 4 intent capture + deterministic decomposition for complex prompts.
-- `swarm_orchestrator_v2.py` and `worker_pool.py` are present but currently not reliable production orchestration code.
-- `quality_gates.py`, `safety_gateway.py`, and `secure_api_wrapper.py` exist and are tested, but not hard-wired into default task execution.
-- Major docs/features were removed in purge commit `4428452`, with a backup snapshot in `5b6a0b6`.
-- AutoHive has useful orchestration and routing ideas, but contains import/endpoint/branch-drift mismatches that must be filtered before reuse.
-- The developer reports full Claude Code JSONL telemetry backups (including thinking blocks + tool calls), creating a rare opportunity for precise intent-drift root-cause analysis.
-
----
-
-## Phase plan (in order)
-
-### Phase 0 - Stabilize and choose one truth
-
-**Goal:** remove ambiguity in what production path means.
-
-### Build / wire
-- Officially declare `vivarium/runtime/{worker_runtime.py, swarm_api.py, control_panel_app.py}` as canonical runtime.
-- Mark `swarm_orchestrator_v2.py` and `worker_pool.py` as experimental/dead until repaired.
-- Define one task/event contract (`queue.json` schema + `execution_log.jsonl` events).
-
-### Exit criteria
-- A single "golden path" runbook exists and passes smoke tests.
-- Dead/experimental files are clearly isolated from runtime import paths.
-
----
-
-### Phase 1 - Wire hard safety into execution
-
-**Goal:** no task runs without constitutional/workspace/network checks and budget guardrails.
-
-### Build / wire
-- Call `SafetyGateway.pre_execute_safety_check(...)` in worker task dispatch path.
-- Route LLM calls through `SecureAPIWrapper` (or equivalent unified wrapper) for:
-  - rate limits
-  - budget enforcement
-  - audit events
-- Add explicit denylist/allowlist handling for `mode=local` commands.
-
-### Exit criteria
-- Every execution attempt has a safety report.
-- Budget and audit logs are generated from the same enforcement path.
+- Canonical runtime path is established and active:
+  - `vivarium/runtime/worker_runtime.py`
+  - `vivarium/runtime/swarm_api.py`
+  - `vivarium/runtime/control_panel_app.py`
+- Golden-path enforcement is active (detached spawner controls are disabled in UI/API).
+- Day/week framing is active (compressed day cadence).
+- MVP docs-only mode is active by default:
+  - no autonomous git mutations
+  - planning endpoint (`/plan`) disabled in MVP mode
+  - residents write markdown proposals/journals (Community Library paths below)
+- Community Library texture is live:
+  - `library/community_library/swarm_docs/`
+  - `library/community_library/resident_suggestions/<identity_id>/`
+  - `library/creative_works/` (creative archive)
+- Social/chat systems are wired:
+  - chatrooms API reads `.swarm/discussions/*.jsonl`
+  - worker injects shared discussion context into prompts
+  - worker auto-posts task updates to `town_hall` by default
+- Control panel includes:
+  - kill switch, insights strip, artifacts, chatrooms, bounties, messages
+  - runtime pace slider (human auditability)
+  - Groq key UI flow (set/clear/status)
+  - identity forge UI (resident-authored identities)
+- Current regression baseline: `62 passed` (full pytest suite).
 
 ---
 
-### Phase 2 - Wire quality gates + critic lifecycle
+## Phase status matrix (real state)
 
-**Goal:** "done" means verified, not merely executed.
-
-### Build / wire
-- Integrate `quality_gates.py` transitions into queue lifecycle:
-  - pending -> needs_qa -> integration -> e2e -> ready
-- Connect `critic.py` (or successor verifier) as post-execution reviewer.
-- Add requeue/rollback behavior on rejection.
-
-### Exit criteria
-- Tasks can be rejected/requeued by quality logic.
-- `execution_log.jsonl` records review state transitions, not just binary pass/fail.
-
----
-
-### Phase 3 - Restore tool-first compounding
-
-**Goal:** repeated work becomes reusable capability.
-
-### Build / wire
-- Repair skill registry/tool router contract:
-  - either restore richer `SkillRegistry` interface
-  - or refactor `tool_router.py` to minimal registry API
-- Re-enable tool routing before full LLM generation.
-- Add "promote successful pattern to tool/skill" path.
-
-### Exit criteria
-- `tool_router` imports cleanly and runs in production path.
-- Repeated tasks show increasing tool-hit rate over time.
+| Phase | Status | Real state today | Remaining gap |
+| --- | --- | --- | --- |
+| Phase 0 - Canonical runtime | Implemented | Golden path is clear and documented; canonical runtime entrypoints are active. | Keep deprecated runners isolated; continue smoke checks. |
+| Phase 1 - Hard safety wiring | Implemented (MVP) | Worker preflight + API safety + SecureAPIWrapper + local command policies are wired. | Continue tightening policy coverage and threat-model tests. |
+| Phase 2 - Quality/critic lifecycle | Implemented (initial) | `pending_review -> approved/requeue/failed` lifecycle and quality gate integration are active in worker flow. | Broaden verifier heuristics and integration/e2e gate depth. |
+| Phase 3 - Tool-first compounding | Partially implemented | Tool router + skill registry path works and is tested. | Default MVP mode disables tool routing; promotion-to-skill loops remain limited. |
+| Phase 4 - Intent/decomposition | Implemented (initial) | Intent extraction/injection + deterministic decomposition + dependency-aware subtasks are wired. | Expand planning quality and long-horizon decomposition robustness. |
+| Phase 5 - Social/economic systems | Implemented (initial) | Bounties, identity/profile loops, human messaging, discussions, phase5 reward hooks, and chat memory are live. | Continue invariants/audit hardening and governance UX clarity. |
+| Phase 6 - Multi-user/LAN + vision dashboard | Not started | No production multi-user/LAN mode or dedicated vision dashboard route. | Reintroduce behind strict feature flags + threat model. |
+| Phase 7 - Autonomous improvement loops | Intentionally gated (MVP) | Self-directed code-change autonomy is intentionally disabled in MVP docs-only mode. | Add explicit human checkpoints and rollback workflow before enabling. |
 
 ---
 
-### Phase 4 - Promote intent -> planning -> decomposition
+## Per-phase detail (current)
 
-**Goal:** avoid blind execution; preserve user intent throughout.
+### Phase 0 - Stabilize one truth
 
-### Build / wire
-- Integrate `intent_gatekeeper.py` at request intake.
-- Add deterministic decomposition node(s) (gut-check, feature breakdown, atomizer).
-- Compile decomposed plans into queue tasks with dependencies.
+**Shipped**
+- Canonical runtime path enforced.
+- Golden-path-only control posture in control panel APIs.
+- Queue/execution contract centered in `runtime_contract.py`.
 
-### Exit criteria
-- User intent is explicitly captured and available during execution.
-- Complex requests produce structured, dependency-aware task graphs.
-
----
-
-### Phase 5 - Social/economic loops as first-class systems
-
-**Goal:** social mechanisms actually improve quality and trust.
-
-### Build / wire
-- Keep `swarm_enrichment.py` as source of truth for:
-  - journals and voting
-  - guilds and join voting
-  - dispute mediation (Hat of Objectivity)
-  - bounty distribution
-- Add clearer APIs and invariants around immutable "physics" constants.
-- Ensure every social reward/penalty action is auditable.
-
-### Exit criteria
-- Governance actions are reproducible from logs/state.
-- No hidden reward-path outside declared economics rules.
+**Open**
+- Continue explicit deprecation/isolation of alternate orchestration code.
 
 ---
 
-### Phase 6 - Optional multi-user/LAN and vision dashboard
+### Phase 1 - Hard safety in execution
 
-**Goal:** safely expose collaborative, multi-user interfaces.
+**Shipped**
+- Worker dispatch performs safety preflight.
+- `/cycle` enforces loopback + internal token checks.
+- SecureAPIWrapper mediates LLM calls.
+- Local command allowlist/denylist with MVP read-scope restrictions is active.
 
-### Build / wire
-- Recover design intent from historical docs:
-  - `MULTI_USER_LAN_DESIGN.md`
-  - `LAN_SAFETY_DESIGN.md`
-- Reintroduce vision dashboard capability (historical `/vision` route) via current control panel stack.
-- Reassess remote execution relay with explicit security envelope.
+**Open**
+- Expand adversarial policy tests and document edge-case behavior.
 
-### Exit criteria
-- Multi-user mode is feature-flagged and isolated.
-- Network mode has explicit threat model and test coverage.
+---
+
+### Phase 2 - Quality gates + critic lifecycle
+
+**Shipped**
+- Post-execution review emits `pending_review` events.
+- Review can `approved`, `requeue`, or `failed` after retry limit.
+- Quality gate state updates recorded.
+
+**Open**
+- Improve reviewer depth and richer quality gate progression beyond initial lifecycle.
+
+---
+
+### Phase 3 - Tool-first compounding
+
+**Shipped**
+- `tool_router` and skill registry contract import/route successfully.
+- Tool context can be injected into prompt path.
+
+**Open**
+- In default MVP docs-only mode, tool routing is disabled by policy.
+- Capability promotion/compounding metrics need deeper production tracking.
+
+---
+
+### Phase 4 - Intent to decomposition
+
+**Shipped**
+- Intent extraction/injection is wired.
+- Deterministic phase-4 gut checks and feature breakdown are implemented.
+- Dependency-aware subtask compilation is active.
+
+**Open**
+- Improve decomposition quality for very large cross-cutting requests.
+
+---
+
+### Phase 5 - Social/economic systems
+
+**Shipped**
+- Identity profiles, journals, bounties, guild/dispute flows, and human messaging are wired.
+- Chatrooms (`town_hall`, `watercooler`, etc.) are active in control panel.
+- Discussion memory is injected into resident prompts; residents can respond to each other via shared context.
+- Worker can auto-publish execution updates into `town_hall`.
+- Community Library pathing is in prompt context and artifact flows.
+
+**Open**
+- Continue tightening social invariants and moderation/governance UX.
+
+---
+
+### Phase 6 - Multi-user/LAN + vision dashboard
+
+**Current**
+- Not enabled in production path.
+
+**Next**
+- Recover historical design intent behind feature flags and modern threat model.
 
 ---
 
 ### Phase 7 - Autonomous improvement with human checkpoints
 
-**Goal:** compounding self-improvement without runaway behavior.
+**Current**
+- Intentionally restricted in MVP docs-only mode (proposal-first, no autonomous code mutation loop).
 
-### Build / wire
-- Add scheduled "improvement proposals" pipeline:
-  - propose -> review -> accept/reject -> apply
-- Add mandatory checkpoints for high-risk changes (safety, orchestration, infra files).
-- Add automatic rollback plan generation before applying broad refactors.
-
-### Exit criteria
-- Autonomy loops require explicit approval for critical surfaces.
-- Recovery/rollback procedure is validated continuously.
+**Next**
+- Introduce explicit propose -> review -> approve/apply pipeline with rollback plans for high-risk surfaces.
 
 ---
 
-## 30-day practical execution order
+## Near-term execution order (updated)
 
-### Week 1
-- Phase 0 + Phase 1
-- Deliver: canonical runtime contract + hard safety gates in worker path.
-
-### Week 2
-- Phase 2
-- Deliver: quality-gated lifecycle and requeue-on-reject.
-
-### Week 3
-- Phase 3 + start Phase 4
-- Deliver: working tool router + first intent/decomposition integration.
-
-### Week 4
-- Complete Phase 4 + Phase 5 foundations
-- Deliver: intent-preserving planning pipeline tied into social/economic systems.
-
-(Phase 6 and 7 can run after core reliability metrics hold.)
+1. Keep Phase 0-5 reliability hard (regressions, policy tests, observability).
+2. Improve Phase 5 governance ergonomics (discussion quality, moderation, audit replay).
+3. Build feature-flagged Phase 6 experiments (LAN/vision) without weakening current safety model.
+4. Only then evaluate scoped Phase 7 rollout with mandatory human checkpoints.
 
 ---
 
-## Git archaeology: recovery map
+## Non-goals (still enforced)
 
-These are high-value historical artifacts to selectively recover (not blindly restore):
-
-| Item | Historical ref | Recovery action |
-| --- | --- | --- |
-| Full architecture spec | `4428452^:SWARM_ARCHITECTURE_V2.md` | Recover as design reference and map to concrete issues. |
-| Multi-user LAN design | `4428452^:MULTI_USER_LAN_DESIGN.md` | Use as Phase 6 blueprint with updated threat model. |
-| Adaptive engine design | `4428452^:ADAPTIVE_ENGINE_SPEC.md` | Reinterpret for Groq-model routing + budget gates. |
-| Vision dashboard route | `75b046c:progress_server.py` | Port `/vision` concept into current control panel endpoints. |
-| Backup snapshot | commit `5b6a0b6` | Triage for salvageable modules; avoid reviving corrupted artifacts wholesale. |
-| Rich skill registry (historical) | `6aec98c:skills/skill_registry.py` | Restore compatible interfaces needed by `tool_router.py`. |
-| AutoHive provider tiering + cost table | `autohive:config.json`, `autohive/src/api_client.py` | Adapt as explicit model-routing policy with tests and budget guards. |
-| AutoHive local daemon orchestration | `autohive/local/.claude/{worker-daemon.py,spawn-worker.py}` | Reuse manifest/PID/worktree patterns, but normalize branch handling and add reliability tests first. |
-
----
-
-## Non-goals
-
-- No large "big-bang rewrite."
-- No unreviewed restoration of all backup-era files.
-- No autonomy expansion before safety + quality gates are hard-wired.
+- No big-bang rewrite.
+- No blind restore of backup-era artifacts.
+- No autonomy expansion ahead of safety/quality/governance checkpoints.
 
