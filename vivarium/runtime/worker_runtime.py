@@ -43,6 +43,7 @@ from vivarium.runtime.config import (
 from vivarium.runtime.runtime_contract import normalize_queue, normalize_task, is_known_execution_status
 from vivarium.runtime.vivarium_scope import (
     AUDIT_ROOT,
+    MUTABLE_COMMUNITY_LIBRARY_ROOT,
     MUTABLE_LOCKS_DIR,
     MUTABLE_QUEUE_FILE,
     MUTABLE_ROOT,
@@ -51,6 +52,7 @@ from vivarium.runtime.vivarium_scope import (
     ensure_scope_layout,
     get_execution_token,
     get_mutable_version_control,
+    resolve_mutable_path,
 )
 try:
     from vivarium.runtime.resident_onboarding import spawn_resident, ResidentContext
@@ -124,6 +126,12 @@ RESIDENT_SCAN_LIMIT: int = int(os.environ.get("RESIDENT_SCAN_LIMIT", "0"))
 RESIDENT_BACKOFF_MAX: int = int(os.environ.get("RESIDENT_BACKOFF_MAX", "5"))
 RESIDENT_JITTER_MAX: float = float(os.environ.get("RESIDENT_JITTER_MAX", "0.5"))
 MAX_REQUEUE_ATTEMPTS: int = int(os.environ.get("RESIDENT_MAX_REQUEUE_ATTEMPTS", "3"))
+RUNTIME_SPEED_FILE: Path = MUTABLE_SWARM_DIR / "runtime_speed.json"
+DEFAULT_RUNTIME_WAIT_SECONDS: float = float(os.environ.get("VIVARIUM_RUNTIME_WAIT_SECONDS", str(WORKER_CHECK_INTERVAL)))
+AUTO_DISCUSSION_UPDATES: bool = (
+    os.environ.get("VIVARIUM_AUTO_DISCUSSION_UPDATES", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
 PHASE4_SEQUENCE_SPLIT_RE = re.compile(
     r"\b(?:and then|then|also|plus|after that|next|finally)\b",
     flags=re.IGNORECASE,
@@ -143,6 +151,23 @@ PHASE4_COMMA_NON_ACTION_PREFIXES: Tuple[str, ...] = (
     "when ",
     "while ",
     "because ",
+)
+MVP_DOCS_ONLY_MODE: bool = (
+    os.environ.get("VIVARIUM_MVP_DOCS_ONLY", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
+MVP_JOURNALS_DIR: Path = MUTABLE_SWARM_DIR / "journals"
+MVP_COMMUNITY_LIBRARY_ROOT: Path = MUTABLE_COMMUNITY_LIBRARY_ROOT
+MVP_LIBRARY_DOCS_DIR: Path = MVP_COMMUNITY_LIBRARY_ROOT / "swarm_docs"
+MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT: Path = MVP_COMMUNITY_LIBRARY_ROOT / "resident_suggestions"
+MVP_LEGACY_LIBRARY_DOCS_DIR: Path = WORKSPACE / "library" / "swarm_docs"
+MVP_LEGACY_RESIDENT_SUGGESTIONS_ROOT: Path = WORKSPACE / "library" / "resident_suggestions"
+MVP_ALLOWED_DOC_ROOTS: Tuple[Path, ...] = (
+    MVP_JOURNALS_DIR,
+    MVP_LIBRARY_DOCS_DIR,
+    MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT,
+    MVP_LEGACY_LIBRARY_DOCS_DIR,
+    MVP_LEGACY_RESIDENT_SUGGESTIONS_ROOT,
 )
 
 _EXECUTION_LOG_STATE: Dict[str, Any] = {"offset": 0, "size": 0, "tasks": {}}
@@ -220,6 +245,9 @@ def _init_quality_gate_manager():
 
 
 def _init_worker_tool_router():
+    if MVP_DOCS_ONLY_MODE:
+        _log("INFO", "MVP docs-only mode enabled; tool routing disabled.")
+        return None
     if get_tool_router is None:
         _log("WARN", "tool_router module unavailable; tool-first routing disabled.")
         return None
@@ -253,6 +281,9 @@ def _init_worker_enrichment():
 
 
 def _init_mutable_version_control():
+    if MVP_DOCS_ONLY_MODE:
+        _log("INFO", "MVP docs-only mode enabled; mutable git checkpointing disabled.")
+        return None
     try:
         return get_mutable_version_control()
     except Exception as exc:
@@ -266,6 +297,279 @@ WORKER_TOOL_ROUTER = _init_worker_tool_router()
 WORKER_INTENT_GATEKEEPER = _init_worker_intent_gatekeeper()
 WORKER_ENRICHMENT = _init_worker_enrichment()
 WORKER_MUTABLE_VCS = _init_mutable_version_control()
+
+
+def _build_enrichment_prompt_context(resident_ctx: Optional["ResidentContext"]) -> Optional[str]:
+    """Build optional social/economic context for the active resident."""
+    if resident_ctx is None or WORKER_ENRICHMENT is None:
+        return None
+
+    identity = getattr(resident_ctx, "identity", None)
+    identity_id = str(getattr(identity, "identity_id", "")).strip()
+    identity_name = str(getattr(identity, "name", "")).strip() or identity_id
+    if not identity_id:
+        return None
+
+    sections: List[str] = []
+    try:
+        if hasattr(WORKER_ENRICHMENT, "get_morning_messages"):
+            morning_messages = WORKER_ENRICHMENT.get_morning_messages(identity_id)
+            if isinstance(morning_messages, str) and morning_messages.strip():
+                sections.append(morning_messages.strip())
+    except Exception as exc:
+        _log("WARN", f"Failed to load morning messages for {identity_id}: {exc}")
+
+    try:
+        if hasattr(WORKER_ENRICHMENT, "get_discussion_context"):
+            discussion_context = WORKER_ENRICHMENT.get_discussion_context(identity_id, identity_name)
+            if isinstance(discussion_context, str) and discussion_context.strip():
+                sections.append(discussion_context.strip())
+    except Exception as exc:
+        _log("WARN", f"Failed to load discussion context for {identity_id}: {exc}")
+
+    try:
+        if hasattr(WORKER_ENRICHMENT, "get_enrichment_context"):
+            enrichment_context = WORKER_ENRICHMENT.get_enrichment_context(identity_id, identity_name)
+            if isinstance(enrichment_context, str) and enrichment_context.strip():
+                sections.append(enrichment_context.strip())
+    except Exception as exc:
+        _log("WARN", f"Failed to load enrichment context for {identity_id}: {exc}")
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
+def _truncate_single_line(value: Any, max_chars: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 3)] + "..."
+
+
+def _publish_task_update_to_discussion(
+    task: Dict[str, Any],
+    resident_ctx: Optional["ResidentContext"],
+    task_id: str,
+    result_summary: Any,
+) -> None:
+    if not AUTO_DISCUSSION_UPDATES or resident_ctx is None or WORKER_ENRICHMENT is None:
+        return
+    if not hasattr(WORKER_ENRICHMENT, "post_discussion_message"):
+        return
+
+    identity = getattr(resident_ctx, "identity", None)
+    identity_id = str(getattr(identity, "identity_id", "")).strip()
+    identity_name = str(getattr(identity, "name", "")).strip() or identity_id or "resident"
+    if not identity_id:
+        return
+
+    room = str(task.get("discussion_room") or "town_hall").strip() or "town_hall"
+    summary_line = _truncate_single_line(result_summary or "Task completed.", 240)
+    focus_line = _truncate_single_line(
+        _resolve_task_prompt(task) or task.get("task") or task.get("command") or "",
+        160,
+    )
+    content = f"Task {task_id} update: {summary_line}"
+    if focus_line:
+        content += f"\nFocus: {focus_line}"
+
+    reply_to = None
+    try:
+        if hasattr(WORKER_ENRICHMENT, "get_discussion_messages"):
+            recent = WORKER_ENRICHMENT.get_discussion_messages(room, limit=8)
+            for message in reversed(recent):
+                author_id = str(message.get("author_id") or "").strip()
+                if author_id and author_id != identity_id:
+                    reply_to = message.get("id")
+                    break
+    except Exception:
+        reply_to = None
+
+    try:
+        WORKER_ENRICHMENT.post_discussion_message(
+            identity_id=identity_id,
+            identity_name=identity_name,
+            content=content,
+            room=room,
+            mood="focused",
+            importance=3,
+            reply_to=reply_to,
+        )
+    except Exception as exc:
+        _log("WARN", f"Failed to publish discussion update for {task_id}: {exc}")
+
+
+def _slugify_token(value: str, fallback: str = "artifact") -> str:
+    token = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "").strip()).strip("._-")
+    return token[:80] if token else fallback
+
+
+def _is_within_any(path: Path, roots: Tuple[Path, ...]) -> bool:
+    for root in roots:
+        try:
+            if path == root or root in path.parents:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _resolve_mvp_markdown_target(task: Dict[str, Any]) -> Tuple[Optional[Path], Optional[str]]:
+    raw_path = (
+        task.get("doc_path")
+        or task.get("artifact_path")
+        or task.get("output_path")
+    )
+    if not raw_path:
+        return None, None
+
+    try:
+        resolved = resolve_mutable_path(str(raw_path), cwd=WORKSPACE)
+    except ValueError:
+        return None, "doc target escapes mutable workspace"
+
+    if resolved.suffix.lower() != ".md":
+        return None, "doc target must end with .md"
+
+    allowed_roots = tuple(root.resolve() for root in MVP_ALLOWED_DOC_ROOTS)
+    resolved_rooted = resolved.resolve()
+    if not _is_within_any(resolved_rooted, allowed_roots):
+        return None, "doc target must stay within markdown artifact roots"
+
+    return resolved_rooted, None
+
+
+def _format_markdown_record(
+    *,
+    task_id: str,
+    title: str,
+    prompt: str,
+    result: str,
+    timestamp: datetime,
+    identity_id: str,
+    identity_name: str,
+) -> str:
+    iso = timestamp.isoformat()
+    lines = [
+        f"# {title}",
+        "",
+        f"- generated_at: {iso}",
+        f"- task_id: {task_id}",
+        f"- identity_id: {identity_id}",
+        f"- identity_name: {identity_name}",
+        "",
+        "## Prompt",
+        "",
+        prompt.strip() if prompt.strip() else "_none_",
+        "",
+        "## Suggestion",
+        "",
+        result.strip(),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _persist_mvp_markdown_artifacts(
+    task: Dict[str, Any],
+    result_summary: str,
+    resident_ctx: Optional["ResidentContext"],
+) -> Dict[str, Any]:
+    if not MVP_DOCS_ONLY_MODE:
+        return {"enabled": False}
+
+    result_text = str(result_summary or "").strip()
+    if not result_text:
+        return {"enabled": True, "written": False, "reason": "empty_result"}
+
+    now = datetime.now(timezone.utc)
+    task_id = str(task.get("id") or "task").strip() or "task"
+    prompt = str(_resolve_task_prompt(task) or "").strip()
+
+    identity = getattr(resident_ctx, "identity", None) if resident_ctx else None
+    identity_id = str(getattr(identity, "identity_id", "")).strip() or "resident_unknown"
+    identity_name = str(getattr(identity, "name", "")).strip() or identity_id
+    identity_slug = _slugify_token(identity_id, fallback="resident")
+    task_slug = _slugify_token(task_id, fallback="task")
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    date_label = now.strftime("%Y-%m-%d")
+
+    MVP_JOURNALS_DIR.mkdir(parents=True, exist_ok=True)
+    MVP_LIBRARY_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT.mkdir(parents=True, exist_ok=True)
+    resident_suggestions_dir = MVP_LIBRARY_RESIDENT_SUGGESTIONS_ROOT / identity_slug
+    resident_suggestions_dir.mkdir(parents=True, exist_ok=True)
+
+    journal_path = MVP_JOURNALS_DIR / f"{identity_slug}_{date_label}.md"
+    journal_entry = _format_markdown_record(
+        task_id=task_id,
+        title=f"Journal Entry: {task_id}",
+        prompt=prompt,
+        result=result_text,
+        timestamp=now,
+        identity_id=identity_id,
+        identity_name=identity_name,
+    )
+
+    try:
+        with open(journal_path, "a", encoding="utf-8") as jf:
+            if journal_path.exists() and journal_path.stat().st_size > 0:
+                jf.write("\n---\n\n")
+            jf.write(journal_entry)
+    except OSError as exc:
+        return {
+            "enabled": True,
+            "written": False,
+            "reason": f"journal_write_failed:{exc}",
+        }
+
+    doc_target, target_error = _resolve_mvp_markdown_target(task)
+    doc_action = "created"
+    doc_path = None
+    if doc_target is None:
+        doc_target = resident_suggestions_dir / f"{stamp}_{task_slug}.md"
+    else:
+        doc_action = "updated" if doc_target.exists() else "created"
+        doc_target.parent.mkdir(parents=True, exist_ok=True)
+
+    suggestion_doc = _format_markdown_record(
+        task_id=task_id,
+        title=f"Suggestion: {task_id}",
+        prompt=prompt,
+        result=result_text,
+        timestamp=now,
+        identity_id=identity_id,
+        identity_name=identity_name,
+    )
+    edit_mode = str(task.get("doc_edit_mode") or "overwrite").strip().lower()
+    try:
+        if edit_mode == "append" and doc_target.exists():
+            with open(doc_target, "a", encoding="utf-8") as df:
+                df.write("\n\n---\n\n")
+                df.write(suggestion_doc)
+        else:
+            with open(doc_target, "w", encoding="utf-8") as df:
+                df.write(suggestion_doc)
+        doc_path = str(doc_target)
+    except OSError as exc:
+        return {
+            "enabled": True,
+            "written": False,
+            "reason": f"doc_write_failed:{exc}",
+            "journal_path": str(journal_path),
+            "doc_target_error": target_error,
+        }
+
+    return {
+        "enabled": True,
+        "written": True,
+        "journal_path": str(journal_path),
+        "doc_path": doc_path,
+        "doc_action": doc_action,
+        "doc_edit_mode": edit_mode,
+        "doc_target_error": target_error,
+    }
 
 
 
@@ -466,6 +770,27 @@ def _compute_idle_sleep(idle_count: int) -> float:
     backoff = min(idle_count, max(1, RESIDENT_BACKOFF_MAX))
     jitter = random.random() * max(0.0, RESIDENT_JITTER_MAX)
     return WORKER_CHECK_INTERVAL * (1 + backoff) + jitter
+
+
+def _load_runtime_wait_seconds() -> Optional[float]:
+    data = read_json(RUNTIME_SPEED_FILE, default={})
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("wait_seconds")
+    try:
+        wait_seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if wait_seconds < 0:
+        return None
+    return min(wait_seconds, 300.0)
+
+
+def _resolve_idle_wait_seconds(idle_count: int) -> float:
+    runtime_wait = _load_runtime_wait_seconds()
+    if runtime_wait is not None:
+        return runtime_wait
+    return max(0.0, DEFAULT_RUNTIME_WAIT_SECONDS if DEFAULT_RUNTIME_WAIT_SECONDS >= 0 else _compute_idle_sleep(idle_count))
 
 
 def _build_facet_plan_text(plan: Any) -> str:
@@ -1530,6 +1855,21 @@ def execute_task(
 
     if resident_ctx and prompt:
         prompt = resident_ctx.apply_to_prompt(prompt)
+        enrichment_prompt = _build_enrichment_prompt_context(resident_ctx)
+        if enrichment_prompt:
+            prompt = f"{prompt}\n\n{enrichment_prompt}"
+        if MVP_DOCS_ONLY_MODE:
+            prompt = (
+                "MVP MODE: You are currently limited to documentation artifacts.\n"
+                "- Do NOT perform direct code changes.\n"
+                "- You MAY read non-physics repository files for context.\n"
+                "- Community Library root: library/community_library/\n"
+                "- Store improvement proposals as markdown in library/community_library/resident_suggestions/<identity_id>/\n"
+                "- Shared docs live in library/community_library/swarm_docs/ (legacy library/swarm_docs still readable).\n"
+                "- Produce markdown proposals, plans, or review notes.\n"
+                "- Prefer concrete change suggestions and acceptance criteria.\n\n"
+                f"{prompt}"
+            )
 
     if prompt and mode != "local" and not command and WORKER_TOOL_ROUTER is not None:
         try:
@@ -1600,6 +1940,8 @@ def execute_task(
             result = response.json()
             api_safety_report = result.get("safety_report")
             result_summary = result.get("result", "Task completed")
+            _publish_task_update_to_discussion(task, resident_ctx, task_id, result_summary)
+            markdown_artifacts = _persist_mvp_markdown_artifacts(task, result_summary, resident_ctx)
             checkpoint_sha = None
             if WORKER_MUTABLE_VCS is not None:
                 try:
@@ -1620,6 +1962,7 @@ def execute_task(
                 "safety_passed": bool((api_safety_report or safety_report).get("passed", True)),
                 "safety_report": api_safety_report or safety_report,
                 "mutable_checkpoint": checkpoint_sha,
+                "mvp_markdown_artifacts": markdown_artifacts,
                 **tool_route_info,
             }
 
@@ -1838,12 +2181,12 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
             try:
                 resident_ctx = spawn_resident(WORKSPACE)
                 if not resident_ctx:
-                    _log("WARN", "No identity available this cycle; exiting.")
+                    _log("WARN", "No identity available this day; exiting.")
                     return
                 _log(
                     "INFO",
                     f"Resident {resident_ctx.identity.name} ({resident_ctx.identity.identity_id}) "
-                    f"day {resident_ctx.day_count}, cycle {resident_ctx.cycle_id}",
+                    f"day {resident_ctx.day_count}, week {((resident_ctx.day_count - 1) // 7) + 1}",
                 )
             except Exception as exc:
                 _log("WARN", f"Resident onboarding failed: {exc}")
@@ -1878,8 +2221,13 @@ def worker_loop(max_iterations: Optional[int] = None) -> None:
                     if idle_count >= MAX_IDLE_CYCLES:
                         _log("INFO", f"No tasks available after {MAX_IDLE_CYCLES} checks. Exiting.")
                         break
-                    _log("INFO", f"No tasks available, waiting... ({idle_count}/{MAX_IDLE_CYCLES})")
-                    time.sleep(_compute_idle_sleep(idle_count))
+                    wait_seconds = _resolve_idle_wait_seconds(idle_count)
+                    _log(
+                        "INFO",
+                        f"No tasks available, waiting {wait_seconds:.2f}s... "
+                        f"({idle_count}/{MAX_IDLE_CYCLES})",
+                    )
+                    time.sleep(wait_seconds)
             except KeyboardInterrupt:
                 _log("INFO", "Interrupted by user")
                 break

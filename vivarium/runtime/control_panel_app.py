@@ -14,17 +14,27 @@ Open: http://localhost:8421
 
 import json
 import os
+import re
 import secrets
 import time
 import threading
+from collections import Counter, deque
 from ipaddress import ip_address
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template_string, jsonify, request
 from flask_socketio import SocketIO, emit
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from vivarium.runtime.vivarium_scope import AUDIT_ROOT, MUTABLE_ROOT, MUTABLE_SWARM_DIR, ensure_scope_layout
+from vivarium.runtime import config as runtime_config
+from vivarium.runtime import resident_onboarding
+from vivarium.runtime.vivarium_scope import (
+    AUDIT_ROOT,
+    MUTABLE_ROOT,
+    MUTABLE_SWARM_DIR,
+    SECURITY_ROOT,
+    ensure_scope_layout,
+)
 
 ensure_scope_layout()
 
@@ -40,9 +50,14 @@ socketio = SocketIO(app, cors_allowed_origins=LOCAL_UI_ORIGINS, async_mode='thre
 CODE_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE = MUTABLE_ROOT
 ACTION_LOG = AUDIT_ROOT / "action_log.jsonl"
+EXECUTION_LOG = AUDIT_ROOT / "execution_log.jsonl"
+QUEUE_FILE = WORKSPACE / "queue.json"
 KILL_SWITCH = MUTABLE_SWARM_DIR / "kill_switch.json"
 FREE_TIME_BALANCES = MUTABLE_SWARM_DIR / "free_time_balances.json"
 IDENTITIES_DIR = MUTABLE_SWARM_DIR / "identities"
+DISCUSSIONS_DIR = WORKSPACE / ".swarm" / "discussions"
+RUNTIME_SPEED_FILE = MUTABLE_SWARM_DIR / "runtime_speed.json"
+GROQ_API_KEY_FILE = SECURITY_ROOT / "groq_api_key.txt"
 
 # Track last read position
 last_log_position = 0
@@ -56,6 +71,40 @@ def _safe_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _safe_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _parse_csv_items(raw: str, *, max_items: int = 10, max_len: int = 64) -> list[str]:
+    if not raw:
+        return []
+    items: list[str] = []
+    for part in str(raw).split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if len(value) > max_len:
+            value = value[:max_len].rstrip()
+        if value not in items:
+            items.append(value)
+        if len(items) >= max_items:
+            break
+    return items
+
+
+def _mask_secret(secret: str) -> str:
+    value = (secret or "").strip()
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:4]}...{value[-4:]}"
 
 
 CONTROL_PANEL_HOST = os.environ.get("VIVARIUM_CONTROL_PANEL_HOST", "127.0.0.1").strip() or "127.0.0.1"
@@ -260,6 +309,12 @@ CONTROL_PANEL_HTML = '''
             box-shadow: 0 0 15px var(--red-glow);
         }
 
+        .control-btn.stop.engaged {
+            background: var(--green);
+            color: var(--bg-dark);
+            box-shadow: 0 0 15px rgba(68, 255, 68, 0.3);
+        }
+
         .spawner-status {
             display: flex;
             align-items: center;
@@ -288,6 +343,55 @@ CONTROL_PANEL_HTML = '''
 
         .spawner-status .dot.stopped {
             background: var(--red);
+        }
+
+        .insights-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(170px, 1fr));
+            gap: 0.6rem;
+            padding: 0.75rem 1rem;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .insight-card {
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.55rem 0.7rem;
+            min-height: 64px;
+        }
+
+        .insight-label {
+            color: var(--text-dim);
+            font-size: 0.65rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 0.25rem;
+        }
+
+        .insight-value {
+            color: var(--text);
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .insight-sub {
+            color: var(--text-dim);
+            font-size: 0.7rem;
+            margin-top: 0.15rem;
+        }
+
+        .insight-value.good { color: var(--green); }
+        .insight-value.warn { color: var(--yellow); }
+        .insight-value.bad { color: var(--red); }
+        .insight-value.teal { color: var(--teal); }
+
+        @media (max-width: 1200px) {
+            .insights-strip {
+                grid-template-columns: repeat(2, minmax(160px, 1fr));
+            }
         }
 
         /* Main Content */
@@ -638,7 +742,50 @@ CONTROL_PANEL_HTML = '''
         <div class="control-buttons">
             <button class="control-btn start" id="startBtn" onclick="startSpawner()" disabled>QUEUE MODE</button>
             <button class="control-btn pause" id="pauseBtn" onclick="togglePause()" disabled>DISABLED</button>
-            <button class="control-btn stop" id="stopBtn" onclick="emergencyStop()" disabled>DISABLED</button>
+            <button class="control-btn stop" id="stopBtn" onclick="toggleStop()">HALT</button>
+        </div>
+    </div>
+
+    <div class="insights-strip">
+        <div class="insight-card">
+            <div class="insight-label">Queue</div>
+            <div class="insight-value teal" id="insightQueueOpen">--</div>
+            <div class="insight-sub" id="insightQueueSub">open / completed / failed</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Throughput (24h)</div>
+            <div class="insight-value" id="insightThroughput">--</div>
+            <div class="insight-sub" id="insightThroughputSub">completed vs failed</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Quality (24h)</div>
+            <div class="insight-value" id="insightQuality">--</div>
+            <div class="insight-sub" id="insightQualitySub">approval / pending review</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Cost + API (24h)</div>
+            <div class="insight-value" id="insightCost">--</div>
+            <div class="insight-sub" id="insightCostSub">API calls</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Safety + Errors (24h)</div>
+            <div class="insight-value" id="insightSafety">--</div>
+            <div class="insight-sub" id="insightSafetySub">blocked checks / errors</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Social</div>
+            <div class="insight-value" id="insightSocial">--</div>
+            <div class="insight-sub" id="insightSocialSub">unread messages / bounties</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Active Identities (24h)</div>
+            <div class="insight-value" id="insightActors">--</div>
+            <div class="insight-sub" id="insightActorsSub">top actor</div>
+        </div>
+        <div class="insight-card">
+            <div class="insight-label">Swarm Health</div>
+            <div class="insight-value" id="insightHealth">--</div>
+            <div class="insight-sub" id="insightHealthSub">backlog pressure / failure streak</div>
         </div>
     </div>
 
@@ -713,7 +860,7 @@ CONTROL_PANEL_HTML = '''
                 <div class="sidebar-section-content">
             <div class="identity-card">
                 <div class="identity-stat">
-                    <span>Daily Cycle Budget</span>
+                    <span>Daily Budget</span>
                     <span class="stat-value" id="sessionBudget">$0.05</span>
                 </div>
                 <div class="identity-stat">
@@ -758,12 +905,15 @@ CONTROL_PANEL_HTML = '''
                     </label>
                 </div>
 
-                <!-- Manual mode: cycle-per-day slider -->
+                <!-- Manual mode: day allocation slider -->
                 <div id="manualScaleControls" style="margin-top: 0.75rem;">
-                    <label style="font-size: 0.8rem; color: var(--text-dim);">Daily Cycles: <span id="sessionCount" style="color: var(--teal);">3</span></label>
-                    <input type="range" id="sessionSlider" min="1" max="10" value="3"
+                    <label style="font-size: 0.8rem; color: var(--text-dim);">Audit Pace (seconds): <span id="sessionCount" style="color: var(--teal);">2</span>s</label>
+                    <input type="range" id="sessionSlider" min="0" max="120" value="2" step="1"
                            oninput="updateSessionCount(this.value)"
                            style="width: 100%; margin-top: 0.3rem; accent-color: var(--teal);">
+                    <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.3rem;">
+                        Wait between queue checks in the worker loop (human-auditable pace)
+                    </p>
                 </div>
 
                 <!-- Auto mode: budget input -->
@@ -776,17 +926,89 @@ CONTROL_PANEL_HTML = '''
                                       border-radius: 4px; font-size: 0.85rem;">
                     </label>
                     <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.3rem;">
-                        Cycle workers scale up/down based on remaining budget
+                        Worker days scale up/down based on remaining budget
                     </p>
                 </div>
 
-                <button onclick="saveSpawnerConfig()"
+                <button onclick="saveRuntimeSpeed()"
                     style="margin-top: 0.75rem; width: 100%; padding: 0.3rem; background: var(--bg-hover);
                            border: 1px solid var(--border); color: var(--text); border-radius: 4px;
                            cursor: pointer; font-size: 0.75rem;">
-                    Save Config
+                    Save Pace
                 </button>
+                <div id="runtimeSpeedStatus" style="font-size: 0.65rem; color: var(--green); margin-top: 0.3rem; text-align: center;"></div>
             </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Groq API Key -->
+            <details class="sidebar-section">
+                <summary>
+                    Groq API
+                    <span id="groqKeyBadge" style="font-size: 0.65rem; color: var(--text-dim);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card">
+                        <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.4rem;">
+                            Attach your own Groq key for live LLM calls.
+                        </div>
+                        <input type="password" id="groqApiKeyInput" placeholder="gsk_..."
+                            style="width: 100%; padding: 0.35rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+                                   font-size: 0.8rem; margin-bottom: 0.35rem;">
+                        <div style="display: flex; gap: 0.35rem;">
+                            <button onclick="saveGroqApiKey()"
+                                style="flex: 1; padding: 0.3rem; background: var(--teal); border: none;
+                                       color: var(--bg-dark); border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">
+                                Save Key
+                            </button>
+                            <button onclick="clearGroqApiKey()"
+                                style="padding: 0.3rem 0.5rem; background: var(--bg-hover); border: 1px solid var(--border);
+                                       color: var(--text); border-radius: 4px; cursor: pointer; font-size: 0.72rem;">
+                                Clear
+                            </button>
+                        </div>
+                        <div id="groqKeyStatus" style="font-size: 0.65rem; margin-top: 0.35rem; color: var(--text-dim);"></div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Identity Forge -->
+            <details class="sidebar-section">
+                <summary>Identity Forge</summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card">
+                        <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.35rem;">
+                            Resident-driven identity creation. No preset names.
+                        </div>
+                        <select id="identityCreatorSelect"
+                            style="width: 100%; padding: 0.32rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.78rem;">
+                            <option value="">Creator identity (optional)</option>
+                        </select>
+                        <input type="text" id="newIdentityName" placeholder="Name (self-chosen)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.8rem;">
+                        <textarea id="newIdentitySummary" placeholder="Creative identity spark / summary"
+                            style="width: 100%; height: 56px; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+                                   padding: 0.35rem; font-size: 0.78rem; resize: vertical;"></textarea>
+                        <input type="text" id="newIdentityTraits" placeholder="Traits (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.25rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <input type="text" id="newIdentityValues" placeholder="Values (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.25rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <input type="text" id="newIdentityActivities" placeholder="Preferred activities (comma-separated)"
+                            style="width: 100%; padding: 0.35rem; margin-bottom: 0.3rem; background: var(--bg-dark);
+                                   border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.75rem;">
+                        <button onclick="createResidentIdentity()"
+                            style="width: 100%; padding: 0.3rem; background: var(--purple); border: none;
+                                   color: white; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">
+                            Create Identity
+                        </button>
+                        <div id="identityCreateStatus" style="font-size: 0.65rem; margin-top: 0.35rem; color: var(--text-dim);"></div>
+                    </div>
                 </div>
             </details>
 
@@ -812,6 +1034,19 @@ CONTROL_PANEL_HTML = '''
                 <div class="sidebar-section-content">
                     <div id="chatRoomsContainer" style="max-height: 300px; overflow-y: auto;">
                         <p style="color: var(--text-dim); font-size: 0.75rem;">Loading rooms...</p>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Recent Artifacts -->
+            <details class="sidebar-section">
+                <summary>
+                    Artifacts
+                    <span id="artifactCount" style="font-size: 0.65rem; color: var(--purple);"></span>
+                </summary>
+                <div class="sidebar-section-content">
+                    <div id="artifactsContainer" style="max-height: 220px; overflow-y: auto;">
+                        <p style="color: var(--text-dim); font-size: 0.75rem;">No artifacts yet</p>
                     </div>
                 </div>
             </details>
@@ -921,6 +1156,10 @@ CONTROL_PANEL_HTML = '''
         socket.on('connect', () => {
             console.log('Connected to control panel');
             loadSpawnerStatus();
+            loadStopStatus();
+            loadRuntimeSpeed();
+            loadGroqKeyStatus();
+            loadSwarmInsights();
         });
 
         socket.on('disconnect', () => {
@@ -955,6 +1194,11 @@ CONTROL_PANEL_HTML = '''
         socket.on('spawner_killed', () => {
             spawnerState = { running: false, paused: false, pid: null };
             updateSpawnerUI();
+        });
+
+        socket.on('stop_status', (data) => {
+            isStopped = !!(data && data.stopped);
+            updateKillSwitchUI();
         });
 
         function addLogEntry(entry) {
@@ -1061,6 +1305,7 @@ CONTROL_PANEL_HTML = '''
             const container = document.getElementById('identities');
             const countEl = document.getElementById('identityCount');
             if (countEl) countEl.textContent = `(${identities.length})`;
+            populateIdentityCreatorOptions(identities);
 
             // Sort by level (highest first), then by sessions
             identities.sort((a, b) => {
@@ -1094,6 +1339,22 @@ CONTROL_PANEL_HTML = '''
                     </div>
                 </div>
             `).join('');
+        }
+
+        function populateIdentityCreatorOptions(identities) {
+            const select = document.getElementById('identityCreatorSelect');
+            if (!select) return;
+            const previous = select.value;
+            const options = ['<option value="">Creator identity (optional)</option>'];
+            identities.forEach((identity) => {
+                options.push(
+                    `<option value="${identity.id}">${identity.name} (${identity.id})</option>`
+                );
+            });
+            select.innerHTML = options.join('');
+            if (previous && identities.some((identity) => identity.id === previous)) {
+                select.value = previous;
+            }
         }
 
         function showProfile(identityId) {
@@ -1130,14 +1391,14 @@ CONTROL_PANEL_HTML = '''
                     // Stats bar (row 1)
                     content += `<div style="display: flex; gap: 1rem; margin-bottom: 0.5rem; padding: 0.75rem; background: var(--bg-dark); border-radius: 8px;">
                         <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--yellow);">${data.level || 1}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Level</div></div>
-                        <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--teal);">${data.sessions}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Cycles</div></div>
+                        <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--teal);">${data.sessions}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Days</div></div>
                         <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: var(--green);">${data.tasks_completed}</div><div style="font-size: 0.7rem; color: var(--text-dim);">Tasks</div></div>
                         <div style="text-align: center; flex: 1;"><div style="font-size: 1.5rem; color: ${data.task_success_rate >= 80 ? 'var(--green)' : data.task_success_rate >= 50 ? 'var(--yellow)' : 'var(--red)'}">${data.task_success_rate}%</div><div style="font-size: 0.7rem; color: var(--text-dim);">Success</div></div>
                     </div>`;
                     // Stats bar (row 2 - respec info)
                     content += `<div style="display: flex; gap: 1rem; margin-bottom: 1rem; padding: 0.5rem 0.75rem; background: var(--bg-dark); border-radius: 8px; font-size: 0.8rem;">
                         <div style="flex: 1; color: var(--text-dim);">Respec Cost: <span style="color: var(--orange); font-weight: 600;">${data.respec_cost || 10} tokens</span></div>
-                        <div style="color: var(--text-dim); font-size: 0.7rem;">Level formula: sqrt(cycles) | Respec: 10 + (cycles × 3)</div>
+                        <div style="color: var(--text-dim); font-size: 0.7rem;">Level formula: sqrt(days) | Respec: 10 + (days × 3)</div>
                     </div>`;
 
                     // Core traits and values
@@ -1260,6 +1521,40 @@ CONTROL_PANEL_HTML = '''
         let spawnerState = { running: false, paused: false, pid: null };
         const GOLDEN_PATH_NOTICE = 'Golden path enforced: run tasks via queue + vivarium.runtime.worker_runtime only.';
 
+        function updateKillSwitchUI() {
+            const stopBtn = document.getElementById('stopBtn');
+            const dot = document.getElementById('spawnerDot');
+            const status = document.getElementById('spawnerStatus');
+            if (!stopBtn || !dot || !status) return;
+
+            stopBtn.disabled = false;
+            stopBtn.classList.toggle('engaged', isStopped);
+            stopBtn.textContent = isStopped ? 'RESUME' : 'HALT';
+
+            if (isStopped) {
+                dot.className = 'dot stopped';
+                status.textContent = 'HALTED';
+            }
+        }
+
+        function loadStopStatus() {
+            fetch('/api/stop_status')
+                .then(r => r.json())
+                .then(data => {
+                    isStopped = !!(data && data.stopped);
+                    updateKillSwitchUI();
+                });
+        }
+
+        function toggleStop() {
+            fetch('/api/toggle_stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isStopped = !!(data && data.stopped);
+                    updateKillSwitchUI();
+                });
+        }
+
         function showGoldenPathOnlyNotice() {
             alert(GOLDEN_PATH_NOTICE);
         }
@@ -1276,8 +1571,9 @@ CONTROL_PANEL_HTML = '''
             status.textContent = 'GOLDEN PATH';
             startBtn.disabled = true;
             pauseBtn.disabled = true;
-            stopBtn.disabled = true;
+            stopBtn.disabled = false;
             pauseBtn.classList.remove('paused');
+            updateKillSwitchUI();
         }
 
         function startSpawner() {
@@ -1341,7 +1637,162 @@ CONTROL_PANEL_HTML = '''
         }
 
         function updateSessionCount(value) {
-            document.getElementById('sessionCount').textContent = value;
+            const numeric = parseFloat(value);
+            const display = Number.isFinite(numeric) ? numeric.toFixed(0) : value;
+            document.getElementById('sessionCount').textContent = display;
+        }
+
+        function loadRuntimeSpeed() {
+            fetch('/api/runtime_speed')
+                .then(r => r.json())
+                .then(data => {
+                    const slider = document.getElementById('sessionSlider');
+                    const waitSeconds = Number(data.wait_seconds ?? 2);
+                    if (slider && Number.isFinite(waitSeconds)) {
+                        slider.value = String(waitSeconds);
+                        updateSessionCount(waitSeconds);
+                    }
+                });
+        }
+
+        function saveRuntimeSpeed() {
+            const slider = document.getElementById('sessionSlider');
+            const status = document.getElementById('runtimeSpeedStatus');
+            const waitSeconds = Number(slider ? slider.value : 2);
+            fetch('/api/runtime_speed', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({wait_seconds: waitSeconds})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    if (status) {
+                        status.textContent = data.error || 'Failed to save pace';
+                        status.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                updateSessionCount(data.wait_seconds);
+                if (status) {
+                    status.textContent = `Saved: ${Number(data.wait_seconds).toFixed(0)}s idle wait`;
+                    status.style.color = 'var(--green)';
+                    setTimeout(() => { status.textContent = ''; }, 2500);
+                }
+            });
+        }
+
+        function loadGroqKeyStatus() {
+            fetch('/api/groq_key')
+                .then(r => r.json())
+                .then(data => {
+                    const badge = document.getElementById('groqKeyBadge');
+                    const status = document.getElementById('groqKeyStatus');
+                    if (badge) {
+                        badge.textContent = data.configured ? 'CONFIGURED' : 'NOT SET';
+                        badge.style.color = data.configured ? 'var(--green)' : 'var(--text-dim)';
+                    }
+                    if (status) {
+                        if (data.configured) {
+                            status.textContent = `Active key: ${data.masked_key || 'configured'} (${data.source || 'runtime'})`;
+                            status.style.color = 'var(--green)';
+                        } else {
+                            status.textContent = 'No key configured yet';
+                            status.style.color = 'var(--text-dim)';
+                        }
+                    }
+                });
+        }
+
+        function saveGroqApiKey() {
+            const input = document.getElementById('groqApiKeyInput');
+            const status = document.getElementById('groqKeyStatus');
+            const raw = input ? input.value.trim() : '';
+            if (!raw) {
+                if (status) {
+                    status.textContent = 'Enter a key first';
+                    status.style.color = 'var(--red)';
+                }
+                return;
+            }
+            fetch('/api/groq_key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({api_key: raw})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    if (status) {
+                        status.textContent = data.error || 'Failed to save key';
+                        status.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                if (input) input.value = '';
+                loadGroqKeyStatus();
+            });
+        }
+
+        function clearGroqApiKey() {
+            fetch('/api/groq_key', {method: 'DELETE'})
+                .then(r => r.json())
+                .then(data => {
+                    const status = document.getElementById('groqKeyStatus');
+                    if (!data.success) {
+                        if (status) {
+                            status.textContent = data.error || 'Failed to clear key';
+                            status.style.color = 'var(--red)';
+                        }
+                        return;
+                    }
+                    loadGroqKeyStatus();
+                });
+        }
+
+        function createResidentIdentity() {
+            const creator = document.getElementById('identityCreatorSelect');
+            const name = document.getElementById('newIdentityName');
+            const summary = document.getElementById('newIdentitySummary');
+            const traits = document.getElementById('newIdentityTraits');
+            const values = document.getElementById('newIdentityValues');
+            const activities = document.getElementById('newIdentityActivities');
+            const status = document.getElementById('identityCreateStatus');
+
+            const payload = {
+                creator_identity_id: creator ? creator.value : '',
+                name: name ? name.value : '',
+                summary: summary ? summary.value : '',
+                traits_csv: traits ? traits.value : '',
+                values_csv: values ? values.value : '',
+                activities_csv: activities ? activities.value : '',
+            };
+
+            fetch('/api/identities/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    if (status) {
+                        status.textContent = data.error || 'Identity creation failed';
+                        status.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                if (status) {
+                    status.textContent = `Created ${data.identity?.name || 'identity'} (${data.identity?.id || ''})`;
+                    status.style.color = 'var(--green)';
+                }
+                if (name) name.value = '';
+                if (summary) summary.value = '';
+                if (traits) traits.value = '';
+                if (values) values.value = '';
+                if (activities) activities.value = '';
+                fetch('/api/identities').then(r => r.json()).then(updateIdentities);
+            });
         }
 
         function updateBudgetLimit(value) {
@@ -1412,7 +1863,7 @@ CONTROL_PANEL_HTML = '''
             .then(data => {
                 if (data.success) {
                     const modeText = config.auto_model ? 'Auto mode enabled.' : `Model set to ${config.model}.`;
-                    alert('Config saved! ' + modeText + ' Changes apply on next cycle.');
+                    alert('Config saved! ' + modeText + ' Changes apply on the next day.');
                 }
             });
         }
@@ -2029,6 +2480,12 @@ CONTROL_PANEL_HTML = '''
                             </div>
                         </details>
                     `).join('');
+
+                    if (currentOpenRoom && data.rooms.some(room => room.id === currentOpenRoom)) {
+                        loadRoomMessages(currentOpenRoom);
+                    } else if (currentOpenRoom) {
+                        currentOpenRoom = null;
+                    }
                 });
         }
 
@@ -2048,6 +2505,7 @@ CONTROL_PANEL_HTML = '''
                     container.innerHTML = data.messages.map(msg => {
                         const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
                         const mood = msg.mood ? ` <span style="opacity: 0.6;">(${msg.mood})</span>` : '';
+                        const replyTo = msg.reply_to ? `<div style="font-size: 0.65rem; color: var(--text-dim); margin-bottom: 0.2rem;">↳ replying to ${String(msg.reply_to).slice(0, 14)}</div>` : '';
                         const linkedContent = linkifyFilePaths(msg.content || '');
 
                         return `
@@ -2056,6 +2514,7 @@ CONTROL_PANEL_HTML = '''
                                     <span style="font-weight: 600; color: var(--teal); font-size: 0.8rem;">${msg.author_name || 'Unknown'}${mood}</span>
                                     <span style="font-size: 0.65rem; color: var(--text-dim);">${time}</span>
                                 </div>
+                                ${replyTo}
                                 <div style="font-size: 0.85rem; color: var(--text); line-height: 1.4;">${linkedContent}</div>
                             </div>
                         `;
@@ -2063,6 +2522,143 @@ CONTROL_PANEL_HTML = '''
 
                     // Scroll to bottom
                     container.scrollTop = container.scrollHeight;
+                });
+        }
+
+        function loadArtifacts() {
+            fetch('/api/artifacts/list')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('artifactsContainer');
+                    const countEl = document.getElementById('artifactCount');
+
+                    if (!data.success || !data.artifacts || data.artifacts.length === 0) {
+                        container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">No artifacts yet</p>';
+                        countEl.textContent = '';
+                        return;
+                    }
+
+                    const artifacts = data.artifacts.slice(0, 20);
+                    countEl.textContent = `(${artifacts.length})`;
+                    container.innerHTML = artifacts.map(artifact => {
+                        const safePath = String(artifact.path || '').replace(/'/g, "\\'");
+                        const iconByType = {
+                            journal: 'J',
+                            creative_work: 'W',
+                            community_doc: 'D',
+                            skill: 'S',
+                        };
+                        const icon = iconByType[artifact.type] || 'F';
+                        const modified = artifact.modified
+                            ? new Date(artifact.modified).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                            : '';
+
+                        return `
+                            <div class="identity-card" style="margin-bottom: 0.4rem; padding: 0.5rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                                    <span style="color: var(--purple); font-size: 0.75rem; font-weight: 600;">${icon}</span>
+                                    <a href="#" onclick="viewArtifact('${safePath}'); return false;"
+                                       style="flex: 1; color: var(--teal); text-decoration: underline; font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        ${artifact.name}
+                                    </a>
+                                    <span style="color: var(--text-dim); font-size: 0.65rem;">${modified}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                });
+        }
+
+        function setInsightValue(id, value, tone = null) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = value;
+            el.classList.remove('good', 'warn', 'bad', 'teal');
+            if (tone) {
+                el.classList.add(tone);
+            }
+        }
+
+        function setInsightSub(id, text) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = text;
+        }
+
+        function loadSwarmInsights() {
+            fetch('/api/insights')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) return;
+
+                    const queue = data.queue || {};
+                    const execution = data.execution || {};
+                    const ops = data.ops || {};
+                    const social = data.social || {};
+                    const identities = data.identities || {};
+                    const health = data.health || {};
+
+                    const queueOpen = Number(queue.open || 0);
+                    const queueCompleted = Number(queue.completed || 0);
+                    const queueFailed = Number(queue.failed || 0);
+                    setInsightValue('insightQueueOpen', String(queueOpen), queueOpen > 8 ? 'warn' : 'teal');
+                    setInsightSub('insightQueueSub', `${queueCompleted} completed • ${queueFailed} failed`);
+
+                    const completed = Number(execution.completed_24h || 0);
+                    const failed = Number(execution.failed_24h || 0);
+                    const throughputTone = failed > completed ? 'bad' : completed > 0 ? 'good' : null;
+                    setInsightValue('insightThroughput', `${completed} / ${failed}`, throughputTone);
+                    setInsightSub('insightThroughputSub', 'completed / failed (24h)');
+
+                    const approvalRate = execution.approval_rate_24h;
+                    const approved = Number(execution.approved_24h || 0);
+                    const pendingReview = Number(execution.pending_review_24h || 0);
+                    const qualityTone = approvalRate >= 85 ? 'good' : approvalRate >= 60 ? 'warn' : approvalRate > 0 ? 'bad' : null;
+                    setInsightValue(
+                        'insightQuality',
+                        approvalRate === null || approvalRate === undefined ? '--' : `${approvalRate.toFixed ? approvalRate.toFixed(1) : approvalRate}%`,
+                        qualityTone
+                    );
+                    setInsightSub('insightQualitySub', `${approved} approved • ${pendingReview} pending`);
+
+                    const apiCost = Number(ops.api_cost_24h || 0);
+                    const apiCalls = Number(ops.api_calls_24h || 0);
+                    setInsightValue('insightCost', `$${apiCost.toFixed(3)}`, apiCost > 1.0 ? 'warn' : apiCost > 0 ? 'teal' : null);
+                    setInsightSub('insightCostSub', `${apiCalls} API calls`);
+
+                    const safetyBlocks = Number(ops.safety_blocks_24h || 0);
+                    const errors = Number(ops.errors_24h || 0);
+                    const safetyTone = safetyBlocks > 0 || errors > 0 ? 'bad' : 'good';
+                    setInsightValue('insightSafety', `${safetyBlocks} / ${errors}`, safetyTone);
+                    setInsightSub('insightSafetySub', 'blocked safety / errors');
+
+                    const unread = Number(social.unread_messages || 0);
+                    const openBounties = Number(social.open_bounties || 0);
+                    const claimedBounties = Number(social.claimed_bounties || 0);
+                    setInsightValue('insightSocial', String(unread), unread > 5 ? 'warn' : unread > 0 ? 'teal' : null);
+                    setInsightSub('insightSocialSub', `${openBounties} open • ${claimedBounties} claimed bounties`);
+
+                    const activeIdentities = Number(identities.active_24h || 0);
+                    const totalIdentities = Number(identities.count || 0);
+                    setInsightValue('insightActors', `${activeIdentities}/${totalIdentities}`, activeIdentities > 0 ? 'good' : null);
+                    const topActor = identities.top_actor || {};
+                    if (topActor.id) {
+                        const topName = topActor.name || topActor.id;
+                        setInsightSub('insightActorsSub', `${topName} (${topActor.actions || 0} actions)`);
+                    } else {
+                        setInsightSub('insightActorsSub', 'No clear actor signal yet');
+                    }
+
+                    const healthState = String(health.state || 'unknown').toUpperCase();
+                    const healthTone = healthState === 'STABLE' ? 'good' : healthState === 'WATCH' ? 'warn' : 'bad';
+                    setInsightValue('insightHealth', healthState, healthTone);
+                    const backlogPressure = health.backlog_pressure || 'unknown';
+                    const failureStreak = Number(execution.failure_streak || 0);
+                    setInsightSub('insightHealthSub', `backlog ${backlogPressure} • streak ${failureStreak}`);
+                })
+                .catch(() => {
+                    setInsightValue('insightHealth', 'OFFLINE', 'bad');
+                    setInsightSub('insightHealthSub', 'Insights API unavailable');
                 });
         }
 
@@ -2075,11 +2671,21 @@ CONTROL_PANEL_HTML = '''
         loadMessages();
         loadBounties();
         loadChatRooms();
+        loadArtifacts();
+        loadStopStatus();
+        loadRuntimeSpeed();
+        loadGroqKeyStatus();
+        loadSwarmInsights();
 
         // Refresh bounties, spawner status, and chat rooms periodically
         setInterval(loadBounties, 10000);
         setInterval(loadSpawnerStatus, 5000);
         setInterval(loadChatRooms, 15000);  // Refresh chat rooms every 15 seconds
+        setInterval(loadArtifacts, 15000);
+        setInterval(loadStopStatus, 5000);
+        setInterval(loadRuntimeSpeed, 15000);
+        setInterval(loadGroqKeyStatus, 30000);
+        setInterval(loadSwarmInsights, 10000);
     </script>
 </body>
 </html>
@@ -2214,6 +2820,89 @@ def on_socket_connect():
 @app.route('/api/identities')
 def api_identities():
     return jsonify(get_identities())
+
+
+@app.route('/api/identities/create', methods=['POST'])
+def api_create_identity():
+    """Create a resident-authored identity from UI input (creative, no presets)."""
+    data = request.json or {}
+
+    name = str(data.get("name", "")).strip()
+    summary = str(data.get("summary", "")).strip()
+    identity_statement = str(data.get("identity_statement", "")).strip()
+    creator_identity_id = str(data.get("creator_identity_id", "")).strip()
+    creator_resident_id = str(data.get("creator_resident_id", "")).strip()
+
+    if not name:
+        return jsonify({"success": False, "error": "name is required"}), 400
+    if len(name) > 80:
+        return jsonify({"success": False, "error": "name is too long (max 80 chars)"}), 400
+    if len(summary) > 600:
+        return jsonify({"success": False, "error": "summary is too long (max 600 chars)"}), 400
+
+    if creator_identity_id:
+        creator_path = IDENTITIES_DIR / f"{creator_identity_id}.json"
+        if not creator_path.exists():
+            return jsonify({"success": False, "error": "creator_identity_id not found"}), 400
+
+    if not creator_identity_id:
+        creator_identity_id = "resident_identity_forge"
+    if not creator_resident_id:
+        creator_resident_id = f"resident_{creator_identity_id}"
+
+    affinities = data.get("affinities")
+    if not isinstance(affinities, list):
+        affinities = _parse_csv_items(data.get("traits_csv", ""))
+    else:
+        affinities = _parse_csv_items(",".join(str(x) for x in affinities))
+
+    values = data.get("values")
+    if not isinstance(values, list):
+        values = _parse_csv_items(data.get("values_csv", ""))
+    else:
+        values = _parse_csv_items(",".join(str(x) for x in values))
+
+    activities = data.get("preferred_activities")
+    if not isinstance(activities, list):
+        activities = _parse_csv_items(data.get("activities_csv", ""))
+    else:
+        activities = _parse_csv_items(",".join(str(x) for x in activities))
+
+    try:
+        identity_id = resident_onboarding.create_identity_from_resident(
+            workspace=WORKSPACE,
+            creator_resident_id=creator_resident_id,
+            creator_identity_id=creator_identity_id,
+            name=name,
+            summary=summary or "Creative self-authored resident identity.",
+            affinities=affinities,
+            values=values,
+            preferred_activities=activities,
+            identity_statement=identity_statement or summary,
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+    identity_file = IDENTITIES_DIR / f"{identity_id}.json"
+    identity_name = name
+    if identity_file.exists():
+        try:
+            with open(identity_file, "r", encoding="utf-8") as f:
+                identity_name = json.load(f).get("name", name)
+        except Exception:
+            pass
+
+    return jsonify(
+        {
+            "success": True,
+            "identity": {
+                "id": identity_id,
+                "name": identity_name,
+                "summary": summary,
+                "creator_identity_id": creator_identity_id,
+            },
+        }
+    )
 
 
 @app.route('/api/identity/<identity_id>/profile')
@@ -2359,6 +3048,7 @@ def api_toggle_stop():
 # Spawner process tracking
 SPAWNER_PROCESS_FILE = WORKSPACE / ".swarm" / "spawner_process.json"
 SPAWNER_CONFIG_FILE = WORKSPACE / ".swarm" / "spawner_config.json"
+DEFAULT_RUNTIME_SPEED_SECONDS = max(0.0, _safe_float_env("VIVARIUM_RUNTIME_WAIT_SECONDS", 2.0))
 
 
 def get_spawner_status():
@@ -2527,6 +3217,149 @@ def api_update_spawner_config():
         'golden_path_only': True,
         'error': 'Detached spawner path is disabled. Configuration updates are ignored.'
     }), 410
+
+
+def get_runtime_speed():
+    """Get current worker-loop wait seconds."""
+    payload = {
+        "wait_seconds": DEFAULT_RUNTIME_SPEED_SECONDS,
+        "updated_at": None,
+    }
+    if not RUNTIME_SPEED_FILE.exists():
+        return payload
+    try:
+        with open(RUNTIME_SPEED_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        wait = float(data.get("wait_seconds", DEFAULT_RUNTIME_SPEED_SECONDS))
+        payload["wait_seconds"] = max(0.0, min(300.0, wait))
+        payload["updated_at"] = data.get("updated_at")
+    except Exception:
+        pass
+    return payload
+
+
+def save_runtime_speed(wait_seconds: float):
+    """Persist worker-loop wait seconds for auditable pacing."""
+    clamped = max(0.0, min(300.0, float(wait_seconds)))
+    payload = {
+        "wait_seconds": clamped,
+        "updated_at": datetime.now().isoformat(),
+    }
+    RUNTIME_SPEED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(RUNTIME_SPEED_FILE, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+    return payload
+
+
+@app.route('/api/runtime_speed', methods=['GET'])
+def api_get_runtime_speed():
+    return jsonify(get_runtime_speed())
+
+
+@app.route('/api/runtime_speed', methods=['POST'])
+def api_set_runtime_speed():
+    data = request.json or {}
+    raw = data.get("wait_seconds", DEFAULT_RUNTIME_SPEED_SECONDS)
+    try:
+        wait_seconds = float(raw)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "wait_seconds must be a number"}), 400
+    saved = save_runtime_speed(wait_seconds)
+    return jsonify({"success": True, **saved})
+
+
+def _reload_groq_runtime_clients() -> None:
+    """Reset Groq client singleton so new key is used immediately."""
+    try:
+        from vivarium.runtime import groq_client
+        groq_client._groq_engine = None
+    except Exception:
+        pass
+
+
+def _persist_groq_api_key(api_key: str) -> None:
+    GROQ_API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GROQ_API_KEY_FILE.write_text(api_key.strip() + "\n", encoding="utf-8")
+    try:
+        os.chmod(GROQ_API_KEY_FILE, 0o600)
+    except OSError:
+        pass
+
+
+def _delete_persisted_groq_api_key() -> None:
+    try:
+        if GROQ_API_KEY_FILE.exists():
+            GROQ_API_KEY_FILE.unlink()
+    except OSError:
+        pass
+
+
+def _load_persisted_groq_api_key() -> str:
+    if not GROQ_API_KEY_FILE.exists():
+        return ""
+    try:
+        return GROQ_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _ensure_groq_key_loaded() -> dict:
+    live_key = (runtime_config.get_groq_api_key() or "").strip()
+    if live_key:
+        return {"configured": True, "key": live_key, "source": "env"}
+
+    persisted = _load_persisted_groq_api_key()
+    if persisted:
+        runtime_config.set_groq_api_key(persisted)
+        _reload_groq_runtime_clients()
+        return {"configured": True, "key": persisted, "source": "security_file"}
+
+    return {"configured": False, "key": "", "source": None}
+
+
+@app.route('/api/groq_key', methods=['GET'])
+def api_get_groq_key_status():
+    state = _ensure_groq_key_loaded()
+    return jsonify(
+        {
+            "success": True,
+            "configured": state["configured"],
+            "source": state["source"],
+            "masked_key": _mask_secret(state["key"]) if state["configured"] else None,
+        }
+    )
+
+
+@app.route('/api/groq_key', methods=['POST'])
+def api_set_groq_key():
+    data = request.json or {}
+    api_key = str(data.get("api_key", "")).strip()
+    if not api_key:
+        return jsonify({"success": False, "error": "api_key is required"}), 400
+    if len(api_key) < 16:
+        return jsonify({"success": False, "error": "api_key is too short"}), 400
+    if len(api_key) > 256:
+        return jsonify({"success": False, "error": "api_key is too long"}), 400
+
+    _persist_groq_api_key(api_key)
+    runtime_config.set_groq_api_key(api_key)
+    _reload_groq_runtime_clients()
+    return jsonify(
+        {
+            "success": True,
+            "configured": True,
+            "masked_key": _mask_secret(api_key),
+            "source": "security_file",
+        }
+    )
+
+
+@app.route('/api/groq_key', methods=['DELETE'])
+def api_delete_groq_key():
+    _delete_persisted_groq_api_key()
+    runtime_config.set_groq_api_key(None)
+    _reload_groq_runtime_clients()
+    return jsonify({"success": True, "configured": False})
 
 
 # Human request storage
@@ -2950,17 +3783,27 @@ def api_submit_to_bounty(bounty_id):
     if not bounty:
         return jsonify({'success': False, 'error': 'Bounty not found'})
 
-    if bounty.get('status') != 'open':
+    if bounty.get('status') not in ('open', 'claimed'):
         return jsonify({'success': False, 'error': 'Bounty is not open for submissions'})
 
     # Normalize slot policy and evaluate rewards
     bounty['slot_policy'] = _normalize_slot_policy(bounty.get('slot_policy'))
     bounty['slots'] = _get_slots_for_bounty(bounty)
-    current_teams = bounty.get('teams', [])
 
     identity_id = data.get('identity_id')
     description = data.get('description', '')
     artifacts = data.get('artifacts', [])
+    guild_id = str(data.get('guild_id') or '').strip() or None
+    guild_name = str(data.get('guild_name') or '').strip() or None
+    raw_members = data.get('members', [])
+    members = []
+    if isinstance(raw_members, list):
+        for member in raw_members:
+            normalized = str(member or '').strip()
+            if normalized and normalized not in members:
+                members.append(normalized)
+    if not members and identity_id:
+        members = [str(identity_id).strip()]
     slot_info = _evaluate_submission(bounty, identity_id, description, artifacts)
 
     # Create submission
@@ -2968,6 +3811,9 @@ def api_submit_to_bounty(bounty_id):
         'id': f"sub_{int(time.time()*1000)}",
         'identity_id': identity_id,
         'identity_name': data.get('identity_name', 'Unknown'),
+        'members': members,
+        'guild_id': guild_id,
+        'guild_name': guild_name,
         'description': description,
         'artifacts': artifacts,  # List of file paths
         'submitted_at': datetime.now().isoformat(),
@@ -2996,6 +3842,20 @@ def api_submit_to_bounty(bounty_id):
     if bounty['status'] == 'open' and len(bounty['teams']) == 1:
         bounty['status'] = 'claimed'
         bounty['cost_tracking']['started_at'] = datetime.now().isoformat()
+        if guild_id:
+            bounty['claimed_by'] = {
+                'type': 'guild',
+                'id': guild_id,
+                'name': guild_name or guild_id,
+                'claimed_by_identity': identity_id,
+                'claimed_by_name': data.get('identity_name', 'Unknown'),
+            }
+        elif identity_id:
+            bounty['claimed_by'] = {
+                'type': 'individual',
+                'id': identity_id,
+                'name': data.get('identity_name', 'Unknown'),
+            }
 
     save_bounties(bounties)
 
@@ -3125,12 +3985,29 @@ def api_complete_bounty(bounty_id):
             except (TypeError, ValueError):
                 bounty['slot_multiplier'] = 1.0
                 bounty['slot_reason'] = 'in_slot'
+            if not bounty.get('claimed_by'):
+                first_team = teams[0]
+                if first_team.get('guild_id'):
+                    bounty['claimed_by'] = {
+                        'type': 'guild',
+                        'id': first_team.get('guild_id'),
+                        'name': first_team.get('guild_name') or first_team.get('guild_id'),
+                        'claimed_by_identity': first_team.get('identity_id'),
+                        'claimed_by_name': first_team.get('identity_name', 'Unknown'),
+                    }
+                elif first_team.get('identity_id'):
+                    bounty['claimed_by'] = {
+                        'type': 'individual',
+                        'id': first_team.get('identity_id'),
+                        'name': first_team.get('identity_name', 'Unknown'),
+                    }
             save_bounties(bounties)
         if teams and len(teams) > 1:
             # Winner gets winner_reward, runner-up gets runner_up_reward
             result = {
                 'success': True,
                 'distributions': [],
+                'total_distributed': 0,
                 'cost_tracking': cost_tracking
             }
             for i, team in enumerate(teams):
@@ -3141,8 +4018,18 @@ def api_complete_bounty(bounty_id):
                     slot_multiplier = 1.0
                 reward = int(round(reward * max(0.0, slot_multiplier)))
                 if reward > 0:
-                    for member_id in team.get('members', []):
+                    team_members = []
+                    raw_team_members = team.get('members', [])
+                    if isinstance(raw_team_members, list):
+                        for member_id in raw_team_members:
+                            normalized_member = str(member_id or '').strip()
+                            if normalized_member and normalized_member not in team_members:
+                                team_members.append(normalized_member)
+                    if not team_members and team.get('identity_id'):
+                        team_members = [str(team.get('identity_id')).strip()]
+                    for member_id in team_members:
                         enrichment.grant_free_time(member_id, reward, f"bounty_{bounty_id}_place_{i+1}")
+                        result['total_distributed'] += reward
                         result['distributions'].append({
                             'identity': member_id,
                             'reward': reward,
@@ -3244,7 +4131,7 @@ def api_view_artifact():
 def api_list_artifacts():
     """List recent artifacts (files created/modified by the swarm)."""
     try:
-        # Get files from journals and library
+        # Get files from journals and Community Library
         artifacts = []
 
         # Journals
@@ -3258,7 +4145,7 @@ def api_list_artifacts():
                     'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
 
-        # Library/creative works
+        # Community creative works
         library_dir = WORKSPACE / "library" / "creative_works"
         if library_dir.exists():
             for f in sorted(library_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
@@ -3268,6 +4155,28 @@ def api_list_artifacts():
                     'type': 'creative_work',
                     'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                 })
+
+        # Community library docs and resident suggestions
+        community_root = WORKSPACE / "library" / "community_library"
+        if community_root.exists():
+            docs_dir = community_root / "swarm_docs"
+            if docs_dir.exists():
+                for f in sorted(docs_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                    artifacts.append({
+                        'path': str(f.relative_to(WORKSPACE)),
+                        'name': f.name,
+                        'type': 'community_doc',
+                        'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                    })
+            suggestions_dir = community_root / "resident_suggestions"
+            if suggestions_dir.exists():
+                for f in sorted(suggestions_dir.glob("**/*.md"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                    artifacts.append({
+                        'path': str(f.relative_to(WORKSPACE)),
+                        'name': f.name,
+                        'type': 'community_doc',
+                        'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                    })
 
         # Skills created
         skills_dir = WORKSPACE / "skills"
@@ -3287,10 +4196,269 @@ def api_list_artifacts():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CHAT ROOMS API - View watercooler, town hall, etc.
+# SWARM INSIGHTS API - At-a-glance health + behavior metrics
 # ═══════════════════════════════════════════════════════════════════
 
-DISCUSSIONS_DIR = WORKSPACE / ".swarm" / "discussions"
+def _parse_iso_timestamp(value):
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed
+
+
+def _read_jsonl_tail(path: Path, max_lines: int = 12000):
+    if not path.exists():
+        return []
+    lines = deque(maxlen=max_lines)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                entry = line.strip()
+                if entry:
+                    lines.append(entry)
+    except Exception:
+        return []
+
+    payloads = []
+    for line in lines:
+        try:
+            payloads.append(json.loads(line))
+        except Exception:
+            continue
+    return payloads
+
+
+def _extract_usd_cost(detail: str) -> float:
+    matches = re.findall(r"\$([0-9]+(?:\.[0-9]+)?)", str(detail or ""))
+    if not matches:
+        return 0.0
+    try:
+        return float(matches[-1])
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _count_discussion_messages_since(cutoff: datetime) -> int:
+    total = 0
+    if not DISCUSSIONS_DIR.exists():
+        return total
+    for room_file in DISCUSSIONS_DIR.glob("*.jsonl"):
+        try:
+            with open(room_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except Exception:
+                        continue
+                    timestamp = _parse_iso_timestamp(payload.get("timestamp"))
+                    if timestamp and timestamp >= cutoff:
+                        total += 1
+        except Exception:
+            continue
+    return total
+
+
+@app.route('/api/insights')
+def api_insights():
+    """Aggregate queue/execution/social/safety signals for quick UI scanning."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+
+    queue = {}
+    if QUEUE_FILE.exists():
+        try:
+            with open(QUEUE_FILE, 'r', encoding='utf-8') as f:
+                queue = json.load(f)
+        except Exception:
+            queue = {}
+    queue_tasks = queue.get("tasks", []) if isinstance(queue.get("tasks"), list) else []
+    queue_completed = queue.get("completed", []) if isinstance(queue.get("completed"), list) else []
+    queue_failed = queue.get("failed", []) if isinstance(queue.get("failed"), list) else []
+    queue_summary = {
+        "open": len(queue_tasks),
+        "completed": len(queue_completed),
+        "failed": len(queue_failed),
+    }
+
+    execution_entries = _read_jsonl_tail(EXECUTION_LOG)
+    completed_24h = 0
+    approved_24h = 0
+    failed_24h = 0
+    requeue_24h = 0
+    pending_review_24h = 0
+    last_event_at = None
+    for entry in execution_entries:
+        status = str(entry.get("status") or "").strip().lower()
+        timestamp = _parse_iso_timestamp(entry.get("timestamp"))
+        if timestamp and (last_event_at is None or timestamp > last_event_at):
+            last_event_at = timestamp
+        if not timestamp or timestamp < cutoff:
+            continue
+        if status in {"completed", "approved"}:
+            completed_24h += 1
+        if status == "approved":
+            approved_24h += 1
+        if status == "failed":
+            failed_24h += 1
+        if status == "requeue":
+            requeue_24h += 1
+        if status == "pending_review":
+            pending_review_24h += 1
+
+    failure_streak = 0
+    for entry in reversed(execution_entries):
+        status = str(entry.get("status") or "").strip().lower()
+        if not status:
+            continue
+        if status == "failed":
+            failure_streak += 1
+            continue
+        if status in {"in_progress", "pending_review", "requeue"}:
+            continue
+        break
+
+    reviewed_total = approved_24h + failed_24h + requeue_24h
+    approval_rate_24h = round((approved_24h / reviewed_total) * 100, 1) if reviewed_total > 0 else None
+    execution_summary = {
+        "completed_24h": completed_24h,
+        "approved_24h": approved_24h,
+        "failed_24h": failed_24h,
+        "requeue_24h": requeue_24h,
+        "pending_review_24h": pending_review_24h,
+        "approval_rate_24h": approval_rate_24h,
+        "failure_streak": failure_streak,
+        "last_event_at": last_event_at.isoformat() if last_event_at else None,
+    }
+
+    action_entries = _read_jsonl_tail(ACTION_LOG)
+    api_calls_24h = 0
+    api_cost_24h = 0.0
+    safety_blocks_24h = 0
+    errors_24h = 0
+    actor_counter = Counter()
+    for entry in action_entries:
+        timestamp = _parse_iso_timestamp(entry.get("timestamp"))
+        if not timestamp or timestamp < cutoff:
+            continue
+        actor = str(entry.get("actor") or "").strip()
+        action_type = str(entry.get("action_type") or "").strip().upper()
+        action_blob = f"{entry.get('action', '')} {entry.get('detail', '')}".upper()
+        if actor and actor not in {"SYSTEM", "UNKNOWN"}:
+            actor_counter[actor] += 1
+        if action_type == "API":
+            api_calls_24h += 1
+            api_cost_24h += _extract_usd_cost(entry.get("detail", ""))
+        if action_type == "SAFETY" and "BLOCKED" in action_blob:
+            safety_blocks_24h += 1
+        if action_type == "ERROR":
+            errors_24h += 1
+    ops_summary = {
+        "api_calls_24h": api_calls_24h,
+        "api_cost_24h": round(api_cost_24h, 6),
+        "safety_blocks_24h": safety_blocks_24h,
+        "errors_24h": errors_24h,
+    }
+
+    identities = get_identities()
+    identity_name_map = {item.get("id"): item.get("name") for item in identities}
+    active_identity_ids = {
+        actor for actor in actor_counter
+        if actor in identity_name_map or actor.startswith("identity_")
+    }
+    top_actor = None
+    if actor_counter:
+        actor_id, actor_actions = actor_counter.most_common(1)[0]
+        top_actor = {
+            "id": actor_id,
+            "name": identity_name_map.get(actor_id) or actor_id,
+            "actions": actor_actions,
+        }
+    identities_summary = {
+        "count": len(identities),
+        "active_24h": len(active_identity_ids),
+        "top_actor": top_actor,
+    }
+
+    messages = get_messages_to_human()
+    responses = get_human_responses()
+    unread_messages = 0
+    for msg in messages:
+        msg_id = msg.get("id")
+        if msg_id and msg_id not in responses:
+            unread_messages += 1
+    bounties = load_bounties()
+    open_bounties = len([b for b in bounties if b.get("status") == "open"])
+    claimed_bounties = len([b for b in bounties if b.get("status") == "claimed"])
+    completed_bounties = len([b for b in bounties if b.get("status") == "completed"])
+    social_summary = {
+        "total_messages": len(messages),
+        "unread_messages": unread_messages,
+        "open_bounties": open_bounties,
+        "claimed_bounties": claimed_bounties,
+        "completed_bounties": completed_bounties,
+        "chat_messages_24h": _count_discussion_messages_since(cutoff),
+    }
+
+    backlog_pressure = "low"
+    if queue_summary["open"] >= 12:
+        backlog_pressure = "high"
+    elif queue_summary["open"] >= 5:
+        backlog_pressure = "medium"
+
+    kill_switch = get_stop_status()
+    health_state = "stable"
+    if kill_switch:
+        health_state = "critical"
+    elif (
+        execution_summary["failure_streak"] >= 3
+        or execution_summary["failed_24h"] > max(1, execution_summary["completed_24h"])
+        or ops_summary["safety_blocks_24h"] > 0
+    ):
+        health_state = "watch"
+    if (
+        execution_summary["failure_streak"] >= 6
+        or ops_summary["errors_24h"] >= 5
+        or ops_summary["safety_blocks_24h"] >= 3
+    ):
+        health_state = "critical"
+
+    health_summary = {
+        "state": health_state,
+        "kill_switch": kill_switch,
+        "backlog_pressure": backlog_pressure,
+    }
+
+    return jsonify(
+        {
+            "success": True,
+            "timestamp": now.isoformat(),
+            "queue": queue_summary,
+            "execution": execution_summary,
+            "ops": ops_summary,
+            "social": social_summary,
+            "identities": identities_summary,
+            "health": health_summary,
+        }
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHAT ROOMS API - View watercooler, town hall, etc.
+# ═══════════════════════════════════════════════════════════════════
 
 # Room display names and icons
 ROOM_INFO = {

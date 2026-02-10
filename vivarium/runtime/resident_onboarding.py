@@ -1,7 +1,7 @@
 """
 Resident onboarding and daily wake-up context.
 
-Residents are born at runtime, choose an identity from the library, and receive
+Residents are born at runtime, choose an identity from the Community Library, and receive
 a world summary that helps them decide what to do today. This is voluntary and
 reward-based: no coercion, no forced assignments.
 """
@@ -14,7 +14,7 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,8 +30,14 @@ IDENTITY_LIBRARY_FILE = "identity_library.json"
 RESIDENT_DAYS_FILE = Path(".swarm") / "resident_days.json"
 IDENTITIES_DIR = Path(".swarm") / "identities"
 IDENTITY_LOCKS_FILE = Path(".swarm") / "identity_locks.json"
-# "Day" length at machine speed (seconds per cycle).
-RESIDENT_CYCLE_SECONDS = int(os.environ.get("RESIDENT_CYCLE_SECONDS", "900"))
+COMMUNITY_LIBRARY_ROOT = "library/community_library"
+# One simulated "day" length (seconds). Default compressed to 1 minute.
+RESIDENT_CYCLE_SECONDS = int(
+    os.environ.get(
+        "RESIDENT_DAY_SECONDS",
+        os.environ.get("RESIDENT_CYCLE_SECONDS", "60"),
+    )
+)
 
 
 @dataclass
@@ -65,13 +71,21 @@ class ResidentContext:
     notifications: List[str]
     market_hint: str
 
+    @property
+    def week_count(self) -> int:
+        return max(1, ((self.day_count - 1) // 7) + 1)
+
+    @property
+    def day_of_week(self) -> int:
+        return ((self.day_count - 1) % 7) + 1
+
     def build_wakeup_context(self) -> str:
         lines = [
             "DAY START",
             "You are waking up in Vivarium.",
             "",
             f"You are {self.identity.name} ({self.identity.identity_id}).",
-            f"This is your day {self.day_count} (cycle {self.cycle_id}).",
+            f"This is day {self.day_count} (week {self.week_count}, day {self.day_of_week}/7).",
             f"Token wallet: {self.wallet.get('free_time', 0)} free time, "
             f"{self.wallet.get('journal', 0)} journal.",
             "",
@@ -82,6 +96,9 @@ class ResidentContext:
             "",
             "Reframed as your morning briefing:",
             f"- Market hint: {self.market_hint}",
+            f"- Community Library: {COMMUNITY_LIBRARY_ROOT}/",
+            "- Personal proposals: library/community_library/resident_suggestions/<your_identity_id>/",
+            "- Shared docs: library/community_library/swarm_docs/",
         ]
         if self.notifications:
             lines.append("As you roll out of bed and check your phone you notice:")
@@ -306,12 +323,13 @@ def _build_pre_identity_summary(world: WorldState) -> str:
 
 def _select_identity(identities: List[IdentityTemplate], world: WorldState) -> Tuple[IdentityTemplate, str]:
     if not identities:
+        suffix = uuid.uuid4().hex[:4]
         fallback = IdentityTemplate(
-            identity_id="resident_default",
-            name="Resident",
-            summary="Default resident identity.",
+            identity_id=f"resident_{suffix}",
+            name=f"resident-{suffix}",
+            summary="Emergent identity bootstrapped from resident context.",
         )
-        return fallback, "default identity"
+        return fallback, "emergent fallback identity"
 
     best = identities[0]
     best_score = -1.0
@@ -375,32 +393,41 @@ def create_identity_from_resident(
     affinities: Optional[List[str]] = None,
     values: Optional[List[str]] = None,
     preferred_activities: Optional[List[str]] = None,
+    identity_statement: Optional[str] = None,
     available_cycle: Optional[int] = None,
 ) -> str:
     """Create a new resident identity (OC) authored by a resident."""
     identity_id = f"oc_{uuid.uuid4().hex[:8]}"
     cycle_id = _current_cycle_id()
-    available_at = available_cycle if available_cycle is not None else cycle_id + 1
+    available_at = available_cycle if available_cycle is not None else cycle_id
+
+    clean_name = (name or "").strip() or identity_id
+    clean_summary = (summary or "").strip() or "Self-authored resident identity."
+    clean_statement = (identity_statement or "").strip() or clean_summary
 
     identity_data = {
         "id": identity_id,
-        "name": name or identity_id,
-        "summary": summary or "Resident-created identity.",
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "name": clean_name,
+        "summary": clean_summary,
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "created_by": {
             "resident_id": creator_resident_id,
             "identity_id": creator_identity_id,
         },
-        "origin": "resident_oc",
+        "origin": "resident_authored",
         "available_cycle": available_at,
         "preferred_activities": preferred_activities or [],
         "attributes": {
             "core": {
                 "personality_traits": affinities or [],
                 "core_values": values or [],
+                "identity_statement": clean_statement,
             },
             "profile": {},
             "mutable": {},
+        },
+        "meta": {
+            "creative_self_authored": True,
         },
     }
 

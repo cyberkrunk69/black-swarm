@@ -243,6 +243,11 @@ Vivarium/
 │   ├── human_request.json      # Current collaboration request
 │   ├── messages_to_human.jsonl # Resident → human messages
 │   └── phase5_reward_ledger.json # Reward idempotency ledger
+│
+├── library/
+│   ├── community_library/      # Shared docs + resident suggestions
+│   └── creative_works/         # Resident-generated creative outputs
+│
 ├── vivarium/runtime/           # Canonical runtime package
 │   ├── control_panel_app.py    # Control panel implementation
 │   ├── worker_runtime.py       # Resident runtime implementation

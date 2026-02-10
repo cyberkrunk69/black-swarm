@@ -39,6 +39,8 @@ MUTABLE_CYCLE_LOGS_DIR = MUTABLE_ROOT / "cycle_logs"
 MUTABLE_GRIND_LOGS_DIR = MUTABLE_CYCLE_LOGS_DIR
 MUTABLE_LOCKS_DIR = MUTABLE_ROOT / "task_locks"
 MUTABLE_SWARM_DIR = MUTABLE_ROOT / ".swarm"
+MUTABLE_LIBRARY_ROOT = MUTABLE_ROOT / "library"
+MUTABLE_COMMUNITY_LIBRARY_ROOT = MUTABLE_LIBRARY_ROOT / "community_library"
 
 ALLOWED_GIT_NETWORK_HOSTS = {"github.com", "api.github.com"}
 
@@ -79,8 +81,23 @@ def ensure_scope_layout() -> None:
         MUTABLE_CYCLE_LOGS_DIR,
         MUTABLE_LOCKS_DIR,
         MUTABLE_SWARM_DIR,
+        MUTABLE_LIBRARY_ROOT,
+        MUTABLE_COMMUNITY_LIBRARY_ROOT,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+
+    legacy_knowledge_dir = MUTABLE_ROOT / "knowledge"
+    if legacy_knowledge_dir.exists() and legacy_knowledge_dir.is_dir():
+        if not any(MUTABLE_COMMUNITY_LIBRARY_ROOT.iterdir()):
+            for item in legacy_knowledge_dir.iterdir():
+                target = MUTABLE_COMMUNITY_LIBRARY_ROOT / item.name
+                if target.exists():
+                    continue
+                item.rename(target)
+            try:
+                legacy_knowledge_dir.rmdir()
+            except OSError:
+                pass
 
     if not MUTABLE_QUEUE_FILE.exists():
         legacy_queue = REPO_ROOT / "queue.json"

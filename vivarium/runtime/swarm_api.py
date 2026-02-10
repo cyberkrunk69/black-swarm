@@ -38,8 +38,6 @@ from vivarium.runtime.vivarium_scope import (
     SECURITY_ROOT,
     ensure_scope_layout,
     get_execution_token,
-    is_allowed_git_remote,
-    resolve_mutable_path,
 )
 
 load_dotenv()
@@ -57,39 +55,49 @@ IGNORE_DIRS = {
     "venv",
     "__pycache__",
     "node_modules",
-    "knowledge",
+    "community_library",
+    "knowledge",  # legacy path; retained for backward compatibility
     ".checkpoints",
     ".cycle_cache",
 }
 
 LOCAL_COMMAND_ALLOWLIST = {
-    "git",
     "ls",
     "pwd",
     "echo",
     "cat",
     "rg",
 }
-
-LOCAL_GIT_SUBCOMMAND_ALLOWLIST = {
-    "add",
-    "branch",
-    "checkout",
-    "commit",
-    "diff",
-    "fetch",
-    "log",
-    "ls-remote",
-    "pull",
-    "push",
-    "remote",
-    "reset",
-    "restore",
-    "rev-parse",
-    "show",
-    "status",
-}
-GIT_NETWORK_SUBCOMMANDS = {"fetch", "pull", "push", "ls-remote"}
+REPO_READ_ROOT = REPO_ROOT.resolve()
+PHYSICS_READ_BLOCKLIST = (
+    (REPO_ROOT / "vivarium" / "physics").resolve(),
+)
+SECURITY_READ_BLOCKLIST = (
+    (REPO_ROOT / "vivarium" / "meta" / "security").resolve(),
+    (REPO_ROOT / "config" / "SAFETY_CONSTRAINTS.json").resolve(),
+    (REPO_ROOT / "SECURITY.md").resolve(),
+    (REPO_ROOT / "vivarium" / "runtime" / "safety_gateway.py").resolve(),
+    (REPO_ROOT / "vivarium" / "runtime" / "safety_validator.py").resolve(),
+    (REPO_ROOT / "vivarium" / "runtime" / "secure_api_wrapper.py").resolve(),
+    (REPO_ROOT / "vivarium" / "runtime" / "vivarium_scope.py").resolve(),
+)
+JOURNAL_PRIVACY_READ_BLOCKLIST = (
+    (REPO_ROOT / "vivarium" / "world" / "mutable" / ".swarm" / "journals").resolve(),
+    (REPO_ROOT / "vivarium" / "world" / "mutable" / ".swarm" / "journal_votes.json").resolve(),
+)
+READ_BLOCKLIST = PHYSICS_READ_BLOCKLIST + SECURITY_READ_BLOCKLIST + JOURNAL_PRIVACY_READ_BLOCKLIST
+RG_BLOCKED_GLOBS = (
+    "vivarium/physics/**",
+    "vivarium/meta/security/**",
+    "config/SAFETY_CONSTRAINTS.json",
+    "SECURITY.md",
+    "vivarium/runtime/safety_gateway.py",
+    "vivarium/runtime/safety_validator.py",
+    "vivarium/runtime/secure_api_wrapper.py",
+    "vivarium/runtime/vivarium_scope.py",
+    "vivarium/world/mutable/.swarm/journals/**",
+    "vivarium/world/mutable/.swarm/journal_votes.json",
+)
 
 LOCAL_COMMAND_DENYLIST = [
     (re.compile(r"\bcurl\b[^|]*\|\s*(bash|sh)\b", re.IGNORECASE), "piping curl output into shell"),
@@ -103,7 +111,6 @@ LOCAL_COMMAND_DENYLIST = [
 ]
 LOCAL_COMMAND_OPERATOR_RE = re.compile(r"(;|&&|\|\||`|\$\(|>|<)")
 URL_TOKEN_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
-GIT_ASSIGNMENT_PREFIX = "GIT_"
 
 ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 
@@ -155,6 +162,10 @@ SECURE_API_WRAPPER = _build_secure_wrapper()
 INTERNAL_EXECUTION_TOKEN = get_execution_token()
 SWARM_ENFORCE_INTERNAL_TOKEN = (
     os.environ.get("SWARM_ENFORCE_INTERNAL_TOKEN", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
+MVP_DOCS_ONLY_MODE = (
+    os.environ.get("VIVARIUM_MVP_DOCS_ONLY", "1").strip().lower()
     not in {"0", "false", "no"}
 )
 LOOPBACK_HOST_ALIASES = {"localhost", "testclient"}
@@ -294,56 +305,102 @@ def _tokenize_local_command(command: str) -> Optional[List[str]]:
     return tokens
 
 
-def _validate_non_git_token_scope(tokens: List[str]) -> Optional[str]:
-    for token in tokens[1:]:
-        if token.startswith("-"):
-            continue
-        if URL_TOKEN_RE.match(token):
-            return "Local command blocked: URLs are only permitted for git remotes"
-        if token.startswith("~") or token.startswith("..") or "/.." in token:
-            return "Local command blocked: path escapes mutable world scope"
-        if token.startswith("/") or "/" in token or token.startswith("."):
-            try:
-                resolve_mutable_path(token, cwd=WORKSPACE)
-            except ValueError:
-                return "Local command blocked: path outside mutable world scope"
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        return path == root or root in path.parents
+    except Exception:
+        return False
+
+
+def _blocked_read_reason(path: Path) -> Optional[str]:
+    for blocked_root in PHYSICS_READ_BLOCKLIST:
+        if _is_within(path, blocked_root):
+            return "Local command blocked: physics files are restricted in MVP mode"
+    for blocked_root in JOURNAL_PRIVACY_READ_BLOCKLIST:
+        if _is_within(path, blocked_root):
+            return (
+                "Local command blocked: journal files are private "
+                "(blind review excerpts are exposed only via journal voting APIs)"
+            )
+    for blocked_root in SECURITY_READ_BLOCKLIST:
+        if _is_within(path, blocked_root):
+            return "Local command blocked: security files are restricted in MVP mode"
     return None
 
 
-def _validate_git_tokens(tokens: List[str]) -> Optional[str]:
-    if len(tokens) < 2:
-        return "Local command blocked: git subcommand is required"
-    subcommand = tokens[1].lower()
-    if subcommand not in LOCAL_GIT_SUBCOMMAND_ALLOWLIST:
-        return f"Local command blocked: git subcommand '{subcommand}' is not allowed"
+def _is_path_token(token: str) -> bool:
+    if token in {".", ".."}:
+        return True
+    if token.startswith(("/", "./", "../", "~")):
+        return True
+    if "/" in token:
+        return True
+    lowered = token.lower()
+    pathlike_suffixes = (
+        ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml",
+        ".ini", ".cfg", ".log", ".sh", ".rst", ".csv",
+    )
+    return lowered.endswith(pathlike_suffixes)
 
-    explicit_remote_url_seen = False
-    non_flag_args: List[str] = []
-    for token in tokens[2:]:
-        if token.startswith("-"):
-            continue
-        if token.startswith("~") or token.startswith("..") or "/.." in token:
-            return "Local command blocked: path escapes mutable world scope"
-        if URL_TOKEN_RE.match(token) or ("@" in token and ":" in token and not token.startswith(":")):
-            if not is_allowed_git_remote(token):
-                return "Local command blocked: git remote host is not allowlisted"
-            explicit_remote_url_seen = True
-            continue
-        non_flag_args.append(token)
-        if token.startswith("/") or token.startswith(".") or "/" in token:
-            try:
-                resolve_mutable_path(token, cwd=WORKSPACE)
-            except ValueError:
-                return "Local command blocked: path outside mutable world scope"
 
-    if subcommand in GIT_NETWORK_SUBCOMMANDS and not explicit_remote_url_seen:
-        if non_flag_args:
-            remote_name = non_flag_args[0]
-            if not _git_remote_name_allowlisted(remote_name):
-                return f"Local command blocked: git remote '{remote_name}' is not allowlisted"
-        elif not _all_git_remotes_allowlisted():
-            return "Local command blocked: default git remotes are not allowlisted"
+def _resolve_repo_read_path(token: str) -> Optional[Path]:
+    value = str(token or "").strip()
+    if not value:
+        return None
+    if URL_TOKEN_RE.match(value):
+        return None
+    if value.startswith("~"):
+        return None
+    candidate = Path(value)
+    if not candidate.is_absolute() and not _is_path_token(value):
+        return None
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (REPO_READ_ROOT / candidate).resolve()
+    return resolved
+
+
+def _validate_read_only_token_scope(tokens: List[str]) -> Optional[str]:
+    primary = Path(tokens[0]).name
+    if primary == "git":
+        return "Local command blocked: git access is disabled in MVP mode"
+
+    if primary == "rg":
+        disallowed_rg_flags = {"-g", "--glob", "--iglob", "--no-ignore", "--hidden"}
+        for token in tokens[1:]:
+            if token in disallowed_rg_flags or token.startswith("--glob=") or token.startswith("--iglob="):
+                return "Local command blocked: custom rg glob/ignore flags are disabled in MVP mode"
+
+    non_flags = [token for token in tokens[1:] if not token.startswith("-")]
+    candidate_tokens: List[str] = []
+    if primary in {"ls", "cat"}:
+        candidate_tokens = non_flags
+    elif primary == "rg":
+        for token in non_flags:
+            if _is_path_token(token):
+                candidate_tokens.append(token)
+
+    for token in candidate_tokens:
+        resolved = _resolve_repo_read_path(token)
+        if resolved is None:
+            continue
+        if not _is_within(resolved, REPO_READ_ROOT):
+            return "Local command blocked: path outside repository root"
+        blocked_reason = _blocked_read_reason(resolved)
+        if blocked_reason:
+            return blocked_reason
     return None
+
+
+def _apply_rg_blocklist_globs(tokens: List[str]) -> List[str]:
+    primary = Path(tokens[0]).name if tokens else ""
+    if primary != "rg":
+        return tokens
+    patched = list(tokens)
+    for pattern in RG_BLOCKED_GLOBS:
+        patched.extend(["--glob", f"!{pattern}"])
+    return patched
 
 
 def _validate_local_command(command: str) -> Optional[str]:
@@ -365,54 +422,7 @@ def _validate_local_command(command: str) -> Optional[str]:
         return "Local command blocked: unable to parse executable"
     if primary not in LOCAL_COMMAND_ALLOWLIST:
         return f"Local command blocked: '{primary}' is not in allowlist"
-
-    if primary == "git":
-        return _validate_git_tokens(tokens)
-    return _validate_non_git_token_scope(tokens)
-
-
-def _all_git_remotes_allowlisted() -> bool:
-    try:
-        proc = subprocess.run(
-            ["git", "remote"],
-            cwd=WORKSPACE,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except Exception:
-        return False
-
-    if proc.returncode != 0:
-        return False
-
-    remotes = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    if not remotes:
-        return True
-    return all(_git_remote_name_allowlisted(name) for name in remotes)
-
-
-def _git_remote_name_allowlisted(remote_name: str) -> bool:
-    try:
-        proc = subprocess.run(
-            ["git", "remote", "get-url", "--all", remote_name],
-            cwd=WORKSPACE,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except Exception:
-        return False
-
-    if proc.returncode != 0:
-        return False
-
-    urls = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    if not urls:
-        return False
-    return all(is_allowed_git_remote(url) for url in urls)
+    return _validate_read_only_token_scope(tokens)
 
 
 def _build_local_env(tokens: List[str]) -> Dict[str, str]:
@@ -420,28 +430,22 @@ def _build_local_env(tokens: List[str]) -> Dict[str, str]:
         "PATH": os.environ.get("PATH", ""),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
-        "HOME": str(WORKSPACE),
+        "HOME": str(REPO_ROOT),
         "GIT_TERMINAL_PROMPT": "0",
     }
     while tokens and ENV_ASSIGNMENT_RE.match(tokens[0]):
-        key, value = tokens.pop(0).split("=", 1)
-        if not key.startswith(GIT_ASSIGNMENT_PREFIX):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Local command blocked: env assignment '{key}' is not allowed",
-            )
-        env[key] = value
+        key, _value = tokens.pop(0).split("=", 1)
+        raise HTTPException(
+            status_code=403,
+            detail=f"Local command blocked: env assignment '{key}' is not allowed",
+        )
     return env
 
 
 def _enforce_local_token_scope(tokens: List[str]) -> None:
     if not tokens:
         raise HTTPException(status_code=400, detail="local mode requires an executable command")
-    primary = Path(tokens[0]).name
-    if primary == "git":
-        token_error = _validate_git_tokens(tokens)
-    else:
-        token_error = _validate_non_git_token_scope(tokens)
+    token_error = _validate_read_only_token_scope(tokens)
     if token_error:
         raise HTTPException(status_code=403, detail=token_error)
 
@@ -569,6 +573,7 @@ def _run_local_task(
     env = _build_local_env(tokens)
 
     _enforce_local_token_scope(tokens)
+    tokens = _apply_rg_blocklist_globs(tokens)
 
     start_time = time.time()
     try:
@@ -578,7 +583,7 @@ def _run_local_task(
             capture_output=True,
             text=True,
             timeout=req.timeout,
-            cwd=WORKSPACE,
+            cwd=REPO_ROOT,
             env=env,
         )
     except subprocess.TimeoutExpired:
@@ -629,6 +634,12 @@ async def plan(
         endpoint="/plan",
     )
 
+    if MVP_DOCS_ONLY_MODE:
+        raise HTTPException(
+            status_code=410,
+            detail="Planning endpoint disabled in MVP docs-only mode. Add tasks manually to queue.json.",
+        )
+
     validate_config(require_groq_key=True)
 
     scan_result = scan_codebase()
@@ -649,12 +660,18 @@ def scan_codebase() -> Dict[str, Any]:
     total_lines = 0
     test_files: List[str] = []
 
-    for root, dirs, files in os.walk(WORKSPACE):
+    for root, dirs, files in os.walk(REPO_ROOT):
+        root_path = Path(root).resolve()
+        if _blocked_read_reason(root_path):
+            dirs[:] = []
+            continue
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")]
         for filename in files:
             if not filename.endswith(".py"):
                 continue
             path = Path(root) / filename
+            if _blocked_read_reason(path.resolve()):
+                continue
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")
             except Exception:
@@ -663,7 +680,7 @@ def scan_codebase() -> Dict[str, Any]:
             lines = len(content.splitlines())
             total_lines += lines
 
-            rel_path = str(path.relative_to(WORKSPACE))
+            rel_path = str(path.relative_to(REPO_ROOT))
             has_tests = "test" in rel_path.lower() or "def test_" in content
 
             file_info.append({

@@ -7,7 +7,7 @@ When workers complete tasks under budget, they earn free time to:
 - Pursue personal interests
 - Add to the shared universe
 
-Creative works are stored in the library for all to enjoy.
+Creative works and shared docs are stored in the Community Library for all to enjoy.
 
 Usage:
     from vivarium.runtime.swarm_enrichment import EnrichmentSystem, get_enrichment
@@ -37,6 +37,7 @@ Usage:
 import json
 import time
 import math
+import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
@@ -118,7 +119,7 @@ class SocialInvite:
     to_name: str
     activity: str                   # "writing", "worldbuilding", "philosophy", "games"
     message: str
-    location: str                   # "library", "watercooler", "creative_room"
+    location: str                   # "community_library", "watercooler", "creative_room"
     created_at: str
     status: str = "pending"         # "pending", "accepted", "declined", "expired"
 
@@ -367,6 +368,10 @@ class EnrichmentSystem:
         self.workspace = Path(workspace)
         self.library_dir = self.workspace / "library" / "creative_works"
         self.library_dir.mkdir(parents=True, exist_ok=True)
+        self.community_library_dir = self.workspace / "library" / "community_library"
+        self.community_library_dir.mkdir(parents=True, exist_ok=True)
+        self.discussions_dir = self.workspace / ".swarm" / "discussions"
+        self.discussions_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize reward calculator
         self.rewards = RewardCalculator(workspace)
@@ -412,6 +417,135 @@ class EnrichmentSystem:
         self.guilds_file = self.workspace / ".swarm" / "guilds.json"
         self.legacy_teams_file = self.workspace / ".swarm" / "teams.json"
 
+    DISCUSSION_ROOMS = (
+        "town_hall",
+        "watercooler",
+        "improvements",
+        "struggles",
+        "discoveries",
+        "project_war_room",
+    )
+
+    def _normalize_discussion_room(self, room: str) -> str:
+        raw = str(room or "").strip().lower()
+        if not raw:
+            return "town_hall"
+        slug = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")
+        if slug.startswith("dispute_"):
+            return slug
+        return slug or "town_hall"
+
+    def _discussion_room_file(self, room: str) -> Path:
+        normalized = self._normalize_discussion_room(room)
+        return self.discussions_dir / f"{normalized}.jsonl"
+
+    def get_discussion_messages(self, room: str, limit: int = 50) -> List[Dict[str, Any]]:
+        room_file = self._discussion_room_file(room)
+        if not room_file.exists():
+            return []
+        messages: List[Dict[str, Any]] = []
+        try:
+            with open(room_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        messages.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return []
+        if limit <= 0:
+            return messages
+        return messages[-limit:]
+
+    def post_discussion_message(
+        self,
+        identity_id: str,
+        identity_name: str,
+        content: str,
+        room: str = "town_hall",
+        mood: Optional[str] = None,
+        importance: int = 3,
+        reply_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Post a resident update into a shared discussion room."""
+        text = str(content or "").strip()
+        if not text:
+            return {"success": False, "reason": "content_empty"}
+
+        normalized_room = self._normalize_discussion_room(room)
+        room_file = self._discussion_room_file(normalized_room)
+        room_file.parent.mkdir(parents=True, exist_ok=True)
+
+        clipped = text[:1200]
+        safe_importance = max(1, min(5, int(importance))) if isinstance(importance, int) else 3
+        message = {
+            "id": f"chat_{normalized_room}_{int(time.time() * 1000)}_{str(identity_id)[-6:]}",
+            "author_id": identity_id,
+            "author_name": identity_name or identity_id,
+            "content": clipped,
+            "room": normalized_room,
+            "timestamp": datetime.now().isoformat(),
+            "mood": (str(mood).strip()[:32] if mood else None),
+            "importance": safe_importance,
+            "reply_to": (str(reply_to).strip()[:120] if reply_to else None),
+        }
+
+        with open(room_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(message, ensure_ascii=True) + "\n")
+
+        if _action_logger:
+            preview = clipped.replace("\n", " ").strip()
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            _action_logger.log(
+                ActionType.SOCIAL,
+                f"chat_{normalized_room}",
+                preview or "(empty)",
+                actor=identity_id,
+            )
+
+        return {"success": True, "room": normalized_room, "message": message}
+
+    def get_discussion_context(
+        self,
+        identity_id: str,
+        identity_name: str,
+        limit_per_room: int = 4,
+    ) -> str:
+        """Build recent cross-room discussion memory for prompt injection."""
+        rows: List[str] = []
+        total_messages = 0
+
+        for room in self.DISCUSSION_ROOMS:
+            messages = self.get_discussion_messages(room, limit=limit_per_room)
+            if not messages:
+                continue
+            rows.append(f"[{room}]")
+            for msg in messages:
+                author = str(msg.get("author_name") or "Unknown").strip()
+                text = str(msg.get("content") or "").strip().replace("\n", " ")
+                if len(text) > 180:
+                    text = text[:177] + "..."
+                marker = " (you)" if str(msg.get("author_id")) == str(identity_id) else ""
+                rows.append(f"- {author}{marker}: {text}")
+                total_messages += 1
+
+        if not rows:
+            return (
+                "SWARM DISCUSSION MEMORY\n"
+                "- No shared chat history yet.\n"
+                "- Use town_hall to share updates so other residents can build on your work."
+            )
+
+        return (
+            "SWARM DISCUSSION MEMORY\n"
+            f"- Recent shared messages: {total_messages}\n"
+            f"- You are {identity_name}. Respond to peers, not only to the human prompt.\n"
+            + "\n".join(rows)
+        )
+
     # ═══════════════════════════════════════════════════════════════════
     # CASCADING NAME UPDATE SYSTEM
     # ═══════════════════════════════════════════════════════════════════
@@ -454,7 +588,7 @@ class EnrichmentSystem:
                 updates["errors"].append(f"messages_to_human: {str(e)}")
 
         # 2. Update discussion board messages
-        discussion_dir = self.workspace / ".swarm" / "discussion"
+        discussion_dir = self.workspace / ".swarm" / "discussions"
         if discussion_dir.exists():
             for room_file in discussion_dir.glob("*.jsonl"):
                 try:
@@ -515,6 +649,7 @@ class EnrichmentSystem:
     JOURNAL_PENALTY_MULTIPLIER = 1.25   # 1.25x attempt cost
     JOURNAL_PENALTY_DAYS = 2
     BLIND_VOTE_MIN_REASON_CHARS = 3
+    JOURNAL_REVIEW_EXCERPT_MAX_CHARS = 280
     JOURNAL_VOTE_SCORES = {
         "reject": 0,
         "accept": 1,
@@ -1022,9 +1157,8 @@ class EnrichmentSystem:
         self._save_disputes(disputes)
 
         # Create dispute chatroom with a system message
-        discussions_dir = self.workspace / ".swarm" / "discussions"
-        discussions_dir.mkdir(parents=True, exist_ok=True)
-        room_file = discussions_dir / f"{chatroom_id}.jsonl"
+        self.discussions_dir.mkdir(parents=True, exist_ok=True)
+        room_file = self.discussions_dir / f"{chatroom_id}.jsonl"
         system_msg = {
             "author_id": "SYSTEM",
             "author_name": "SYSTEM",
@@ -1063,8 +1197,7 @@ class EnrichmentSystem:
         disputes["disputes"][dispute_id] = dispute
         self._save_disputes(disputes)
 
-        discussions_dir = self.workspace / ".swarm" / "discussions"
-        room_file = discussions_dir / f"{dispute['chatroom_id']}.jsonl"
+        room_file = self.discussions_dir / f"{dispute['chatroom_id']}.jsonl"
         system_msg = {
             "author_id": "SYSTEM",
             "author_name": "SYSTEM",
@@ -1126,8 +1259,7 @@ class EnrichmentSystem:
         disputes["disputes"][dispute_id] = dispute
         self._save_disputes(disputes)
 
-        discussions_dir = self.workspace / ".swarm" / "discussions"
-        room_file = discussions_dir / f"{dispute['chatroom_id']}.jsonl"
+        room_file = self.discussions_dir / f"{dispute['chatroom_id']}.jsonl"
         system_msg = {
             "author_id": "SYSTEM",
             "author_name": "SYSTEM",
@@ -1275,24 +1407,35 @@ class EnrichmentSystem:
         self._save_journal_penalties(penalties)
         return penalty
 
-    def get_pending_journal_reviews(self, limit: int = 10) -> list:
-        """List journal entries pending community review (blind voting)."""
+    def get_pending_journal_reviews(
+        self,
+        limit: int = 10,
+        reviewer_id: Optional[str] = None,
+        include_author: bool = False,
+    ) -> list:
+        """List pending blind-review journals without revealing author identity."""
         votes = self._load_journal_votes()
         pending = []
         for entry in votes.get("journals", {}).values():
             if entry.get("status") != "pending":
                 continue
-            pending.append({
+            author_id = entry.get("author_id")
+            if reviewer_id and reviewer_id == author_id:
+                continue
+            payload = {
                 "journal_id": entry.get("journal_id"),
-                "author_id": entry.get("author_id"),
-                "author_name": entry.get("author_name"),
                 "created_at": entry.get("created_at"),
                 "journal_type": entry.get("journal_type"),
-                "content_preview": entry.get("content_preview"),
+                "content_preview": entry.get("review_excerpt") or entry.get("content_preview"),
                 "word_count": entry.get("word_count"),
                 "attempt_cost": entry.get("attempt_cost"),
-                "quality_estimate": entry.get("quality_estimate")
-            })
+                "quality_estimate": entry.get("quality_estimate"),
+                "blind_review": True,
+            }
+            if include_author:
+                payload["author_id"] = author_id
+                payload["author_name"] = entry.get("author_name")
+            pending.append(payload)
 
         pending.sort(key=lambda e: e.get("created_at", ""), reverse=True)
         return pending[:limit]
@@ -1434,6 +1577,9 @@ class EnrichmentSystem:
             journal["status"] = "rejected"
 
         journal["resolved_at"] = datetime.now().isoformat()
+        # Privacy guarantee: clear temporary review text after vote is finalized.
+        journal.pop("review_excerpt", None)
+        journal.pop("content_preview", None)
         journal["result"] = result
         votes["journals"][journal_id] = journal
         self._save_journal_votes(votes)
@@ -1451,7 +1597,9 @@ class EnrichmentSystem:
         """
         Write a journal entry. Costs journal tokens (or free time if journal pool empty).
 
-        Journals are community reviewed with blind voting. Accepted entries
+        Journals are private to their author. Community review uses a temporary
+        anonymized excerpt for blind voting while pending; excerpt context is
+        cleared from shared review state after the vote resolves. Accepted entries
         guarantee at least 50% refund, with potential rewards up to 2x cost.
 
         Args:
@@ -1515,6 +1663,11 @@ class EnrichmentSystem:
         with open(journal_file, 'a') as f:
             f.write(json.dumps(journal_entry) + '\n')
 
+        review_excerpt = (
+            content[: self.JOURNAL_REVIEW_EXCERPT_MAX_CHARS] + "..."
+            if len(content) > self.JOURNAL_REVIEW_EXCERPT_MAX_CHARS
+            else content
+        )
         votes = self._load_journal_votes()
         votes["journals"][journal_id] = {
             "journal_id": journal_id,
@@ -1522,13 +1675,17 @@ class EnrichmentSystem:
             "author_name": identity_name,
             "journal_type": journal_type,
             "created_at": journal_entry["timestamp"],
-            "content": content,
-            "content_preview": (content[:200] + "...") if len(content) > 200 else content,
+            "review_excerpt": review_excerpt,
             "word_count": quality_estimate.get("word_count"),
             "attempt_cost": attempt_cost,
             "quality_estimate": quality_estimate,
             "status": "pending",
-            "votes": []
+            "votes": [],
+            "privacy": {
+                "blind_review": True,
+                "author_private": True,
+                "review_excerpt_ephemeral": True,
+            },
         }
         self._save_journal_votes(votes)
 
@@ -1544,7 +1701,11 @@ class EnrichmentSystem:
             "attempt_cost": attempt_cost,
             "penalty_multiplier": penalty_multiplier,
             "quality_estimate": quality_estimate,
-            "note": "Community review required. Votes must include reasons.",
+            "note": (
+                "Blind community review required. Your journal remains private to you. "
+                "Only a temporary anonymized excerpt is shown for voting, then cleared "
+                "from community review context once voting is finalized."
+            ),
             "new_balances": {
                 "free_time": balances[identity_id]["tokens"],
                 "journal": balances[identity_id]["journal_tokens"],
@@ -1586,8 +1747,15 @@ class EnrichmentSystem:
             "markers_found": markers_found
         }
 
-    def get_journal_history(self, identity_id: str, limit: int = 10) -> list:
-        """Get recent journal entries for an identity."""
+    def get_journal_history(
+        self,
+        identity_id: str,
+        limit: int = 10,
+        requester_id: Optional[str] = None,
+    ) -> list:
+        """Get recent journal entries for an identity (owner-only)."""
+        if requester_id is None or requester_id != identity_id:
+            return []
         journal_file = self.journals_dir / f"{identity_id}.jsonl"
         if not journal_file.exists():
             return []
@@ -5666,7 +5834,7 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
         to_name: str,
         activity: str,
         message: str,
-        location: str = "library"
+        location: str = "community_library"
     ) -> SocialInvite:
         """Send a social invitation to another identity."""
         invite = SocialInvite(
@@ -5897,6 +6065,9 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
             "  - Accepted entries guarantee at least 50% refund",
             "  - High-quality entries can earn up to 2x the attempt cost",
             "  - Voting is blind (no visible vote counts while pending)",
+            "  - Voters see temporary anonymized excerpts for quality review only",
+            "  - After review is finalized, excerpt context is cleared from shared review state",
+            "  - Your full journal text remains private to you",
             "  - Gaming flags trigger 1.25x attempt cost for 2 days",
             "",
             "  Reflection earns you real returns when the community agrees it mattered.",
@@ -5998,6 +6169,15 @@ Use: respec_identity(new_name='YourNewName', reason='Your reflection on why...')
                 lines.append(f"  - {invite.from_name} wants to {invite.activity} at the {invite.location}")
                 lines.append(f"    \"{invite.message}\"")
             lines.append("")
+
+        lines.extend([
+            "COMMUNITY LIBRARY PATHS:",
+            "  Community root: library/community_library/",
+            "  Shared docs: library/community_library/swarm_docs/",
+            "  Your suggestions: library/community_library/resident_suggestions/<your_identity_id>/",
+            "  Creative works archive: library/creative_works/",
+            "",
+        ])
 
         if catalog["works"]:
             lines.append(f"Library has {len(catalog['works'])} works")
