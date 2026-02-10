@@ -125,10 +125,13 @@ Enforced in the default queue/worker path:
 
 ### 1) Install
 
+Requires **Python 3.11+**.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r requirements-groq.txt
+pip install pytest watchdog
 ```
 
 ### 2) Start execution API
@@ -163,11 +166,13 @@ python -m vivarium.runtime.worker_runtime run
 
 ## Testing
 
-Run full test suite:
+After install (step 1), run the full test suite:
 
 ```bash
-python3 -m pytest -q
+python -m pytest -q
 ```
+
+To skip integration and e2e tests: `pytest -q -m "not integration and not e2e"`.
 
 ---
 
