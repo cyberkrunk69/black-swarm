@@ -51,6 +51,7 @@ from vivarium.runtime.vivarium_scope import (
     ensure_scope_layout,
     get_execution_token,
     get_mutable_version_control,
+    resolve_mutable_path,
 )
 try:
     from vivarium.runtime.resident_onboarding import spawn_resident, ResidentContext
@@ -143,6 +144,18 @@ PHASE4_COMMA_NON_ACTION_PREFIXES: Tuple[str, ...] = (
     "when ",
     "while ",
     "because ",
+)
+MVP_DOCS_ONLY_MODE: bool = (
+    os.environ.get("VIVARIUM_MVP_DOCS_ONLY", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
+MVP_JOURNALS_DIR: Path = MUTABLE_SWARM_DIR / "journals"
+MVP_SUGGESTIONS_DIR: Path = MUTABLE_SWARM_DIR / "suggestions"
+MVP_LIBRARY_DOCS_DIR: Path = WORKSPACE / "library" / "swarm_docs"
+MVP_ALLOWED_DOC_ROOTS: Tuple[Path, ...] = (
+    MVP_JOURNALS_DIR,
+    MVP_SUGGESTIONS_DIR,
+    MVP_LIBRARY_DOCS_DIR,
 )
 
 _EXECUTION_LOG_STATE: Dict[str, Any] = {"offset": 0, "size": 0, "tasks": {}}
@@ -299,6 +312,176 @@ def _build_enrichment_prompt_context(resident_ctx: Optional["ResidentContext"]) 
     if not sections:
         return None
     return "\n\n".join(sections)
+
+
+def _slugify_token(value: str, fallback: str = "artifact") -> str:
+    token = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "").strip()).strip("._-")
+    return token[:80] if token else fallback
+
+
+def _is_within_any(path: Path, roots: Tuple[Path, ...]) -> bool:
+    for root in roots:
+        try:
+            if path == root or root in path.parents:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _resolve_mvp_markdown_target(task: Dict[str, Any]) -> Tuple[Optional[Path], Optional[str]]:
+    raw_path = (
+        task.get("doc_path")
+        or task.get("artifact_path")
+        or task.get("output_path")
+    )
+    if not raw_path:
+        return None, None
+
+    try:
+        resolved = resolve_mutable_path(str(raw_path), cwd=WORKSPACE)
+    except ValueError:
+        return None, "doc target escapes mutable workspace"
+
+    if resolved.suffix.lower() != ".md":
+        return None, "doc target must end with .md"
+
+    allowed_roots = tuple(root.resolve() for root in MVP_ALLOWED_DOC_ROOTS)
+    resolved_rooted = resolved.resolve()
+    if not _is_within_any(resolved_rooted, allowed_roots):
+        return None, "doc target must stay within markdown artifact roots"
+
+    return resolved_rooted, None
+
+
+def _format_markdown_record(
+    *,
+    task_id: str,
+    title: str,
+    prompt: str,
+    result: str,
+    timestamp: datetime,
+    identity_id: str,
+    identity_name: str,
+) -> str:
+    iso = timestamp.isoformat()
+    lines = [
+        f"# {title}",
+        "",
+        f"- generated_at: {iso}",
+        f"- task_id: {task_id}",
+        f"- identity_id: {identity_id}",
+        f"- identity_name: {identity_name}",
+        "",
+        "## Prompt",
+        "",
+        prompt.strip() if prompt.strip() else "_none_",
+        "",
+        "## Suggestion",
+        "",
+        result.strip(),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _persist_mvp_markdown_artifacts(
+    task: Dict[str, Any],
+    result_summary: str,
+    resident_ctx: Optional["ResidentContext"],
+) -> Dict[str, Any]:
+    if not MVP_DOCS_ONLY_MODE:
+        return {"enabled": False}
+
+    result_text = str(result_summary or "").strip()
+    if not result_text:
+        return {"enabled": True, "written": False, "reason": "empty_result"}
+
+    now = datetime.now(timezone.utc)
+    task_id = str(task.get("id") or "task").strip() or "task"
+    prompt = str(_resolve_task_prompt(task) or "").strip()
+
+    identity = getattr(resident_ctx, "identity", None) if resident_ctx else None
+    identity_id = str(getattr(identity, "identity_id", "")).strip() or "resident_unknown"
+    identity_name = str(getattr(identity, "name", "")).strip() or identity_id
+    identity_slug = _slugify_token(identity_id, fallback="resident")
+    task_slug = _slugify_token(task_id, fallback="task")
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    date_label = now.strftime("%Y-%m-%d")
+
+    MVP_JOURNALS_DIR.mkdir(parents=True, exist_ok=True)
+    MVP_SUGGESTIONS_DIR.mkdir(parents=True, exist_ok=True)
+    MVP_LIBRARY_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+    journal_path = MVP_JOURNALS_DIR / f"{identity_slug}_{date_label}.md"
+    journal_entry = _format_markdown_record(
+        task_id=task_id,
+        title=f"Journal Entry: {task_id}",
+        prompt=prompt,
+        result=result_text,
+        timestamp=now,
+        identity_id=identity_id,
+        identity_name=identity_name,
+    )
+
+    try:
+        with open(journal_path, "a", encoding="utf-8") as jf:
+            if journal_path.exists() and journal_path.stat().st_size > 0:
+                jf.write("\n---\n\n")
+            jf.write(journal_entry)
+    except OSError as exc:
+        return {
+            "enabled": True,
+            "written": False,
+            "reason": f"journal_write_failed:{exc}",
+        }
+
+    doc_target, target_error = _resolve_mvp_markdown_target(task)
+    doc_action = "created"
+    doc_path = None
+    if doc_target is None:
+        doc_target = MVP_SUGGESTIONS_DIR / f"{stamp}_{task_slug}.md"
+    else:
+        doc_action = "updated" if doc_target.exists() else "created"
+        doc_target.parent.mkdir(parents=True, exist_ok=True)
+
+    suggestion_doc = _format_markdown_record(
+        task_id=task_id,
+        title=f"Suggestion: {task_id}",
+        prompt=prompt,
+        result=result_text,
+        timestamp=now,
+        identity_id=identity_id,
+        identity_name=identity_name,
+    )
+    edit_mode = str(task.get("doc_edit_mode") or "overwrite").strip().lower()
+    try:
+        if edit_mode == "append" and doc_target.exists():
+            with open(doc_target, "a", encoding="utf-8") as df:
+                df.write("\n\n---\n\n")
+                df.write(suggestion_doc)
+        else:
+            with open(doc_target, "w", encoding="utf-8") as df:
+                df.write(suggestion_doc)
+        doc_path = str(doc_target)
+    except OSError as exc:
+        return {
+            "enabled": True,
+            "written": False,
+            "reason": f"doc_write_failed:{exc}",
+            "journal_path": str(journal_path),
+            "doc_target_error": target_error,
+        }
+
+    return {
+        "enabled": True,
+        "written": True,
+        "journal_path": str(journal_path),
+        "doc_path": doc_path,
+        "doc_action": doc_action,
+        "doc_edit_mode": edit_mode,
+        "doc_target_error": target_error,
+    }
 
 
 
@@ -1566,6 +1749,14 @@ def execute_task(
         enrichment_prompt = _build_enrichment_prompt_context(resident_ctx)
         if enrichment_prompt:
             prompt = f"{prompt}\n\n{enrichment_prompt}"
+        if MVP_DOCS_ONLY_MODE:
+            prompt = (
+                "MVP MODE: You are currently limited to documentation artifacts.\n"
+                "- Do NOT perform direct code changes.\n"
+                "- Produce markdown proposals, plans, or review notes.\n"
+                "- Prefer concrete change suggestions and acceptance criteria.\n\n"
+                f"{prompt}"
+            )
 
     if prompt and mode != "local" and not command and WORKER_TOOL_ROUTER is not None:
         try:
@@ -1636,6 +1827,7 @@ def execute_task(
             result = response.json()
             api_safety_report = result.get("safety_report")
             result_summary = result.get("result", "Task completed")
+            markdown_artifacts = _persist_mvp_markdown_artifacts(task, result_summary, resident_ctx)
             checkpoint_sha = None
             if WORKER_MUTABLE_VCS is not None:
                 try:
@@ -1656,6 +1848,7 @@ def execute_task(
                 "safety_passed": bool((api_safety_report or safety_report).get("passed", True)),
                 "safety_report": api_safety_report or safety_report,
                 "mutable_checkpoint": checkpoint_sha,
+                "mvp_markdown_artifacts": markdown_artifacts,
                 **tool_route_info,
             }
 

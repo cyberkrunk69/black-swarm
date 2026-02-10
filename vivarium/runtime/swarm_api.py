@@ -72,24 +72,15 @@ LOCAL_COMMAND_ALLOWLIST = {
 }
 
 LOCAL_GIT_SUBCOMMAND_ALLOWLIST = {
-    "add",
-    "branch",
-    "checkout",
-    "commit",
     "diff",
-    "fetch",
     "log",
     "ls-remote",
-    "pull",
-    "push",
     "remote",
-    "reset",
-    "restore",
     "rev-parse",
     "show",
     "status",
 }
-GIT_NETWORK_SUBCOMMANDS = {"fetch", "pull", "push", "ls-remote"}
+GIT_NETWORK_SUBCOMMANDS = {"ls-remote"}
 
 LOCAL_COMMAND_DENYLIST = [
     (re.compile(r"\bcurl\b[^|]*\|\s*(bash|sh)\b", re.IGNORECASE), "piping curl output into shell"),

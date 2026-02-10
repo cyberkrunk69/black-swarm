@@ -290,3 +290,113 @@ def test_worker_execute_task_injects_enrichment_context(monkeypatch):
     assert "WAKEUP" in rendered_prompt
     assert "MORNING_MESSAGES" in rendered_prompt
     assert "ENRICHMENT_CONTEXT" in rendered_prompt
+
+
+def test_worker_execute_task_persists_mvp_markdown_artifacts(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "result": "## Proposed Changes\n\n- Add clearer UI event timeline\n- Keep this as docs-only MVP",
+                "model": "llama-3.1-8b-instant",
+                "safety_report": {"passed": True},
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json, headers=None):
+            captured["url"] = url
+            captured["payload"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    class _StubResidentContext:
+        resident_id = "resident_docs"
+
+        class _Identity:
+            identity_id = "identity_docs"
+            name = "Docsmith"
+
+        identity = _Identity()
+
+        @staticmethod
+        def apply_to_prompt(prompt: str) -> str:
+            return prompt
+
+    journals_dir = tmp_path / ".swarm" / "journals"
+    suggestions_dir = tmp_path / ".swarm" / "suggestions"
+    library_docs_dir = tmp_path / "library" / "swarm_docs"
+
+    monkeypatch.setattr(worker, "WORKER_INTENT_GATEKEEPER", None)
+    monkeypatch.setattr(worker, "WORKER_TOOL_ROUTER", None)
+    monkeypatch.setattr(worker, "WORKER_ENRICHMENT", None)
+    monkeypatch.setattr(worker, "WORKER_MUTABLE_VCS", None)
+    monkeypatch.setattr(worker, "MVP_DOCS_ONLY_MODE", True)
+    monkeypatch.setattr(worker, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(worker, "MVP_JOURNALS_DIR", journals_dir)
+    monkeypatch.setattr(worker, "MVP_SUGGESTIONS_DIR", suggestions_dir)
+    monkeypatch.setattr(worker, "MVP_LIBRARY_DOCS_DIR", library_docs_dir)
+    monkeypatch.setattr(
+        worker,
+        "MVP_ALLOWED_DOC_ROOTS",
+        (journals_dir, suggestions_dir, library_docs_dir),
+    )
+    monkeypatch.setattr(
+        worker,
+        "resolve_mutable_path",
+        lambda path_token, cwd=None: (
+            Path(path_token).resolve()
+            if Path(path_token).is_absolute()
+            else (Path(cwd or tmp_path) / path_token).resolve()
+        ),
+    )
+    monkeypatch.setattr(worker, "validate_model_id", lambda _model: None)
+    monkeypatch.setattr(
+        worker,
+        "_run_worker_safety_check",
+        lambda task_id, prompt, command, mode: (
+            True,
+            {"passed": True, "task_id": task_id, "checks": {}},
+        ),
+    )
+    monkeypatch.setattr(worker.httpx, "Client", _FakeClient)
+
+    result = worker.execute_task(
+        {
+            "id": "task_docs_only",
+            "prompt": "Draft an MVP UI plan without making code changes.",
+            "mode": "llm",
+            "model": "llama-3.1-8b-instant",
+            "doc_path": "library/swarm_docs/mvp_ui_plan.md",
+        },
+        api_endpoint="http://127.0.0.1:8420",
+        resident_ctx=_StubResidentContext(),
+    )
+
+    assert result["status"] == "completed"
+    assert "MVP MODE:" in captured["payload"]["prompt"]
+    artifacts = result["mvp_markdown_artifacts"]
+    assert artifacts["written"] is True
+    assert artifacts["doc_path"].endswith("library/swarm_docs/mvp_ui_plan.md")
+
+    doc_path = Path(artifacts["doc_path"])
+    assert doc_path.exists()
+    content = doc_path.read_text(encoding="utf-8")
+    assert "Proposed Changes" in content
+
+    journal_path = Path(artifacts["journal_path"])
+    assert journal_path.exists()
+    journal_content = journal_path.read_text(encoding="utf-8")
+    assert "Journal Entry: task_docs_only" in journal_content

@@ -49,6 +49,9 @@ def test_worker_execute_task_blocks_when_safety_fails(monkeypatch, tmp_path):
 
 def test_local_command_policy_allowlist_and_denylist():
     assert swarm._validate_local_command("git status") is None
+    git_write_error = swarm._validate_local_command("git commit -m test")
+    assert git_write_error is not None
+    assert "subcommand" in git_write_error.lower()
 
     python_error = swarm._validate_local_command("python3 -V")
     assert python_error is not None
