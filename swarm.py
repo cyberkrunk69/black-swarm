@@ -30,7 +30,7 @@ from vivarium.runtime.config import (
 from vivarium.runtime.runtime_contract import normalize_queue, normalize_task
 from vivarium.runtime.safety_gateway import SafetyGateway
 from vivarium.runtime.secure_api_wrapper import SecureAPIWrapper, create_admin_context
-from utils import read_json, write_json
+from vivarium.utils import read_json, write_json
 from vivarium.runtime.vivarium_scope import (
     AUDIT_ROOT,
     MUTABLE_QUEUE_FILE,

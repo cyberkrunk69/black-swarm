@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 
 # Import skill registry for semantic search
-from skills.skill_registry import SkillRegistry, retrieve_skill, compose_skills, get_skill
+from vivarium.skills.skill_registry import SkillRegistry, retrieve_skill, compose_skills, get_skill
 
 # Import Groq for fast routing decisions
 try:

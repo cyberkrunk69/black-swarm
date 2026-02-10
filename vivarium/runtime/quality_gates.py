@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from utils import read_json, write_json, get_timestamp
+from vivarium.utils import read_json, write_json, get_timestamp
 
 
 DEFAULT_GATES = {"unit": "pending", "integration": "pending", "e2e": "pending"}

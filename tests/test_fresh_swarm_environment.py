@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from physics import SwarmWorldControls
-from swarm_environment import FreshSwarmEnvironment
+from vivarium.physics import SwarmWorldControls
+from vivarium.swarm_environment import FreshSwarmEnvironment
 
 
 def test_bootstrap_creates_fresh_layout(tmp_path: Path):

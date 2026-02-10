@@ -2,7 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from physics import SWARM_WORLD_PHYSICS, SwarmWorldControls
+from vivarium.physics import SWARM_WORLD_PHYSICS, SwarmWorldControls
 
 
 def test_world_physics_is_immutable():

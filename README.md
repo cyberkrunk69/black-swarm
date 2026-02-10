@@ -22,8 +22,8 @@ This repo now follows a strict golden-path policy:
 - **no optional detached runner paths**
 - **no compatibility entrypoint surface at root**
 
-- `physics/` - swarm-world invariants + control surface (`world_physics.py`) and shared math utils
-- `swarm_environment/` - fresh environment API for new swarm interaction loops
+- `vivarium/physics/` - swarm-world invariants + control surface (`world_physics.py`) and shared math utils
+- `vivarium/swarm_environment/` - fresh environment API for new swarm interaction loops
 - `vivarium/runtime/` - canonical runtime modules used by root entrypoints (`worker.py`, `swarm.py`, `control_panel.py`)
 - `docs/` - roadmap, architecture notes, and operational playbooks
 
@@ -150,7 +150,7 @@ Important artifacts that existed in history but are absent now:
 
 Historical code-quality signal worth acting on:
 
-- `tool_router.py` expects `SkillRegistry`, `retrieve_skill`, `compose_skills` (now restored in `skills/skill_registry.py`).
+- `tool_router.py` expects `SkillRegistry`, `retrieve_skill`, `compose_skills` (now restored in `vivarium/skills/skill_registry.py`).
 - Canonical `worker.py` now runs tool-first routing before LLM dispatch and logs routing metadata (`tool_route`, `tool_name`, `tool_confidence`).
 - Canonical `worker.py` now performs deterministic Phase 4 intent/decomposition planning for complex prompts, compiling dependency-aware subtasks into `queue.json` before parent execution.
 - Canonical `worker.py` now includes an initial Phase 5 hook: approved under-budget tasks can grant auditable identity rewards via `swarm_enrichment`, with idempotent task+identity reward grants recorded in `.swarm/phase5_reward_ledger.json`.

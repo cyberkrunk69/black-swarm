@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from physics import DEFAULT_WORLD_CONTROLS, SwarmWorldControls
-from swarm_environment.fresh_environment import FreshSwarmEnvironment
+from vivarium.physics import DEFAULT_WORLD_CONTROLS, SwarmWorldControls
+from vivarium.swarm_environment.fresh_environment import FreshSwarmEnvironment
 
 
 def main(argv: list[str] | None = None) -> int:
