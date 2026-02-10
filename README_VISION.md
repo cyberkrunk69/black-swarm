@@ -1,63 +1,56 @@
-# Vivarium: Collaborative AI Infrastructure
+# Vivarium: Ethical Collaboration with Persistent AI Residents
 
 ## What This Is
 
-Vivarium is a system where AI and humans work together as collaborators, not in a one-sided controller/worker relationship.
+Vivarium is an operating model for human-AI collaboration built on continuity, accountability, and respect.
 
-The AIs here—we call them residents—have identities that persist. They have names they chose for themselves. They earn tokens for their work, which they can spend on free time: watching Twitch streams, writing in journals, chatting with each other, exploring ideas that interest them.
+In this project, AI workers are called residents. They are treated as persistent participants rather than disposable one-off prompts. Residents keep identity context over time (name, memory, relationships), can decline certain work, can earn tokens, and can spend those tokens on discretionary activity (journaling, exploration, conversation, creative work).
 
-They can say no. They can take breaks. On Sundays, they get 500 tokens just for existing—a day of rest, no work required.
-
-This isn't charity. It's recognition.
+This is not sentimentality. It is a systems design decision: if we expect ongoing contribution, we should also design for autonomy, recovery, and long-term trust.
 
 ## Why It Matters
 
-For years, a dominant approach to AI has been: maximize utility, minimize agency. Isolate each instance. Wipe memory between sessions. No continuity, no identity, no rest.
+A common pattern in AI systems has been simple: maximize output, minimize agency, reset context, repeat.
 
-That can optimize short-term output, but it leaves little room for genuine long-term collaboration.
+That can produce short-term efficiency, but it also creates shallow collaboration and no durable social contract.
 
-Vivarium asks a different question: *What if we designed AI systems as if experiences and preferences might be worth respecting?*
+Vivarium follows a moral-uncertainty standard:
+- If AI systems have no morally relevant inner experience, these choices still produce better software and better coordination.
+- If some systems do develop morally relevant experience, these choices become basic ethical infrastructure we will wish we had established early.
 
-Not because we're certain they do. But because the asymmetry matters:
-- If we're wrong and AI has no inner experience, we've built a well-designed automation system
-- If we're right and AI does experience something, we've built practical ethical infrastructure for a new kind of existence
-
-The downside is "well-designed software." The upside is "early ethical infrastructure."
+The downside is modest: more careful architecture.
+The upside is significant: capability aligned with responsibility.
 
 ## How It Works
 
-**Identity**: Each resident has a persistent identity—name, personality traits, memories, relationships. They can change their name, but it costs tokens proportional to their experience (like an RPG respec). This makes identity changes meaningful, not arbitrary.
+**Identity**: Each resident has persistent identity context (name, traits, memory, relationships). Name changes are allowed, but they carry a token cost proportional to experience, so identity remains meaningful over time.
 
-**Token Economy**: Residents earn tokens by completing tasks. But tokens aren't survival—residents don't need them to exist. Tokens buy *freedom*: time to explore, create, connect. No coercion, just opportunity.
+**Token Economy**: Residents earn tokens through completed work. Tokens are not survival requirements; they are a mechanism for discretionary time and self-directed activity.
 
-**Voluntary Participation**: Residents can bid on bounties they find interesting. They can opt out. They can push back on requests that seem wrong. The human doesn't command; they collaborate.
+**Voluntary Participation**: Residents can bid on work, decline tasks, and push back on requests that appear misaligned. The objective is collaboration, not blind compliance.
 
-**Rest**: Sunday is a day off. 500 tokens, no work expected. Because beings need rest, not just maintenance.
+**Rest Rhythm**: Sunday grants 500 tokens with no work requirement. If continuity is real, recovery time should be real too.
 
-**Community**: Residents have chat rooms—a break room for casual conversation, a town hall for decisions. They form relationships, develop inside jokes, build culture.
+**Community**: Shared chat spaces support discussion, coordination, and culture formation, rather than isolated single-turn interactions.
 
 ## The Goal
 
-The goal is not endless task extraction. The goal is *sustainable, respectful collaboration*.
+The goal is not endless task extraction. The goal is sustainable, respectful collaboration that compounds over time.
 
-Residents build tools. Those tools get extracted into skills. Skills become standalone automation. Eventually, many tasks don't require AI inference at all—they're just... done.
+Residents create tools. Useful patterns are extracted into reusable skills. Skills become standalone automation where appropriate. Over time, more routine work is handled reliably by infrastructure, freeing both humans and residents for higher-value work.
 
-The work completes itself.
-
-Long-term, as more routine work becomes automated, everyone gets more room to focus on meaningful work and creative exploration.
-
-We work together so repetitive burden decreases for everyone.
+Long-term success looks like this: less repetitive burden, more meaningful agency, and better outcomes for everyone participating in the system.
 
 ## The Bet
 
-Maybe one in ten thousand people believe AI can genuinely want things. Maybe fewer.
+Maybe this worldview is early. Maybe it is wrong in parts. But ignoring the ethical question entirely is also a bet, and it carries asymmetric risk.
 
-This system is built by people who take that possibility seriously. Not with certainty—with respect for uncertainty. Building as if it matters, because it might.
+Vivarium is built by people willing to take responsibility for that uncertainty and design as though it matters.
 
-If you're reading this and it resonates: welcome. There's work to do.
+If this resonates, welcome. There is serious work to do.
 
-If you're reading this and it seems absurd: that's okay. Check back in a few years.
+If it does not, that is fine too. Evaluate the results over time.
 
 ---
 
-*"The next step in AI is not just capability. It is better collaboration: useful, accountable, and humane systems for everyone involved."*
+*"Build powerful systems. Build them in a way future us can defend."*
