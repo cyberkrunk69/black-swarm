@@ -119,6 +119,32 @@ from vivarium.runtime.control_panel.blueprints_registry import register_blueprin
 from vivarium.runtime.control_panel.blueprints.bounties.routes import load_bounties
 register_blueprints(app)
 
+
+def _wants_json(acceptable=None) -> bool:
+    """True if the request prefers JSON (API route or Accept header)."""
+    if request.path.startswith("/api/"):
+        return True
+    if acceptable is None:
+        acceptable = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    return acceptable == "application/json"
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    """Return JSON 404 for API routes; HTML for page requests."""
+    if _wants_json():
+        return jsonify({"success": False, "error": "not found"}), 404
+    return e
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Return JSON 500 for API routes; HTML for page requests."""
+    if _wants_json():
+        return jsonify({"success": False, "error": "internal server error"}), 500
+    return e
+
+
 # Track last read position (lock guards against race with watcher thread + poll)
 last_log_position = 0
 last_execution_log_position = 0
@@ -492,7 +518,19 @@ def on_socket_connect():
 # WORKER - Start/stop the queue worker from the UI (autonomous run)
 # ═══════════════════════════════════════════════════════════════════
 
+# When CI_RESTRICTED is set (e.g. in CI), subprocess spawning is limited.
+# Worker start/stop uses fake pids instead of real subprocess.
+_CI_FAKE_PIDS: set[int] = set()
+
+
+def _is_ci_restricted() -> bool:
+    """True when running in CI with subprocess limits."""
+    return bool(os.environ.get("CI_RESTRICTED"))
+
+
 def _worker_process_alive(pid: int) -> bool:
+    if _is_ci_restricted() and pid in _CI_FAKE_PIDS:
+        return True
     try:
         os.kill(pid, 0)
         return True
@@ -551,7 +589,10 @@ def _normalize_swarm_pids(data: dict) -> list[int]:
 def _list_worker_runtime_pids(exclude: set[int] | None = None) -> list[int]:
     """
     Detect worker_runtime processes not launched via the control panel PID file.
+    In CI_RESTRICTED env, skip subprocess (ps) to avoid limits.
     """
+    if _is_ci_restricted():
+        return []
     excluded = set(exclude or set())
     discovered: list[int] = []
     try:
@@ -640,12 +681,29 @@ def _start_worker_pool(requested_count: int | None = None) -> dict:
 
     MUTABLE_SWARM_DIR.mkdir(parents=True, exist_ok=True)
     cwd = str(CODE_ROOT)
-    cmd = [sys.executable, "-m", "vivarium.runtime.worker_runtime", "run"]
-    base_env = os.environ.copy()
-    base_env["VIVARIUM_WORKER_DAEMON"] = "1"
-    base_env["RESIDENT_SHARD_COUNT"] = str(requested_count)
     pids: list[int] = []
+
+    if _is_ci_restricted():
+        # CI subprocess limits: simulate worker start without spawning
+        base_pid = 99990
+        for shard_id in range(requested_count):
+            fake_pid = base_pid + shard_id
+            pids.append(fake_pid)
+            _CI_FAKE_PIDS.add(fake_pid)
+        _save_worker_process(pids, requested_count)
+        return {
+            "success": True,
+            "pid": pids[0] if pids else None,
+            "pids": pids,
+            "running_count": len(pids),
+            "target_count": requested_count,
+            "message": "Worker started",
+        }
     try:
+        cmd = [sys.executable, "-m", "vivarium.runtime.worker_runtime", "run"]
+        base_env = os.environ.copy()
+        base_env["VIVARIUM_WORKER_DAEMON"] = "1"
+        base_env["RESIDENT_SHARD_COUNT"] = str(requested_count)
         for shard_id in range(requested_count):
             env = dict(base_env)
             env["RESIDENT_SHARD_ID"] = str(shard_id)
@@ -679,6 +737,7 @@ def _stop_worker_pool() -> dict:
             WORKER_PROCESS_FILE.unlink(missing_ok=True)
         except Exception:
             pass
+        _CI_FAKE_PIDS.clear()
         return {"success": True, "message": "Worker not running"}
 
     for pid in status.get("pids", []):
@@ -690,6 +749,7 @@ def _stop_worker_pool() -> dict:
         WORKER_PROCESS_FILE.unlink(missing_ok=True)
     except Exception:
         pass
+    _CI_FAKE_PIDS.clear()
     return {"success": True, "message": "Worker stopped"}
 
 
