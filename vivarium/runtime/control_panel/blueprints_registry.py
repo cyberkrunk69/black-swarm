@@ -7,7 +7,9 @@ BLUEPRINT_SPECS: list[tuple] = []
 from vivarium.runtime.control_panel.blueprints.identities import identities_bp
 from vivarium.runtime.control_panel.blueprints.logs import logs_bp
 from vivarium.runtime.control_panel.blueprints.messages import messages_bp
+from vivarium.runtime.control_panel.blueprints.spawner import spawner_bp
 
 BLUEPRINT_SPECS.append((identities_bp, ""))
 BLUEPRINT_SPECS.append((messages_bp, ""))
 BLUEPRINT_SPECS.append((logs_bp, ""))
+BLUEPRINT_SPECS.append((spawner_bp, ""))
