@@ -112,6 +112,11 @@ Canonical entrypoints:
 - `vivarium/runtime/swarm_api.py`
 - `vivarium/runtime/control_panel_app.py`
 
+Diagram source workflow:
+
+- editable source: `docs/assets/diagrams/src/*.drawio`
+- export/process notes: `docs/assets/diagrams/README.md`
+
 ### System Design (MVP Runtime)
 
 Static diagram (SVG, committed to repo for deterministic GitHub rendering):
