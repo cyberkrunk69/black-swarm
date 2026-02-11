@@ -57,7 +57,7 @@ jobs:
             -v \
             --timeout=30 \
             --tb=short \
-            --cov=vivarium.runtime.control_panel \
+            --cov=vivarium/runtime/control_panel \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=50

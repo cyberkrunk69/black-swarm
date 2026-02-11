@@ -1,5 +1,3 @@
-"""Force numpy load before coverage tracing to avoid "cannot load module more than once per process"."""
-import numpy  # noqa: F401 - early load for pytest-cov
 import pytest
 import re
 import sys
