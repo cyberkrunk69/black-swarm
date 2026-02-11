@@ -701,6 +701,7 @@ class EnrichmentSystem:
     ) -> str:
         """Build compact cross-room discussion snapshot for prompt injection."""
         rows: List[str] = []
+        room_recent_samples: List[str] = []
         total_messages = 0
         total_self_messages = 0
 
@@ -713,9 +714,9 @@ class EnrichmentSystem:
             self_count = sum(1 for msg in messages if str(msg.get("author_id") or "") == str(identity_id))
             total_self_messages += self_count
             participants = {
-                str(msg.get("author_id") or msg.get("author_name") or "unknown").strip()
+                str(msg.get("author_name") or msg.get("author_id") or "unknown").strip()
                 for msg in messages
-                if str(msg.get("author_id") or msg.get("author_name") or "").strip()
+                if str(msg.get("author_name") or msg.get("author_id") or "").strip()
             }
             latest = messages[-1] if messages else {}
             latest_author = str(latest.get("author_name") or latest.get("author_id") or "unknown").strip()
@@ -724,6 +725,18 @@ class EnrichmentSystem:
                 f"- {room}: msgs={len(messages)}, peers={len(participants)}, "
                 f"mine={self_count}, latest={latest_author}@{latest_ts}"
             )
+            sample_count = max(1, min(int(limit_per_room), 2))
+            samples: List[str] = []
+            for msg in messages[-sample_count:]:
+                author = str(msg.get("author_name") or msg.get("author_id") or "unknown").strip()
+                text = str(msg.get("content") or "").strip().replace("\n", " ")
+                if not text:
+                    continue
+                if len(text) > 90:
+                    text = text[:87] + "..."
+                samples.append(f"{author}: {text}")
+            if samples:
+                room_recent_samples.append(f"- {room} recent={' | '.join(samples)}")
 
         dm_threads = self.get_direct_threads(identity_id, limit=6)
         dm_count = len(dm_threads)
@@ -746,6 +759,9 @@ class EnrichmentSystem:
             "- Room activity:",
         ]
         lines.extend(rows[:8])
+        if room_recent_samples:
+            lines.append("- Recent message samples:")
+            lines.extend(room_recent_samples[:4])
         if dm_peers:
             lines.append(f"- active_dm_peers={', '.join(dm_peers)}")
         return "\n".join(lines)
