@@ -86,6 +86,7 @@ CREATIVE_SEED_USED_MAX = 5000
 
 # --- MAKE PATHS AVAILABLE TO BLUEPRINTS VIA FLASK CONFIG ---
 app.config.update({
+    'SOCKETIO': socketio,
     'CODE_ROOT': CODE_ROOT,
     'WORKSPACE': WORKSPACE,
     'ACTION_LOG': ACTION_LOG,
@@ -107,11 +108,10 @@ app.config.update({
 # -------------------------------------------------------------
 
 # Register blueprints
-from vivarium.runtime.control_panel.blueprints_registry import BLUEPRINT_SPECS
+from vivarium.runtime.control_panel.blueprints_registry import register_blueprints
+from vivarium.runtime.control_panel.blueprints.stop_toggle import get_stop_status
 
-for bp, url_prefix in BLUEPRINT_SPECS:
-    kwargs = {"url_prefix": url_prefix} if url_prefix else {}
-    app.register_blueprint(bp, **kwargs)
+register_blueprints(app)
 
 # Track last read position (lock guards against race with watcher thread + poll)
 last_log_position = 0
@@ -477,31 +477,6 @@ def get_identities():
     return identities
 
 
-def get_stop_status():
-    """Check if kill switch is engaged."""
-    if KILL_SWITCH.exists():
-        try:
-            with open(KILL_SWITCH) as f:
-                data = json.load(f)
-                return data.get('halt', False)
-        except:
-            pass
-    return False
-
-
-def set_stop_status(stopped: bool):
-    """Set kill switch status."""
-    KILL_SWITCH.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        'halt': stopped,
-        'reason': 'Manual stop from control panel' if stopped else None,
-        'timestamp': datetime.now().isoformat()
-    }
-    with open(KILL_SWITCH, 'w') as f:
-        json.dump(data, f, indent=2)
-    return stopped
-
-
 @app.route('/')
 def index():
     return render_template_string(CONTROL_PANEL_HTML)
@@ -522,20 +497,7 @@ def on_socket_connect():
 
 
 # Identity API routes moved to blueprints/identities/routes.py
-
-
-@app.route('/api/stop_status')
-def api_stop_status():
-    return jsonify({'stopped': get_stop_status()})
-
-
-@app.route('/api/toggle_stop', methods=['POST'])
-def api_toggle_stop():
-    current = get_stop_status()
-    new_status = set_stop_status(not current)
-    socketio.emit('stop_status', {'stopped': new_status})
-    return jsonify({'stopped': new_status})
-
+# Stop toggle routes moved to blueprints/stop_toggle/routes.py
 
 # Spawner routes moved to blueprints/spawner/routes.py
 
@@ -1114,99 +1076,7 @@ def api_set_ui_settings():
     return jsonify({"success": True, **saved})
 
 
-def _reload_groq_runtime_clients() -> None:
-    """Reset Groq client singleton so new key is used immediately."""
-    try:
-        from vivarium.runtime import groq_client
-        groq_client._groq_engine = None
-    except Exception:
-        pass
-
-
-def _persist_groq_api_key(api_key: str) -> None:
-    GROQ_API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GROQ_API_KEY_FILE.write_text(api_key.strip() + "\n", encoding="utf-8")
-    try:
-        os.chmod(GROQ_API_KEY_FILE, 0o600)
-    except OSError:
-        pass
-
-
-def _delete_persisted_groq_api_key() -> None:
-    try:
-        if GROQ_API_KEY_FILE.exists():
-            GROQ_API_KEY_FILE.unlink()
-    except OSError:
-        pass
-
-
-def _load_persisted_groq_api_key() -> str:
-    if not GROQ_API_KEY_FILE.exists():
-        return ""
-    try:
-        return GROQ_API_KEY_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
-
-
-def _ensure_groq_key_loaded() -> dict:
-    live_key = (runtime_config.get_groq_api_key() or "").strip()
-    if live_key:
-        return {"configured": True, "key": live_key, "source": "env"}
-
-    persisted = _load_persisted_groq_api_key()
-    if persisted:
-        runtime_config.set_groq_api_key(persisted)
-        _reload_groq_runtime_clients()
-        return {"configured": True, "key": persisted, "source": "security_file"}
-
-    return {"configured": False, "key": "", "source": None}
-
-
-@app.route('/api/groq_key', methods=['GET'])
-def api_get_groq_key_status():
-    state = _ensure_groq_key_loaded()
-    return jsonify(
-        {
-            "success": True,
-            "configured": state["configured"],
-            "source": state["source"],
-            "masked_key": _mask_secret(state["key"]) if state["configured"] else None,
-        }
-    )
-
-
-@app.route('/api/groq_key', methods=['POST'])
-def api_set_groq_key():
-    data = request.json or {}
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        return jsonify({"success": False, "error": "api_key is required"}), 400
-    if len(api_key) < 16:
-        return jsonify({"success": False, "error": "api_key is too short"}), 400
-    if len(api_key) > 256:
-        return jsonify({"success": False, "error": "api_key is too long"}), 400
-
-    _persist_groq_api_key(api_key)
-    runtime_config.set_groq_api_key(api_key)
-    _reload_groq_runtime_clients()
-    return jsonify(
-        {
-            "success": True,
-            "configured": True,
-            "masked_key": _mask_secret(api_key),
-            "source": "security_file",
-        }
-    )
-
-
-@app.route('/api/groq_key', methods=['DELETE'])
-def api_delete_groq_key():
-    _delete_persisted_groq_api_key()
-    runtime_config.set_groq_api_key(None)
-    _reload_groq_runtime_clients()
-    return jsonify({"success": True, "configured": False})
-
+# [groq_key routes extracted to blueprints/groq_key]
 
 # Human request storage
 HUMAN_REQUEST_FILE = WORKSPACE / ".swarm" / "human_request.json"
