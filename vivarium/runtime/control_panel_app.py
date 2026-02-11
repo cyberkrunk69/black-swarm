@@ -500,9 +500,7 @@ def on_socket_connect():
 # Stop toggle routes moved to blueprints/stop_toggle/routes.py
 
 # Spawner routes moved to blueprints/spawner/routes.py
-
-DEFAULT_RUNTIME_SPEED_SECONDS = max(0.0, _safe_float_env("VIVARIUM_RUNTIME_WAIT_SECONDS", 2.0))
-
+# Runtime speed routes moved to blueprints/runtime_speed/routes.py
 
 # ═══════════════════════════════════════════════════════════════════
 # WORKER - Start/stop the queue worker from the UI (autonomous run)
@@ -603,6 +601,112 @@ def _list_worker_runtime_pids(exclude: set[int] | None = None) -> list[int]:
     return sorted(set(discovered))
 
 
+def _is_worker_running() -> bool:
+    """Return True if the worker pool is running."""
+    return get_worker_status().get("running", False)
+
+
+def _load_worker_process() -> dict:
+    """Return full worker pool status (for blueprint)."""
+    return get_worker_status()
+
+
+def _save_worker_process(pids: list[int], target_count: int) -> None:
+    """Persist worker process PIDs to file."""
+    MUTABLE_SWARM_DIR.mkdir(parents=True, exist_ok=True)
+    data = {
+        "pids": pids,
+        "target_count": target_count,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(WORKER_PROCESS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def _start_worker_pool(requested_count: int | None = None) -> dict:
+    """Start the worker pool. Returns result dict with success/error."""
+    if requested_count is None:
+        requested_count = load_ui_settings().get("resident_count", RESIDENT_COUNT_MIN)
+    try:
+        requested_count = _clamp_int(requested_count, RESIDENT_COUNT_MIN, RESIDENT_COUNT_MAX)
+    except (TypeError, ValueError):
+        requested_count = RESIDENT_COUNT_MIN
+
+    status = get_worker_status()
+    if status["running"]:
+        if (
+            status.get("running_source") == "managed"
+            and not status.get("unmanaged_pids")
+            and int(status.get("target_count", 1)) == requested_count
+        ):
+            return {
+                "success": True,
+                "message": "Worker already running",
+                "pid": status["pid"],
+                "running_count": status.get("running_count", 1),
+                "target_count": requested_count,
+            }
+        for pid in status.get("pids", []):
+            try:
+                os.kill(pid, 15)
+            except (OSError, ProcessLookupError):
+                pass
+
+    MUTABLE_SWARM_DIR.mkdir(parents=True, exist_ok=True)
+    cwd = str(CODE_ROOT)
+    cmd = [sys.executable, "-m", "vivarium.runtime.worker_runtime", "run"]
+    base_env = os.environ.copy()
+    base_env["VIVARIUM_WORKER_DAEMON"] = "1"
+    base_env["RESIDENT_SHARD_COUNT"] = str(requested_count)
+    pids: list[int] = []
+    try:
+        for shard_id in range(requested_count):
+            env = dict(base_env)
+            env["RESIDENT_SHARD_ID"] = str(shard_id)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            pids.append(proc.pid)
+        _save_worker_process(pids, requested_count)
+        return {
+            "success": True,
+            "pid": pids[0] if pids else None,
+            "pids": pids,
+            "running_count": len(pids),
+            "target_count": requested_count,
+            "message": "Worker started",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _stop_worker_pool() -> dict:
+    """Stop the worker pool. Returns result dict."""
+    status = get_worker_status()
+    if not status["running"]:
+        try:
+            WORKER_PROCESS_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {"success": True, "message": "Worker not running"}
+
+    for pid in status.get("pids", []):
+        try:
+            os.kill(pid, 15)
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        WORKER_PROCESS_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return {"success": True, "message": "Worker stopped"}
+
+
 def get_worker_status():
     """Return swarm worker pool status."""
     try:
@@ -667,104 +771,7 @@ def get_worker_status():
     return out
 
 
-@app.route("/api/worker/status")
-def api_worker_status():
-    return jsonify(get_worker_status())
-
-
-@app.route("/api/worker/start", methods=["POST"])
-def api_worker_start():
-    """Start the queue worker as a subprocess so the swarm can run autonomously."""
-    body = request.get_json(force=True, silent=True) or {}
-    requested_count = body.get("resident_count", load_ui_settings().get("resident_count", 1))
-    try:
-        requested_count = _clamp_int(requested_count, RESIDENT_COUNT_MIN, RESIDENT_COUNT_MAX)
-    except (TypeError, ValueError):
-        requested_count = RESIDENT_COUNT_MIN
-
-    status = get_worker_status()
-    if status["running"]:
-        # Only no-op when an already managed pool matches target.
-        # If status is unmanaged/mixed, replace it with managed daemon workers.
-        if (
-            status.get("running_source") == "managed"
-            and not status.get("unmanaged_pids")
-            and int(status.get("target_count", 1)) == requested_count
-        ):
-            return jsonify({
-                "success": True,
-                "message": "Worker already running",
-                "pid": status["pid"],
-                "running_count": status.get("running_count", 1),
-                "target_count": requested_count,
-            })
-        # Reconfigure pool size by stopping old workers first.
-        for pid in status.get("pids", []):
-            try:
-                os.kill(pid, 15)
-            except (OSError, ProcessLookupError):
-                pass
-
-    MUTABLE_SWARM_DIR.mkdir(parents=True, exist_ok=True)
-    cwd = str(CODE_ROOT)
-    cmd = [sys.executable, "-m", "vivarium.runtime.worker_runtime", "run"]
-    base_env = os.environ.copy()
-    base_env["VIVARIUM_WORKER_DAEMON"] = "1"  # run until Stop, don't exit when queue empty
-    base_env["RESIDENT_SHARD_COUNT"] = str(requested_count)
-    pids: list[int] = []
-    try:
-        for shard_id in range(requested_count):
-            env = dict(base_env)
-            env["RESIDENT_SHARD_ID"] = str(shard_id)
-            proc = subprocess.Popen(
-                cmd,
-                cwd=cwd,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            pids.append(proc.pid)
-        data = {
-            "pids": pids,
-            "target_count": requested_count,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }
-        with open(WORKER_PROCESS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        return jsonify({
-            "success": True,
-            "pid": pids[0] if pids else None,
-            "pids": pids,
-            "running_count": len(pids),
-            "target_count": requested_count,
-            "message": "Worker started",
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route("/api/worker/stop", methods=["POST"])
-def api_worker_stop():
-    """Stop the worker subprocess so the user can pause autonomous run."""
-    status = get_worker_status()
-    if not status["running"]:
-        try:
-            WORKER_PROCESS_FILE.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return jsonify({"success": True, "message": "Worker not running"})
-
-    for pid in status.get("pids", []):
-        try:
-            os.kill(pid, 15)  # SIGTERM
-        except (OSError, ProcessLookupError):
-            pass
-    try:
-        WORKER_PROCESS_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
-    return jsonify({"success": True, "message": "Worker stopped"})
+# Worker routes moved to blueprints/worker/routes.py
 
 
 def _stop_workers_for_maintenance(timeout_seconds: float = 3.0) -> dict:
@@ -804,46 +811,6 @@ def _stop_workers_for_maintenance(timeout_seconds: float = 3.0) -> dict:
         "stopped_count": max(0, len(pids) - len(remaining)),
         "remaining_pids": remaining,
     }
-
-
-def get_runtime_speed():
-    """Get current worker-loop wait seconds and resident day length (scaled with speed)."""
-    cycle_seconds = float(resident_onboarding.get_resident_cycle_seconds())
-    cycle_id = int(time.time() // cycle_seconds) if cycle_seconds > 0 else int(time.time())
-    weekday_idx = cycle_id % 7
-    payload = {
-        "wait_seconds": DEFAULT_RUNTIME_SPEED_SECONDS,
-        "updated_at": None,
-        "current_cycle_id": cycle_id,
-        "reference_weekday_index": weekday_idx,
-        "reference_weekday_name": REFERENCE_WEEKDAY_NAMES[weekday_idx],
-    }
-    if not RUNTIME_SPEED_FILE.exists():
-        payload["cycle_seconds"] = round(cycle_seconds, 1)
-        return payload
-    try:
-        with open(RUNTIME_SPEED_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        wait = float(data.get("wait_seconds", DEFAULT_RUNTIME_SPEED_SECONDS))
-        payload["wait_seconds"] = max(0.0, min(300.0, wait))
-        payload["updated_at"] = data.get("updated_at")
-    except Exception:
-        pass
-    payload["cycle_seconds"] = round(cycle_seconds, 1)
-    return payload
-
-
-def save_runtime_speed(wait_seconds: float):
-    """Persist worker-loop wait seconds for auditable pacing."""
-    clamped = max(0.0, min(300.0, float(wait_seconds)))
-    payload = {
-        "wait_seconds": clamped,
-        "updated_at": datetime.now().isoformat(),
-    }
-    RUNTIME_SPEED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(RUNTIME_SPEED_FILE, 'w', encoding='utf-8') as f:
-        json.dump(payload, f, indent=2)
-    return payload
 
 
 def _parse_utc_timestamp(raw: str):
@@ -957,23 +924,6 @@ def _rollback_preview_by_days(days: int) -> dict:
             for cp in affected[-ROLLBACK_AFFECTED_PREVIEW_MAX:]
         ],
     }
-
-
-@app.route('/api/runtime_speed', methods=['GET'])
-def api_get_runtime_speed():
-    return jsonify(get_runtime_speed())
-
-
-@app.route('/api/runtime_speed', methods=['POST'])
-def api_set_runtime_speed():
-    data = request.json or {}
-    raw = data.get("wait_seconds", DEFAULT_RUNTIME_SPEED_SECONDS)
-    try:
-        wait_seconds = float(raw)
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "wait_seconds must be a number"}), 400
-    saved = save_runtime_speed(wait_seconds)
-    return jsonify({"success": True, **saved})
 
 
 @app.route('/api/rollback/preview')

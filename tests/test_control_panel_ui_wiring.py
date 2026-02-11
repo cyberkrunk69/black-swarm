@@ -40,12 +40,13 @@ def _configure_control_panel_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cp.runtime_config, "GROQ_API_KEY_FILE", cp.GROQ_API_KEY_FILE)
     cp.runtime_config.set_groq_api_key(None)
 
-    # Sync paths to app.config so blueprints (e.g. identities) use test paths
+    # Sync paths to app.config so blueprints (e.g. identities, runtime_speed) use test paths
     cp.app.config["WORKSPACE"] = tmp_path
     cp.app.config["ACTION_LOG"] = tmp_path / "action_log.jsonl"
     cp.app.config["EXECUTION_LOG"] = tmp_path / "execution_log.jsonl"
     cp.app.config["IDENTITIES_DIR"] = swarm_dir / "identities"
     cp.app.config["FREE_TIME_BALANCES"] = swarm_dir / "free_time_balances.json"
+    cp.app.config["RUNTIME_SPEED_FILE"] = swarm_dir / "runtime_speed.json"
 
     cp.app.config["TESTING"] = True
     return cp.app.test_client()
