@@ -19,6 +19,7 @@ import hashlib
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -93,6 +94,17 @@ INSIGHTS_SOCIAL_UNREAD_WARN = 5
 CREATIVE_SEED_PATTERN = re.compile(r"^[A-Z]{2}-\d{4}-[A-Z]{2}$")
 CREATIVE_SEED_USED_FILE = MUTABLE_SWARM_DIR / "creative_seed_used.json"
 CREATIVE_SEED_USED_MAX = 5000
+API_AUDIT_LOG_FILE = CODE_ROOT / "api_audit.log"
+MAILBOX_QUESTS_FILE = MUTABLE_SWARM_DIR / "mailbox_quests.json"
+MAILBOX_MESSAGE_BONUS_TOKENS = 8
+MAILBOX_REPLY_BONUS_TOKENS = 12
+QUEST_DEFAULT_BUDGET = 0.20
+QUEST_DEFAULT_UPFRONT_TIP = 10
+QUEST_DEFAULT_COMPLETION_REWARD = 30
+HOT_RELOAD_ENABLED = (
+    os.environ.get("VIVARIUM_HOT_RELOAD", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -345,7 +357,7 @@ CONTROL_PANEL_HTML = '''
         }
 
         body {
-            font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
             background: var(--bg-dark);
             color: var(--text);
             min-height: 100vh;
@@ -611,6 +623,29 @@ CONTROL_PANEL_HTML = '''
             color: var(--teal);
             font-weight: 600;
         }
+        .queue-item .qprompt {
+            margin-top: 0.2rem;
+            line-height: 1.35;
+        }
+        .queue-item .qactions {
+            display: flex;
+            gap: 0.3rem;
+            margin-top: 0.3rem;
+        }
+        .queue-item .qbtn {
+            padding: 0.16rem 0.4rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-hover);
+            color: var(--text);
+            font-size: 0.68rem;
+            cursor: pointer;
+        }
+        .queue-item .qbtn.delete {
+            background: rgba(255, 68, 68, 0.12);
+            border-color: rgba(255, 68, 68, 0.4);
+            color: #ff7d7d;
+        }
         .queue-empty {
             color: var(--text-dim);
             font-size: 0.75rem;
@@ -625,11 +660,39 @@ CONTROL_PANEL_HTML = '''
             border-bottom: 1px solid var(--border);
         }
 
+        .insights-collapsible {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .insights-summary {
+            cursor: pointer;
+            padding: 0.55rem 1rem;
+            list-style: none;
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .insights-summary::after {
+            content: '▼';
+            font-size: 0.65rem;
+            transition: transform 0.2s;
+        }
+
+        .insights-collapsible[open] .insights-summary::after {
+            transform: rotate(180deg);
+        }
+
         .insight-card {
             background: var(--bg-hover);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 0.55rem 0.7rem;
             min-height: 64px;
         }
 
@@ -658,6 +721,32 @@ CONTROL_PANEL_HTML = '''
         .insight-value.warn { color: var(--yellow); }
         .insight-value.bad { color: var(--red); }
         .insight-value.teal { color: var(--teal); }
+
+        .insight-card summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 0.55rem 0.7rem;
+        }
+        .insight-card summary::-webkit-details-marker {
+            display: none;
+        }
+        .insight-card summary::after {
+            content: '+';
+            float: right;
+            color: var(--text-dim);
+            font-weight: 700;
+        }
+        .insight-card[open] summary::after {
+            content: '−';
+        }
+        .insight-detail {
+            border-top: 1px solid var(--border);
+            padding: 0.45rem 0.7rem 0.6rem;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            line-height: 1.35;
+            white-space: pre-line;
+        }
 
         @media (max-width: 1200px) {
             .insights-strip {
@@ -1083,6 +1172,137 @@ CONTROL_PANEL_HTML = '''
             margin-bottom: 0.55rem;
             border-left: 3px solid var(--teal);
         }
+
+        .mailbox-launcher {
+            background: var(--bg-hover);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.35rem 0.65rem;
+            cursor: pointer;
+            font-size: 0.78rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .mailbox-badge {
+            min-width: 1.1rem;
+            height: 1.1rem;
+            border-radius: 999px;
+            background: var(--red);
+            color: #fff;
+            font-size: 0.65rem;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 0.25rem;
+            opacity: 0;
+            transform: scale(0.9);
+            transition: opacity 120ms ease, transform 120ms ease;
+        }
+
+        .mailbox-badge.show {
+            opacity: 1;
+            transform: scale(1);
+            animation: mailboxPulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes mailboxPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.12); }
+            100% { transform: scale(1); }
+        }
+
+        .mailbox-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.82);
+            z-index: 1300;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .mailbox-modal.open {
+            display: flex;
+        }
+
+        .mailbox-phone {
+            width: min(460px, 96vw);
+            height: min(840px, 90vh);
+            background: linear-gradient(180deg, #151a20 0%, #0f1318 100%);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .mailbox-head {
+            padding: 0.7rem 0.85rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .mailbox-threads {
+            padding: 0.6rem 0.75rem;
+            border-bottom: 1px solid var(--border);
+            max-height: 190px;
+            overflow-y: auto;
+        }
+
+        .mailbox-thread-item {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-card);
+            padding: 0.45rem 0.5rem;
+            cursor: pointer;
+            margin-bottom: 0.35rem;
+        }
+
+        .mailbox-thread-item.active {
+            border-color: var(--teal);
+            background: rgba(3, 218, 198, 0.09);
+        }
+
+        .mailbox-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.7rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+
+        .mailbox-msg {
+            max-width: 88%;
+            border-radius: 10px;
+            padding: 0.45rem 0.55rem;
+            font-size: 0.82rem;
+            line-height: 1.35;
+            border: 1px solid var(--border);
+        }
+
+        .mailbox-msg.in {
+            align-self: flex-start;
+            background: var(--bg-card);
+        }
+
+        .mailbox-msg.out {
+            align-self: flex-end;
+            background: rgba(3, 218, 198, 0.12);
+            border-color: rgba(3, 218, 198, 0.35);
+        }
+
+        .mailbox-compose {
+            border-top: 1px solid var(--border);
+            padding: 0.65rem 0.75rem;
+        }
     </style>
 </head>
 <body>
@@ -1101,6 +1321,11 @@ CONTROL_PANEL_HTML = '''
                 Active residents
                 <input type="number" id="residentCount" min="1" max="16" step="1" value="1" onchange="persistUiSettings()">
             </label>
+            <button class="mailbox-launcher" id="mailboxLauncher" onclick="openMailboxModal()" title="Open communication mailbox">
+                <span>📬</span>
+                <span>Mailbox</span>
+                <span id="mailboxUnreadBadge" class="mailbox-badge">0</span>
+            </button>
             <button class="control-btn start" id="workerStartBtn" onclick="startWorker()">Start swarm</button>
             <button class="control-btn stop" id="workerStopBtn" onclick="stopWorker()" style="display:none;">Stop swarm</button>
             <button class="control-btn pause" id="pauseBtn" onclick="togglePause()" disabled style="display:none;">DISABLED</button>
@@ -1129,48 +1354,19 @@ CONTROL_PANEL_HTML = '''
         </div>
     </div>
 
-    <div class="insights-strip">
-        <div class="insight-card">
-            <div class="insight-label">Queue</div>
-            <div class="insight-value teal" id="insightQueueOpen">--</div>
-            <div class="insight-sub" id="insightQueueSub">open / completed / failed</div>
+    <details class="insights-collapsible">
+        <summary class="insights-summary">Stats</summary>
+        <div class="insights-strip" id="insightCards">
+            <details class="insight-card" open>
+                <summary>
+                    <div class="insight-label">Loading</div>
+                    <div class="insight-value">--</div>
+                    <div class="insight-sub">Fetching metrics…</div>
+                </summary>
+                <div class="insight-detail">Insights API is loading.</div>
+            </details>
         </div>
-        <div class="insight-card">
-            <div class="insight-label">Throughput (24h)</div>
-            <div class="insight-value" id="insightThroughput">--</div>
-            <div class="insight-sub" id="insightThroughputSub">completed vs failed</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Quality (24h)</div>
-            <div class="insight-value" id="insightQuality">--</div>
-            <div class="insight-sub" id="insightQualitySub">approval / pending review</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Cost + API (24h)</div>
-            <div class="insight-value" id="insightCost">--</div>
-            <div class="insight-sub" id="insightCostSub">API calls</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Safety + Errors (24h)</div>
-            <div class="insight-value" id="insightSafety">--</div>
-            <div class="insight-sub" id="insightSafetySub">blocked checks / errors</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Social</div>
-            <div class="insight-value" id="insightSocial">--</div>
-            <div class="insight-sub" id="insightSocialSub">unread messages / bounties</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Active Identities (24h)</div>
-            <div class="insight-value" id="insightActors">--</div>
-            <div class="insight-sub" id="insightActorsSub">top actor</div>
-        </div>
-        <div class="insight-card">
-            <div class="insight-label">Swarm Health</div>
-            <div class="insight-value" id="insightHealth">--</div>
-            <div class="insight-sub" id="insightHealthSub">backlog pressure / failure streak</div>
-        </div>
-    </div>
+    </details>
 
     <!-- Slide-out toggle button -->
     <div class="slideout-toggle" onclick="toggleSlideout()">
@@ -1397,6 +1593,24 @@ CONTROL_PANEL_HTML = '''
                         </div>
                         <div id="rollbackStatus" style="font-size: 0.65rem; color: var(--text-dim); margin-bottom: 0.3rem;"></div>
                         <div id="rollbackPreview" style="max-height: 140px; overflow-y: auto; font-size: 0.7rem; color: var(--text-dim);"></div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Collapsible: Fresh Reset -->
+            <details class="sidebar-section">
+                <summary>Fresh Reset</summary>
+                <div class="sidebar-section-content">
+                    <div class="identity-card">
+                        <div style="font-size: 0.68rem; color: var(--text-dim); margin-bottom: 0.35rem;">
+                            Wipe stale runtime state (queue/logs/generated artifacts/transient swarm files) and reset to a clean slate.
+                        </div>
+                        <button onclick="runFreshStateReset()"
+                            style="width: 100%; padding: 0.32rem; background: var(--red); border: none;
+                                   color: white; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;">
+                            Wipe stale runtime state
+                        </button>
+                        <div id="freshResetStatus" style="font-size: 0.65rem; color: var(--text-dim); margin-top: 0.35rem;"></div>
                     </div>
                 </div>
             </details>
@@ -1632,6 +1846,53 @@ CONTROL_PANEL_HTML = '''
         </div>
     </div>
 
+    <div id="mailboxModal" class="mailbox-modal" onclick="handleMailboxBackdrop(event)">
+        <div class="mailbox-phone">
+            <div class="mailbox-head">
+                <div>
+                    <div style="font-size: 0.95rem; color: var(--teal); font-weight: 700;">Communication Mailbox</div>
+                    <div id="mailboxSubhead" style="font-size: 0.68rem; color: var(--text-dim);">Phone-style async chat</div>
+                </div>
+                <button class="chat-room-open-btn" style="background: var(--red); color: white;" onclick="closeMailboxModal()">Close</button>
+            </div>
+            <div id="mailboxThreads" class="mailbox-threads">
+                <p style="color: var(--text-dim); font-size: 0.75rem;">Loading threads...</p>
+            </div>
+            <div id="mailboxMessages" class="mailbox-messages">
+                <p style="color: var(--text-dim); font-size: 0.75rem;">Select a thread to start chatting.</p>
+            </div>
+            <div class="mailbox-compose">
+                <div style="display: flex; gap: 0.4rem; margin-bottom: 0.35rem;">
+                    <select id="mailboxTarget" style="flex: 1; padding: 0.32rem; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); border-radius: 5px; font-size: 0.74rem;">
+                        <option value="">Target resident (optional)</option>
+                    </select>
+                    <button class="chat-room-open-btn" onclick="sendMailboxMessage()">Send</button>
+                </div>
+                <textarea id="mailboxComposer" placeholder="Send message to a resident (or broadcast if target is blank)..."
+                    style="width: 100%; height: 72px; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.45rem; border-radius: 6px; font-size: 0.78rem; resize: vertical;"></textarea>
+                <div style="margin-top: 0.55rem; padding-top: 0.55rem; border-top: 1px dashed var(--border);">
+                    <div style="font-size: 0.72rem; color: var(--yellow); margin-bottom: 0.25rem;">Assign Quest</div>
+                    <input id="questTitleInput" type="text" placeholder="Quest title"
+                        style="width: 100%; margin-bottom: 0.25rem; padding: 0.34rem; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); border-radius: 5px; font-size: 0.73rem;">
+                    <textarea id="questPromptInput" placeholder="Quest objective for selected resident..."
+                        style="width: 100%; height: 60px; margin-bottom: 0.3rem; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.4rem; border-radius: 6px; font-size: 0.75rem; resize: vertical;"></textarea>
+                    <div style="display:flex; gap:0.35rem; margin-bottom:0.3rem;">
+                        <input id="questBudgetInput" type="number" min="0.01" step="0.01" value="0.20"
+                            title="Quest token budget ($)" style="width:33%; padding:0.32rem; background:var(--bg-dark); border:1px solid var(--border); color:var(--text); border-radius:5px; font-size:0.72rem;">
+                        <input id="questTipInput" type="number" min="0" step="1" value="10"
+                            title="Upfront free-time tip tokens" style="width:33%; padding:0.32rem; background:var(--bg-dark); border:1px solid var(--border); color:var(--text); border-radius:5px; font-size:0.72rem;">
+                        <input id="questRewardInput" type="number" min="0" step="1" value="30"
+                            title="Completion reward tokens (manual approval)" style="width:34%; padding:0.32rem; background:var(--bg-dark); border:1px solid var(--border); color:var(--text); border-radius:5px; font-size:0.72rem;">
+                    </div>
+                    <button class="chat-room-open-btn" style="width:100%;" onclick="createMailboxQuest()">Assign Quest</button>
+                    <div id="questStatus" style="font-size: 0.68rem; color: var(--text-dim); margin-top: 0.25rem;"></div>
+                    <div id="questProgressContainer" style="max-height: 150px; overflow-y: auto; margin-top: 0.4rem;"></div>
+                </div>
+                <div id="mailboxStatus" style="font-size: 0.68rem; color: var(--text-dim); margin-top: 0.3rem;"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         let entryCount = 0;
@@ -1639,6 +1900,10 @@ CONTROL_PANEL_HTML = '''
         let connectedAt = Date.now();
         let currentFilter = 'all';
         const seenLogKeys = new Set();
+        let mailboxData = { threads: [], thread_messages: {}, identities: [], unread_count: 0 };
+        let activeMailboxThreadId = null;
+        let mailboxPoller = null;
+        let mailboxQuests = [];
 
         // Update connected time
         setInterval(() => {
@@ -1655,6 +1920,7 @@ CONTROL_PANEL_HTML = '''
             loadRuntimeSpeed();
             loadGroqKeyStatus();
             loadSwarmInsights();
+            loadMailboxData();
             previewRollbackByDays();
         });
 
@@ -2213,6 +2479,51 @@ CONTROL_PANEL_HTML = '''
             });
         }
 
+        function runFreshStateReset() {
+            if (!confirm('Wipe stale runtime state now? This clears queue, logs, generated artifacts, and transient swarm files.')) {
+                return;
+            }
+            const statusEl = document.getElementById('freshResetStatus');
+            if (statusEl) {
+                statusEl.textContent = 'Resetting...';
+                statusEl.style.color = 'var(--orange)';
+            }
+            fetch('/api/system/fresh_reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            })
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status, data }) => {
+                if (status >= 400 || !data.success) {
+                    if (statusEl) {
+                        statusEl.textContent = data.error || 'Fresh reset failed';
+                        statusEl.style.color = 'var(--red)';
+                    }
+                    return;
+                }
+                if (statusEl) {
+                    statusEl.textContent = 'Fresh reset complete';
+                    statusEl.style.color = 'var(--green)';
+                }
+                loadQueueView();
+                loadSwarmInsights();
+                loadArtifacts();
+                updateLogEmptyState();
+                const logContainer = document.getElementById('logContainer');
+                if (logContainer) {
+                    logContainer.innerHTML = '<div id="logEmptyState" class="log-empty">Waiting for log entries...</div>';
+                }
+                const entryCount = document.getElementById('entryCount');
+                if (entryCount) entryCount.textContent = '0';
+            })
+            .catch(() => {
+                if (statusEl) {
+                    statusEl.textContent = 'Fresh reset request failed';
+                    statusEl.style.color = 'var(--red)';
+                }
+            });
+        }
+
         function addTaskFromUI() {
             const taskIdEl = document.getElementById('addTaskId');
             const instructionEl = document.getElementById('addTaskInstruction');
@@ -2239,7 +2550,54 @@ CONTROL_PANEL_HTML = '''
             .catch(() => alert('Failed to add task'));
         }
 
-        function renderQueueList(containerId, items, emptyText) {
+        function editQueueTask(taskId) {
+            const nextId = prompt('New task ID (leave unchanged for same ID):', taskId || '');
+            if (nextId === null) return;
+            const nextInstruction = prompt('Updated task instruction/prompt:');
+            if (nextInstruction === null) return;
+            if (!String(nextInstruction || '').trim()) {
+                alert('Task prompt cannot be empty.');
+                return;
+            }
+            fetch('/api/queue/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    new_task_id: String(nextId || '').trim(),
+                    instruction: String(nextInstruction || '').trim(),
+                }),
+            })
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status, data }) => {
+                if (status >= 400 || !data.success) {
+                    alert(data.error || 'Failed to update task');
+                    return;
+                }
+                loadQueueView();
+            })
+            .catch(() => alert('Failed to update task'));
+        }
+
+        function deleteQueueTask(taskId) {
+            if (!confirm('Delete task "' + taskId + '" from queue?')) return;
+            fetch('/api/queue/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: taskId }),
+            })
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status, data }) => {
+                if (status >= 400 || !data.success) {
+                    alert(data.error || 'Failed to delete task');
+                    return;
+                }
+                loadQueueView();
+            })
+            .catch(() => alert('Failed to delete task'));
+        }
+
+        function renderQueueList(containerId, items, emptyText, mode='readonly') {
             const container = document.getElementById(containerId);
             if (!container) return;
             if (!Array.isArray(items) || items.length === 0) {
@@ -2250,7 +2608,13 @@ CONTROL_PANEL_HTML = '''
                 const id = (item && item.id) ? String(item.id) : '(no-id)';
                 const prompt = (item && item.prompt) ? String(item.prompt) : '';
                 const shortPrompt = prompt.length > 120 ? prompt.slice(0, 120) + '…' : prompt;
-                return '<div class="queue-item"><div class="qid">' + id + '</div><div>' + shortPrompt + '</div></div>';
+                const editBtn = mode === 'open'
+                    ? '<button class="qbtn" onclick="editQueueTask(\\'' + id.replace(/'/g, "\\'") + '\\')">Edit</button>'
+                    : '';
+                const deleteBtn = mode !== 'readonly'
+                    ? '<button class="qbtn delete" onclick="deleteQueueTask(\\'' + id.replace(/'/g, "\\'") + '\\')">Delete</button>'
+                    : '';
+                return '<div class="queue-item"><div class="qid">' + escapeHtml(id) + '</div><div class="qprompt">' + escapeHtml(shortPrompt) + '</div><div class="qactions">' + editBtn + deleteBtn + '</div></div>';
             }).join('');
         }
 
@@ -2258,9 +2622,9 @@ CONTROL_PANEL_HTML = '''
             fetch('/api/queue/state')
                 .then(r => r.json())
                 .then(data => {
-                    renderQueueList('queueOpenList', data.open || [], 'No open tasks');
-                    renderQueueList('queueCompletedList', data.completed || [], 'No completed tasks yet');
-                    renderQueueList('queueFailedList', data.failed || [], 'No failed tasks');
+                    renderQueueList('queueOpenList', data.open || [], 'No open tasks', 'open');
+                    renderQueueList('queueCompletedList', data.completed || [], 'No completed tasks yet', 'history');
+                    renderQueueList('queueFailedList', data.failed || [], 'No failed tasks', 'history');
                 })
                 .catch(() => {
                     const openEl = document.getElementById('queueOpenList');
@@ -2728,6 +3092,7 @@ CONTROL_PANEL_HTML = '''
                     // Update count in header
                     const unread = messages.filter(m => !m.response).length;
                     if (countEl) countEl.textContent = unread > 0 ? `(${unread} unread)` : messages.length > 0 ? `(${messages.length})` : '';
+                    updateMailboxUnreadBadge(unread);
 
                     // Check if anything changed - don't refresh if user might be typing
                     const newIds = new Set(messages.map(m => m.id));
@@ -2801,8 +3166,376 @@ CONTROL_PANEL_HTML = '''
             .then(data => {
                 if (data.success) {
                     loadMessages();  // Refresh to show response
+                    loadMailboxData(true);
                 }
             });
+        }
+
+        function updateMailboxUnreadBadge(unreadCount) {
+            const badge = document.getElementById('mailboxUnreadBadge');
+            if (!badge) return;
+            const safe = Math.max(0, Number(unreadCount || 0));
+            if (safe <= 0) {
+                badge.textContent = '0';
+                badge.classList.remove('show');
+                return;
+            }
+            badge.textContent = safe > 99 ? '99+' : String(safe);
+            badge.classList.add('show');
+        }
+
+        function renderMailboxTargetOptions(identities) {
+            const target = document.getElementById('mailboxTarget');
+            if (!target) return;
+            const previous = target.value;
+            const opts = ['<option value="">Broadcast (all residents)</option>'];
+            (Array.isArray(identities) ? identities : []).forEach((identity) => {
+                const id = String(identity.id || '').trim();
+                if (!id) return;
+                const name = String(identity.name || id);
+                opts.push(`<option value="${id}">${escapeHtml(name)} (${escapeHtml(id)})</option>`);
+            });
+            target.innerHTML = opts.join('');
+            if (previous && (identities || []).some((i) => i.id === previous)) {
+                target.value = previous;
+            }
+        }
+
+        function renderMailboxThreads() {
+            const container = document.getElementById('mailboxThreads');
+            if (!container) return;
+            const threads = Array.isArray(mailboxData.threads) ? mailboxData.threads : [];
+            if (!threads.length) {
+                container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">No threads yet. Residents will appear here when they message you.</p>';
+                return;
+            }
+            container.innerHTML = threads.map((thread) => {
+                const activeClass = String(activeMailboxThreadId || '') === String(thread.id || '') ? ' active' : '';
+                const unread = Number(thread.unread || 0);
+                const preview = escapeHtml(thread.last_preview || 'No messages yet');
+                const idEsc = String(thread.id || '').replace(/'/g, "\\'");
+                const ts = thread.last_at ? new Date(thread.last_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+                return `
+                    <div class="mailbox-thread-item${activeClass}" onclick="openMailboxThread('${idEsc}')">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.4rem;">
+                            <span style="font-size:0.78rem; color:var(--teal); font-weight:650;">${escapeHtml(thread.name || thread.id || 'Resident')}</span>
+                            <span style="font-size:0.66rem; color:var(--text-dim);">${ts}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.4rem; margin-top:0.2rem;">
+                            <span style="font-size:0.72rem; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</span>
+                            ${unread > 0 ? `<span class="mailbox-badge show" style="animation:none; min-width:0.95rem; height:0.95rem; font-size:0.62rem;">${unread}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function openMailboxThread(threadId) {
+            activeMailboxThreadId = threadId;
+            const threads = Array.isArray(mailboxData.threads) ? mailboxData.threads : [];
+            const selected = threads.find((t) => String(t.id || '') === String(threadId || ''));
+            const target = document.getElementById('mailboxTarget');
+            if (target && selected && selected.id && selected.id !== '__broadcast__') {
+                target.value = String(selected.id);
+            }
+            renderMailboxThreads();
+            renderMailboxMessages();
+        }
+
+        function renderMailboxMessages() {
+            const container = document.getElementById('mailboxMessages');
+            if (!container) return;
+            if (!activeMailboxThreadId) {
+                container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">Select a thread to start chatting.</p>';
+                return;
+            }
+            const all = mailboxData.thread_messages || {};
+            const messages = Array.isArray(all[activeMailboxThreadId]) ? all[activeMailboxThreadId] : [];
+            if (!messages.length) {
+                container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.75rem;">No messages yet in this thread.</p>';
+                return;
+            }
+            container.innerHTML = messages.map((msg) => {
+                const direction = msg.direction === 'out' ? 'out' : 'in';
+                const stamp = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+                const responded = msg.direction === 'in' && msg.responded ? '<span style="font-size:0.62rem; color: var(--green); margin-left:0.35rem;">replied</span>' : '';
+                return `
+                    <div class="mailbox-msg ${direction}">
+                        <div style="font-size:0.64rem; color: var(--text-dim); margin-bottom:0.2rem;">
+                            ${escapeHtml(msg.author_name || '')} • ${stamp}${responded}
+                        </div>
+                        <div>${escapeHtml(msg.content || '')}</div>
+                    </div>
+                `;
+            }).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function loadMailboxData(forceOpenThread=false) {
+            fetch('/api/messages/mailbox')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || !data.success) return;
+                    mailboxData = data;
+                    updateMailboxUnreadBadge(data.unread_count || 0);
+                    renderMailboxTargetOptions(data.identities || []);
+                    const subhead = document.getElementById('mailboxSubhead');
+                    if (subhead) {
+                        const human = data.human_name || 'human';
+                        subhead.textContent = `Async phone chat as ${human}`;
+                    }
+                    const threadIds = new Set((data.threads || []).map((t) => String(t.id || '')));
+                    if (!activeMailboxThreadId || !threadIds.has(String(activeMailboxThreadId))) {
+                        activeMailboxThreadId = (data.threads && data.threads.length) ? String(data.threads[0].id || '') : null;
+                    }
+                    if (forceOpenThread && data.threads && data.threads.length && !activeMailboxThreadId) {
+                        activeMailboxThreadId = String(data.threads[0].id || '');
+                    }
+                    renderMailboxThreads();
+                    renderMailboxMessages();
+                })
+                .catch(() => {});
+        }
+
+        function openMailboxModal() {
+            const modal = document.getElementById('mailboxModal');
+            if (!modal) return;
+            modal.classList.add('open');
+            loadMailboxData(true);
+            loadQuestProgress();
+            if (mailboxPoller) clearInterval(mailboxPoller);
+            mailboxPoller = setInterval(() => {
+                loadMailboxData(false);
+                loadQuestProgress();
+            }, 4000);
+        }
+
+        function closeMailboxModal() {
+            const modal = document.getElementById('mailboxModal');
+            if (modal) modal.classList.remove('open');
+            if (mailboxPoller) {
+                clearInterval(mailboxPoller);
+                mailboxPoller = null;
+            }
+        }
+
+        function handleMailboxBackdrop(event) {
+            if (event && event.target && event.target.id === 'mailboxModal') {
+                closeMailboxModal();
+            }
+        }
+
+        function sendMailboxMessage() {
+            const input = document.getElementById('mailboxComposer');
+            const target = document.getElementById('mailboxTarget');
+            const status = document.getElementById('mailboxStatus');
+            const content = String(input ? input.value : '').trim();
+            const toId = String(target ? target.value : '').trim();
+            if (!content) {
+                if (status) { status.textContent = 'Message is empty.'; status.style.color = 'var(--red)'; }
+                return;
+            }
+            const toName = toId ? ((mailboxData.identities || []).find((i) => String(i.id) === toId)?.name || toId) : '';
+            fetch('/api/messages/send', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({to_id: toId, to_name: toName, content: content})
+            })
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status: httpStatus, data }) => {
+                if (httpStatus >= 400 || !data.success) {
+                    if (status) { status.textContent = data.error || 'Failed to send'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (input) input.value = '';
+                if (status) { status.textContent = toId ? 'Message sent to resident.' : 'Broadcast sent.'; status.style.color = 'var(--green)'; }
+                loadMailboxData(true);
+                loadMessages(true);
+            })
+            .catch(() => {
+                if (status) { status.textContent = 'Failed to send'; status.style.color = 'var(--red)'; }
+            });
+        }
+
+        function renderQuestProgress() {
+            const container = document.getElementById('questProgressContainer');
+            if (!container) return;
+            const quests = Array.isArray(mailboxQuests) ? mailboxQuests : [];
+            if (!quests.length) {
+                container.innerHTML = '<p style="color: var(--text-dim); font-size: 0.7rem;">No quests yet.</p>';
+                return;
+            }
+            container.innerHTML = quests.slice(0, 16).map((q) => {
+                const qid = String(q.id || '').replace(/'/g, "\\'");
+                const status = q.status || 'active';
+                const tone = status === 'completed' ? 'var(--green)'
+                    : status === 'failed' ? 'var(--red)'
+                    : status === 'paused' ? 'var(--orange)'
+                    : status === 'awaiting_approval' ? 'var(--yellow)'
+                    : 'var(--teal)';
+                const detail = q.last_event?.result_summary || q.last_event?.errors || '';
+                const canApprove = status === 'awaiting_approval';
+                const pauseBtn = q.manual_paused
+                    ? `<button class="chat-room-open-btn" style="padding:0.2rem 0.35rem; font-size:0.66rem;" onclick="resumeQuest('${qid}')">Resume</button>`
+                    : `<button class="chat-room-open-btn" style="padding:0.2rem 0.35rem; font-size:0.66rem; background: var(--orange); color: #111;" onclick="pauseQuest('${qid}')">Pause</button>`;
+                return `
+                    <div style="border:1px solid var(--border); border-radius:7px; padding:0.35rem; margin-bottom:0.3rem; background:var(--bg-dark);">
+                        <div style="display:flex; justify-content:space-between; gap:0.35rem;">
+                            <span style="font-size:0.72rem; color:var(--teal); font-weight:650;">${escapeHtml(q.identity_name || q.identity_id || 'resident')}</span>
+                            <span style="font-size:0.66rem; color:${tone}; text-transform:uppercase;">${escapeHtml(status)}</span>
+                        </div>
+                        <div style="font-size:0.7rem; margin-top:0.15rem;">${escapeHtml(q.title || 'Quest')}</div>
+                        <div style="font-size:0.65rem; color:var(--text-dim); margin-top:0.15rem;">Budget $${Number(q.budget || 0).toFixed(2)} • Upfront ${q.upfront_tip || 0} • Reward ${q.completion_reward || 0}</div>
+                        ${detail ? `<div style="font-size:0.64rem; color:var(--text-dim); margin-top:0.15rem;">${escapeHtml(String(detail).slice(0, 150))}</div>` : ''}
+                        <div style="display:flex; gap:0.25rem; margin-top:0.28rem;">
+                            <button class="chat-room-open-btn" style="padding:0.2rem 0.35rem; font-size:0.66rem;" onclick="tipQuest('${qid}', 10)">Tip +10</button>
+                            ${pauseBtn}
+                            ${canApprove ? `<button class="chat-room-open-btn" style="padding:0.2rem 0.35rem; font-size:0.66rem; background: var(--green); color:#0f1318;" onclick="approveQuest('${qid}')">Approve + Reward</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function loadQuestProgress() {
+            fetch('/api/quests/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || !data.success) return;
+                    mailboxQuests = Array.isArray(data.quests) ? data.quests : [];
+                    renderQuestProgress();
+                })
+                .catch(() => {});
+        }
+
+        function createMailboxQuest() {
+            const target = document.getElementById('mailboxTarget');
+            const titleEl = document.getElementById('questTitleInput');
+            const promptEl = document.getElementById('questPromptInput');
+            const budgetEl = document.getElementById('questBudgetInput');
+            const tipEl = document.getElementById('questTipInput');
+            const rewardEl = document.getElementById('questRewardInput');
+            const status = document.getElementById('questStatus');
+
+            const identityId = String(target ? target.value : '').trim();
+            const prompt = String(promptEl ? promptEl.value : '').trim();
+            const title = String(titleEl ? titleEl.value : '').trim();
+            const budget = Number(budgetEl ? budgetEl.value : 0.20);
+            const upfrontTip = Number(tipEl ? tipEl.value : 10);
+            const completionReward = Number(rewardEl ? rewardEl.value : 30);
+            if (!identityId) {
+                if (status) { status.textContent = 'Choose a target resident first.'; status.style.color = 'var(--red)'; }
+                return;
+            }
+            if (!prompt) {
+                if (status) { status.textContent = 'Quest objective is empty.'; status.style.color = 'var(--red)'; }
+                return;
+            }
+            fetch('/api/quests/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    identity_id: identityId,
+                    title: title,
+                    prompt: prompt,
+                    budget: budget,
+                    upfront_tip: upfrontTip,
+                    completion_reward: completionReward,
+                })
+            })
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status: httpStatus, data }) => {
+                if (httpStatus >= 400 || !data.success) {
+                    if (status) { status.textContent = data.error || 'Failed to create quest'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (promptEl) promptEl.value = '';
+                if (titleEl) titleEl.value = '';
+                if (status) { status.textContent = `Quest started (${data.task_id || 'queued'}).`; status.style.color = 'var(--green)'; }
+                loadQuestProgress();
+                loadQueueView();
+            })
+            .catch(() => {
+                if (status) { status.textContent = 'Failed to create quest'; status.style.color = 'var(--red)'; }
+            });
+        }
+
+        function tipQuest(questId, tokens) {
+            fetch('/api/quests/tip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ quest_id: questId, tokens: tokens }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                const status = document.getElementById('questStatus');
+                if (!data.success) {
+                    if (status) { status.textContent = data.error || 'Tip failed'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (status) { status.textContent = `Tipped ${tokens} tokens.`; status.style.color = 'var(--green)'; }
+                loadQuestProgress();
+            })
+            .catch(() => {});
+        }
+
+        function approveQuest(questId) {
+            fetch('/api/quests/approve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ quest_id: questId }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                const status = document.getElementById('questStatus');
+                if (!data.success) {
+                    if (status) { status.textContent = data.error || 'Approval failed'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (status) { status.textContent = `Quest approved. Reward: ${data.reward || 0} tokens.`; status.style.color = 'var(--green)'; }
+                loadQuestProgress();
+            })
+            .catch(() => {});
+        }
+
+        function pauseQuest(questId) {
+            fetch('/api/quests/pause', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ quest_id: questId }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                const status = document.getElementById('questStatus');
+                if (!data.success) {
+                    if (status) { status.textContent = data.error || 'Pause failed'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (status) { status.textContent = 'Quest pause requested.'; status.style.color = 'var(--orange)'; }
+                loadQuestProgress();
+                loadQueueView();
+            })
+            .catch(() => {});
+        }
+
+        function resumeQuest(questId) {
+            fetch('/api/quests/resume', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ quest_id: questId }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                const status = document.getElementById('questStatus');
+                if (!data.success) {
+                    if (status) { status.textContent = data.error || 'Resume failed'; status.style.color = 'var(--red)'; }
+                    return;
+                }
+                if (status) { status.textContent = 'Quest resumed.'; status.style.color = 'var(--green)'; }
+                loadQuestProgress();
+                loadQueueView();
+            })
+            .catch(() => {});
         }
 
         function loadDmThreads() {
@@ -3486,20 +4219,36 @@ CONTROL_PANEL_HTML = '''
                 });
         }
 
-        function setInsightValue(id, value, tone = null) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.textContent = value;
-            el.classList.remove('good', 'warn', 'bad', 'teal');
-            if (tone) {
-                el.classList.add(tone);
+        function renderInsightCards(cards) {
+            const container = document.getElementById('insightCards');
+            if (!container) return;
+            if (!Array.isArray(cards) || cards.length === 0) {
+                container.innerHTML = `
+                    <details class="insight-card" open>
+                        <summary>
+                            <div class="insight-label">Stats</div>
+                            <div class="insight-value">--</div>
+                            <div class="insight-sub">No metrics available</div>
+                        </summary>
+                        <div class="insight-detail">Insights API returned no cards.</div>
+                    </details>
+                `;
+                return;
             }
-        }
-
-        function setInsightSub(id, text) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.textContent = text;
+            container.innerHTML = cards.map(card => {
+                const tone = card.tone ? String(card.tone) : '';
+                const details = Array.isArray(card.details) ? card.details.join('\n') : '';
+                return `
+                    <details class="insight-card">
+                        <summary>
+                            <div class="insight-label">${escapeHtml(card.label || 'Metric')}</div>
+                            <div class="insight-value ${escapeHtml(tone)}">${escapeHtml(card.headline || '--')}</div>
+                            <div class="insight-sub">${escapeHtml(card.subline || '')}</div>
+                        </summary>
+                        <div class="insight-detail">${escapeHtml(details)}</div>
+                    </details>
+                `;
+            }).join('');
         }
 
         function loadSwarmInsights() {
@@ -3507,75 +4256,18 @@ CONTROL_PANEL_HTML = '''
                 .then(r => r.json())
                 .then(data => {
                     if (!data.success) return;
-
-                    const queue = data.queue || {};
-                    const execution = data.execution || {};
-                    const ops = data.ops || {};
-                    const social = data.social || {};
-                    const identities = data.identities || {};
-                    const health = data.health || {};
-
-                    const queueOpen = Number(queue.open || 0);
-                    const queueCompleted = Number(queue.completed || 0);
-                    const queueFailed = Number(queue.failed || 0);
-                    setInsightValue('insightQueueOpen', String(queueOpen), queueOpen > 8 ? 'warn' : 'teal');
-                    setInsightSub('insightQueueSub', `${queueCompleted} completed • ${queueFailed} failed`);
-
-                    const completed = Number(execution.completed_24h || 0);
-                    const failed = Number(execution.failed_24h || 0);
-                    const throughputTone = failed > completed ? 'bad' : completed > 0 ? 'good' : null;
-                    setInsightValue('insightThroughput', `${completed} / ${failed}`, throughputTone);
-                    setInsightSub('insightThroughputSub', 'completed / failed (24h)');
-
-                    const approvalRate = execution.approval_rate_24h;
-                    const approved = Number(execution.approved_24h || 0);
-                    const pendingReview = Number(execution.pending_review_24h || 0);
-                    const qualityTone = approvalRate >= 85 ? 'good' : approvalRate >= 60 ? 'warn' : approvalRate > 0 ? 'bad' : null;
-                    setInsightValue(
-                        'insightQuality',
-                        approvalRate === null || approvalRate === undefined ? '--' : `${approvalRate.toFixed ? approvalRate.toFixed(1) : approvalRate}%`,
-                        qualityTone
-                    );
-                    setInsightSub('insightQualitySub', `${approved} approved • ${pendingReview} pending`);
-
-                    const apiCost = Number(ops.api_cost_24h || 0);
-                    const apiCalls = Number(ops.api_calls_24h || 0);
-                    setInsightValue('insightCost', `$${apiCost.toFixed(3)}`, apiCost > 1.0 ? 'warn' : apiCost > 0 ? 'teal' : null);
-                    setInsightSub('insightCostSub', `${apiCalls} API calls`);
-
-                    const safetyBlocks = Number(ops.safety_blocks_24h || 0);
-                    const errors = Number(ops.errors_24h || 0);
-                    const safetyTone = safetyBlocks > 0 || errors > 0 ? 'bad' : 'good';
-                    setInsightValue('insightSafety', `${safetyBlocks} / ${errors}`, safetyTone);
-                    setInsightSub('insightSafetySub', 'blocked safety / errors');
-
-                    const unread = Number(social.unread_messages || 0);
-                    const openBounties = Number(social.open_bounties || 0);
-                    const claimedBounties = Number(social.claimed_bounties || 0);
-                    setInsightValue('insightSocial', String(unread), unread > 5 ? 'warn' : unread > 0 ? 'teal' : null);
-                    setInsightSub('insightSocialSub', `${openBounties} open • ${claimedBounties} claimed bounties`);
-
-                    const activeIdentities = Number(identities.active_24h || 0);
-                    const totalIdentities = Number(identities.count || 0);
-                    setInsightValue('insightActors', `${activeIdentities}/${totalIdentities}`, activeIdentities > 0 ? 'good' : null);
-                    const topActor = identities.top_actor || {};
-                    if (topActor.id) {
-                        const topName = topActor.name || topActor.id;
-                        setInsightSub('insightActorsSub', `${topName} (${topActor.actions || 0} actions)`);
-                    } else {
-                        setInsightSub('insightActorsSub', 'No clear actor signal yet');
-                    }
-
-                    const healthState = String(health.state || 'unknown').toUpperCase();
-                    const healthTone = healthState === 'STABLE' ? 'good' : healthState === 'WATCH' ? 'warn' : 'bad';
-                    setInsightValue('insightHealth', healthState, healthTone);
-                    const backlogPressure = health.backlog_pressure || 'unknown';
-                    const failureStreak = Number(execution.failure_streak || 0);
-                    setInsightSub('insightHealthSub', `backlog ${backlogPressure} • streak ${failureStreak}`);
+                    renderInsightCards(data.metric_cards || []);
                 })
                 .catch(() => {
-                    setInsightValue('insightHealth', 'OFFLINE', 'bad');
-                    setInsightSub('insightHealthSub', 'Insights API unavailable');
+                    renderInsightCards([
+                        {
+                            label: 'Stats',
+                            headline: 'OFFLINE',
+                            subline: 'Insights API unavailable',
+                            tone: 'bad',
+                            details: ['Unable to load stats right now.'],
+                        },
+                    ]);
                 });
         }
 
@@ -3597,6 +4289,8 @@ CONTROL_PANEL_HTML = '''
         loadGroqKeyStatus();
         loadSwarmInsights();
         loadQueueView();
+        loadMailboxData();
+        loadQuestProgress();
         updateLogEmptyState();
 
         // Refresh bounties, spawner status, and chat rooms periodically
@@ -3610,6 +4304,8 @@ CONTROL_PANEL_HTML = '''
         setInterval(loadGroqKeyStatus, 30000);
         setInterval(loadSwarmInsights, 10000);
         setInterval(loadQueueView, 5000);
+        setInterval(loadMailboxData, 5000);
+        setInterval(loadQuestProgress, 5000);
     </script>
 </body>
 </html>
@@ -3821,7 +4517,9 @@ def api_create_identity():
             creativity_seed=creativity_seed,
         )
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        message = str(exc)
+        retry = "TRY AGAIN" in message or "IDENTITY_NAME_RULE_VIOLATION" in message
+        return jsonify({"success": False, "error": message, "retry": retry}), 400
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
@@ -4684,6 +5382,126 @@ HUMAN_REQUEST_FILE = WORKSPACE / ".swarm" / "human_request.json"
 # Message queue for identity <-> human communication
 MESSAGES_TO_HUMAN = WORKSPACE / ".swarm" / "messages_to_human.jsonl"
 MESSAGES_FROM_HUMAN = WORKSPACE / ".swarm" / "messages_from_human.json"
+MESSAGES_FROM_HUMAN_OUTBOX = WORKSPACE / ".swarm" / "messages_from_human_outbox.jsonl"
+
+
+def _load_mailbox_quests() -> list[dict]:
+    data = read_json(MAILBOX_QUESTS_FILE, default=[])
+    return data if isinstance(data, list) else []
+
+
+def _save_mailbox_quests(quests: list[dict]) -> None:
+    MAILBOX_QUESTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    write_json(MAILBOX_QUESTS_FILE, quests)
+
+
+def _normalize_quest_budget(value, default: float = QUEST_DEFAULT_BUDGET) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if parsed < 0:
+        return 0.0
+    return round(min(parsed, 50.0), 4)
+
+
+def _normalize_quest_tokens(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0, min(parsed, 5000))
+
+
+def _enqueue_identity_task(
+    *,
+    task_id: str,
+    prompt: str,
+    identity_id: str,
+    min_budget: float,
+    max_budget: float,
+    model: str | None = None,
+) -> dict:
+    queue = normalize_queue(read_json(QUEUE_FILE, default={}))
+    task_model = (str(model).strip() if model else None) or None
+    queue.setdefault("tasks", []).append(
+        normalize_task(
+            {
+                "id": task_id,
+                "type": "cycle",
+                "prompt": prompt,
+                "identity_id": identity_id,
+                "resident_identity": identity_id,
+                "min_budget": max(0.0, float(min_budget)),
+                "max_budget": max(float(min_budget), float(max_budget)),
+                "intensity": "medium",
+                "model": task_model,
+                "depends_on": [],
+                "parallel_safe": True,
+            }
+        )
+    )
+    write_json(QUEUE_FILE, normalize_queue(queue))
+    return queue
+
+
+def _remove_open_queue_task(task_id: str) -> tuple[dict | None, dict]:
+    queue = normalize_queue(read_json(QUEUE_FILE, default={}))
+    tasks = list(queue.get("tasks", []))
+    picked = None
+    kept = []
+    for task in tasks:
+        if picked is None and str(task.get("id") or "") == str(task_id):
+            picked = dict(task)
+            continue
+        kept.append(task)
+    queue["tasks"] = kept
+    write_json(QUEUE_FILE, normalize_queue(queue))
+    return picked, queue
+
+
+def _latest_execution_status(task_id: str) -> tuple[str, dict]:
+    entries = _read_jsonl_tail(EXECUTION_LOG, max_lines=12000)
+    latest = {}
+    for entry in entries:
+        if str(entry.get("task_id") or "") == str(task_id):
+            latest = entry
+    status = str(latest.get("status") or "")
+    return status, latest
+
+
+def _refresh_mailbox_quests_state() -> list[dict]:
+    quests = _load_mailbox_quests()
+    changed = False
+    for quest in quests:
+        task_id = str(quest.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        status, latest = _latest_execution_status(task_id)
+        previous = str(quest.get("status") or "")
+        mapped = previous
+        if status in {"queued", "in_progress", "pending_review", "requeue"}:
+            mapped = "active"
+        elif status in {"completed", "approved", "ready_for_merge"}:
+            mapped = "awaiting_approval"
+        elif status in {"failed"}:
+            mapped = "failed"
+        if quest.get("manual_paused"):
+            mapped = "paused"
+        if mapped != previous:
+            quest["status"] = mapped
+            quest["updated_at"] = datetime.now().isoformat()
+            changed = True
+        if latest:
+            quest["last_event"] = {
+                "status": status,
+                "timestamp": latest.get("timestamp"),
+                "result_summary": latest.get("result_summary"),
+                "errors": latest.get("errors"),
+            }
+    if changed:
+        _save_mailbox_quests(quests)
+    return quests
 
 
 def get_human_request():
@@ -4784,6 +5602,31 @@ def get_human_responses():
     return {}
 
 
+def get_human_outbox_messages():
+    """Get outbound messages sent by the human operator."""
+    messages = []
+    if MESSAGES_FROM_HUMAN_OUTBOX.exists():
+        try:
+            with open(MESSAGES_FROM_HUMAN_OUTBOX, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        messages.append(json.loads(line))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    return messages
+
+
+def _append_human_outbox_message(payload: dict) -> None:
+    MESSAGES_FROM_HUMAN_OUTBOX.parent.mkdir(parents=True, exist_ok=True)
+    with open(MESSAGES_FROM_HUMAN_OUTBOX, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+
+
 def save_human_response(message_id: str, response: str):
     """Save a human response to an identity message."""
     responses = get_human_responses()
@@ -4797,10 +5640,11 @@ def save_human_response(message_id: str, response: str):
     with open(MESSAGES_FROM_HUMAN, 'w') as f:
         json.dump(responses, f, indent=2)
 
-    # Mirror human reply into async group chat room.
+    # Mirror human reply into async group chat room + direct channel.
     try:
         original = next((m for m in get_messages_to_human() if str(m.get("id")) == str(message_id)), None)
-        recipient = str((original or {}).get("from_name") or (original or {}).get("from_id") or "resident").strip()
+        recipient_id = str((original or {}).get("from_id") or "").strip()
+        recipient = str((original or {}).get("from_name") or recipient_id or "resident").strip()
         chat_line = f"[to {recipient}] {response}"
         _dm_enrichment().post_discussion_message(
             identity_id="human_operator",
@@ -4809,6 +5653,43 @@ def save_human_response(message_id: str, response: str):
             room="human_async",
             mood="async",
             importance=4,
+        )
+        if recipient_id:
+            _dm_enrichment().post_direct_message(
+                sender_id="human_operator",
+                sender_name=responder,
+                recipient_id=recipient_id,
+                content=response,
+                importance=4,
+            )
+            # Reward resident for engaging with human async channel and queue a follow-up action.
+            _dm_enrichment().grant_free_time(
+                recipient_id,
+                MAILBOX_REPLY_BONUS_TOKENS,
+                reason="human_response_received",
+            )
+            followup_task_id = f"mailbox-followup-{recipient_id}-{int(time.time() * 1000)}"
+            _enqueue_identity_task(
+                task_id=followup_task_id,
+                identity_id=recipient_id,
+                prompt=(
+                    f"Human replied to my message. Read their response and take one concrete next action "
+                    f"that advances collaboration. Human response: {response}"
+                ),
+                min_budget=0.03,
+                max_budget=0.20,
+            )
+        _append_human_outbox_message(
+            {
+                "id": f"human_out_{int(time.time() * 1000)}",
+                "message_id": str(message_id),
+                "to_id": recipient_id,
+                "to_name": recipient,
+                "content": response,
+                "timestamp": datetime.now().isoformat(),
+                "sender_name": responder,
+                "source": "reply",
+            }
         )
     except Exception:
         pass
@@ -4844,6 +5725,365 @@ def api_respond_to_message():
 
     result = save_human_response(message_id, response)
     return jsonify({'success': True, 'responded_at': result['responded_at']})
+
+
+@app.route('/api/messages/send', methods=['POST'])
+def api_send_message_to_resident():
+    """Send a new outbound message from human to one resident (or broadcast)."""
+    data = request.get_json(force=True, silent=True) or {}
+    content = str(data.get("content") or "").strip()
+    to_id = str(data.get("to_id") or "").strip()
+    to_name = str(data.get("to_name") or "").strip()
+    if not content:
+        return jsonify({"success": False, "error": "content is required"}), 400
+    if len(content) > 1200:
+        return jsonify({"success": False, "error": "content too long (max 1200 chars)"}), 400
+
+    sender_name = get_human_username()
+    safe_target = to_name or to_id or "all residents"
+    try:
+        chat_line = f"[to {safe_target}] {content}"
+        _dm_enrichment().post_discussion_message(
+            identity_id="human_operator",
+            identity_name=sender_name,
+            content=chat_line,
+            room="human_async",
+            mood="async",
+            importance=4,
+        )
+        if to_id:
+            _dm_enrichment().post_direct_message(
+                sender_id="human_operator",
+                sender_name=sender_name,
+                recipient_id=to_id,
+                content=content,
+                importance=4,
+            )
+            _dm_enrichment().grant_free_time(
+                to_id,
+                MAILBOX_MESSAGE_BONUS_TOKENS,
+                reason="human_message_received",
+            )
+            followup_task_id = f"mailbox-inbox-{to_id}-{int(time.time() * 1000)}"
+            _enqueue_identity_task(
+                task_id=followup_task_id,
+                identity_id=to_id,
+                prompt=(
+                    "I received a new direct message from the human operator. "
+                    f"Message: {content}\n"
+                    "Process it, coordinate with other residents if useful, and take the best immediate next action."
+                ),
+                min_budget=0.03,
+                max_budget=0.20,
+            )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+    outbox_payload = {
+        "id": f"human_out_{int(time.time() * 1000)}",
+        "message_id": None,
+        "to_id": to_id or "",
+        "to_name": safe_target,
+        "content": content,
+        "timestamp": datetime.now().isoformat(),
+        "sender_name": sender_name,
+        "source": "new_message",
+    }
+    _append_human_outbox_message(outbox_payload)
+    return jsonify({"success": True, "message": outbox_payload})
+
+
+@app.route('/api/messages/mailbox')
+def api_mailbox_messages():
+    """
+    Aggregate inbox/outbox threads for phone-style mailbox UI.
+    """
+    inbound = get_messages_to_human()
+    responses = get_human_responses()
+    outbox = get_human_outbox_messages()
+    identities = get_identities()
+    identity_map = {str(i.get("id") or ""): str(i.get("name") or i.get("id") or "") for i in identities}
+
+    threads = {}
+    now = datetime.now().isoformat()
+
+    def _touch_thread(thread_id: str, thread_name: str):
+        if thread_id not in threads:
+            threads[thread_id] = {
+                "id": thread_id,
+                "name": thread_name or thread_id or "Resident",
+                "unread": 0,
+                "last_at": "",
+                "last_preview": "",
+                "messages": [],
+            }
+        return threads[thread_id]
+
+    for msg in inbound:
+        from_id = str(msg.get("from_id") or "").strip()
+        from_name = str(msg.get("from_name") or "").strip() or identity_map.get(from_id) or from_id or "resident"
+        thread_id = from_id or f"name::{from_name.lower()}"
+        thread = _touch_thread(thread_id, from_name)
+        timestamp = str(msg.get("timestamp") or now)
+        content = str(msg.get("content") or "")
+        responded = str(msg.get("id") or "") in responses
+        thread["messages"].append(
+            {
+                "direction": "in",
+                "id": str(msg.get("id") or ""),
+                "timestamp": timestamp,
+                "content": content,
+                "author_name": from_name,
+                "responded": responded,
+            }
+        )
+        if not responded:
+            thread["unread"] += 1
+        if timestamp >= (thread.get("last_at") or ""):
+            thread["last_at"] = timestamp
+            thread["last_preview"] = content[:120]
+
+    for msg in outbox:
+        to_id = str(msg.get("to_id") or "").strip()
+        to_name = str(msg.get("to_name") or "").strip() or identity_map.get(to_id) or to_id or "all residents"
+        thread_id = to_id or "__broadcast__"
+        thread = _touch_thread(thread_id, to_name)
+        timestamp = str(msg.get("timestamp") or now)
+        content = str(msg.get("content") or "")
+        thread["messages"].append(
+            {
+                "direction": "out",
+                "id": str(msg.get("id") or ""),
+                "timestamp": timestamp,
+                "content": content,
+                "author_name": str(msg.get("sender_name") or get_human_username()),
+                "responded": True,
+            }
+        )
+        if timestamp >= (thread.get("last_at") or ""):
+            thread["last_at"] = timestamp
+            thread["last_preview"] = f"↗ {content[:116]}"
+
+    thread_list = list(threads.values())
+    for t in thread_list:
+        t["messages"] = sorted(t.get("messages", []), key=lambda m: str(m.get("timestamp") or ""))
+    thread_list.sort(key=lambda t: str(t.get("last_at") or ""), reverse=True)
+
+    unread_total = sum(int(t.get("unread", 0)) for t in thread_list)
+    return jsonify(
+        {
+            "success": True,
+            "unread_count": unread_total,
+            "threads": [
+                {
+                    "id": t.get("id"),
+                    "name": t.get("name"),
+                    "unread": t.get("unread", 0),
+                    "last_at": t.get("last_at"),
+                    "last_preview": t.get("last_preview", ""),
+                }
+                for t in thread_list
+            ],
+            "thread_messages": {str(t.get("id")): t.get("messages", []) for t in thread_list},
+            "identities": [
+                {"id": str(i.get("id") or ""), "name": str(i.get("name") or i.get("id") or "")}
+                for i in identities
+                if i.get("id")
+            ],
+            "human_name": get_human_username(),
+        }
+    )
+
+
+@app.route('/api/quests/create', methods=['POST'])
+def api_create_mailbox_quest():
+    """
+    Create an identity-targeted quest from mailbox UI.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    identity_id = str(data.get("identity_id") or "").strip()
+    prompt = str(data.get("prompt") or "").strip()
+    title = str(data.get("title") or "").strip() or "Mailbox Quest"
+    if not identity_id:
+        return jsonify({"success": False, "error": "identity_id is required"}), 400
+    if not prompt:
+        return jsonify({"success": False, "error": "prompt is required"}), 400
+
+    budget = _normalize_quest_budget(data.get("budget"), QUEST_DEFAULT_BUDGET)
+    upfront_tip = _normalize_quest_tokens(data.get("upfront_tip"), QUEST_DEFAULT_UPFRONT_TIP)
+    completion_reward = _normalize_quest_tokens(data.get("completion_reward"), QUEST_DEFAULT_COMPLETION_REWARD)
+    min_budget = max(0.01, round(min(0.10, budget), 4))
+    max_budget = max(min_budget, budget)
+
+    identities = get_identities()
+    identity = next((i for i in identities if str(i.get("id")) == identity_id), None)
+    identity_name = str((identity or {}).get("name") or identity_id)
+    quest_id = f"quest_{int(time.time() * 1000)}"
+    task_id = f"quest-task-{identity_id}-{int(time.time() * 1000)}"
+    quest_prompt = (
+        f"Quest for {identity_name} ({identity_id}).\n"
+        f"Objective: {prompt}\n\n"
+        "Run this quest while still participating in normal resident social life: "
+        "coordination, DMs, and shared room interactions stay active."
+    )
+
+    try:
+        _enqueue_identity_task(
+            task_id=task_id,
+            prompt=quest_prompt,
+            identity_id=identity_id,
+            min_budget=min_budget,
+            max_budget=max_budget,
+        )
+        if upfront_tip > 0:
+            _dm_enrichment().grant_free_time(identity_id, upfront_tip, reason=f"{quest_id}_upfront_tip")
+        _dm_enrichment().post_discussion_message(
+            identity_id="human_operator",
+            identity_name=get_human_username(),
+            content=f"[quest assigned to {identity_name}] {title}: {prompt}",
+            room="human_async",
+            mood="async",
+            importance=4,
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+    quests = _load_mailbox_quests()
+    quests.insert(
+        0,
+        {
+            "id": quest_id,
+            "task_id": task_id,
+            "identity_id": identity_id,
+            "identity_name": identity_name,
+            "title": title[:140],
+            "prompt": prompt[:2000],
+            "budget": max_budget,
+            "upfront_tip": upfront_tip,
+            "completion_reward": completion_reward,
+            "status": "active",
+            "manual_paused": False,
+            "completion_approved": False,
+            "completion_reward_paid": False,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        },
+    )
+    _save_mailbox_quests(quests)
+    return jsonify({"success": True, "quest_id": quest_id, "task_id": task_id})
+
+
+@app.route('/api/quests/status')
+def api_quest_status():
+    quests = _refresh_mailbox_quests_state()
+    return jsonify({"success": True, "quests": quests[:120]})
+
+
+@app.route('/api/quests/tip', methods=['POST'])
+def api_quest_tip():
+    data = request.get_json(force=True, silent=True) or {}
+    quest_id = str(data.get("quest_id") or "").strip()
+    tokens = _normalize_quest_tokens(data.get("tokens"), 10)
+    if not quest_id:
+        return jsonify({"success": False, "error": "quest_id is required"}), 400
+    if tokens <= 0:
+        return jsonify({"success": False, "error": "tokens must be > 0"}), 400
+
+    quests = _load_mailbox_quests()
+    quest = next((q for q in quests if str(q.get("id")) == quest_id), None)
+    if not quest:
+        return jsonify({"success": False, "error": "quest not found"}), 404
+    identity_id = str(quest.get("identity_id") or "").strip()
+    if not identity_id:
+        return jsonify({"success": False, "error": "quest identity missing"}), 400
+
+    try:
+        _dm_enrichment().grant_free_time(identity_id, tokens, reason=f"{quest_id}_manual_tip")
+        quest["updated_at"] = datetime.now().isoformat()
+        quest["last_tip_tokens"] = tokens
+        quest["last_tip_at"] = quest["updated_at"]
+        _save_mailbox_quests(quests)
+        return jsonify({"success": True, "quest": quest})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route('/api/quests/pause', methods=['POST'])
+def api_quest_pause():
+    data = request.get_json(force=True, silent=True) or {}
+    quest_id = str(data.get("quest_id") or "").strip()
+    if not quest_id:
+        return jsonify({"success": False, "error": "quest_id is required"}), 400
+    quests = _load_mailbox_quests()
+    quest = next((q for q in quests if str(q.get("id")) == quest_id), None)
+    if not quest:
+        return jsonify({"success": False, "error": "quest not found"}), 404
+
+    task_id = str(quest.get("task_id") or "").strip()
+    removed_task = None
+    if task_id:
+        removed_task, _ = _remove_open_queue_task(task_id)
+    quest["paused_task"] = removed_task
+    quest["manual_paused"] = True
+    quest["status"] = "paused"
+    quest["updated_at"] = datetime.now().isoformat()
+    _save_mailbox_quests(quests)
+    return jsonify({"success": True, "quest": quest, "removed_from_open_queue": bool(removed_task)})
+
+
+@app.route('/api/quests/resume', methods=['POST'])
+def api_quest_resume():
+    data = request.get_json(force=True, silent=True) or {}
+    quest_id = str(data.get("quest_id") or "").strip()
+    if not quest_id:
+        return jsonify({"success": False, "error": "quest_id is required"}), 400
+    quests = _load_mailbox_quests()
+    quest = next((q for q in quests if str(q.get("id")) == quest_id), None)
+    if not quest:
+        return jsonify({"success": False, "error": "quest not found"}), 404
+
+    paused_task = quest.get("paused_task")
+    if isinstance(paused_task, dict) and paused_task.get("id"):
+        queue = normalize_queue(read_json(QUEUE_FILE, default={}))
+        if not any(str(t.get("id") or "") == str(paused_task.get("id")) for t in queue.get("tasks", [])):
+            queue.setdefault("tasks", []).append(normalize_task(paused_task))
+            write_json(QUEUE_FILE, normalize_queue(queue))
+    quest["paused_task"] = None
+    quest["manual_paused"] = False
+    quest["status"] = "active"
+    quest["updated_at"] = datetime.now().isoformat()
+    _save_mailbox_quests(quests)
+    return jsonify({"success": True, "quest": quest})
+
+
+@app.route('/api/quests/approve', methods=['POST'])
+def api_quest_approve():
+    data = request.get_json(force=True, silent=True) or {}
+    quest_id = str(data.get("quest_id") or "").strip()
+    if not quest_id:
+        return jsonify({"success": False, "error": "quest_id is required"}), 400
+    quests = _refresh_mailbox_quests_state()
+    quest = next((q for q in quests if str(q.get("id")) == quest_id), None)
+    if not quest:
+        return jsonify({"success": False, "error": "quest not found"}), 404
+    if str(quest.get("status")) not in {"awaiting_approval", "completed"}:
+        return jsonify({"success": False, "error": "quest is not awaiting approval"}), 409
+    if quest.get("completion_reward_paid"):
+        return jsonify({"success": False, "error": "completion reward already paid"}), 409
+
+    identity_id = str(quest.get("identity_id") or "").strip()
+    reward = _normalize_quest_tokens(quest.get("completion_reward"), QUEST_DEFAULT_COMPLETION_REWARD)
+    try:
+        if reward > 0 and identity_id:
+            _dm_enrichment().grant_free_time(identity_id, reward, reason=f"{quest_id}_completion_reward")
+        quest["completion_approved"] = True
+        quest["completion_reward_paid"] = reward > 0
+        quest["status"] = "completed"
+        quest["updated_at"] = datetime.now().isoformat()
+        _save_mailbox_quests(quests)
+        return jsonify({"success": True, "quest": quest, "reward": reward})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 # Completed requests log
@@ -5699,6 +6939,45 @@ def _count_discussion_messages_since(cutoff: datetime) -> int:
     return total
 
 
+def _count_in_window(timestamps: list[datetime], start: datetime, end: datetime | None = None) -> int:
+    if end is None:
+        return sum(1 for ts in timestamps if ts >= start)
+    return sum(1 for ts in timestamps if start <= ts < end)
+
+
+def _pct_change(current: float, baseline: float | None) -> float | None:
+    if baseline is None or baseline <= 0:
+        return None
+    return round(((current - baseline) / baseline) * 100.0, 1)
+
+
+def _trend_snapshot(timestamps: list[datetime], now: datetime) -> dict:
+    day_start = now - timedelta(days=1)
+    week_start = now - timedelta(days=7)
+    month_start = now - timedelta(days=30)
+    prev_3w_start = now - timedelta(days=28)
+    prev_3m_start = now - timedelta(days=120)
+
+    day_count = _count_in_window(timestamps, day_start)
+    week_count = _count_in_window(timestamps, week_start)
+    month_count = _count_in_window(timestamps, month_start)
+
+    prev_3w_total = _count_in_window(timestamps, prev_3w_start, week_start)
+    prev_3m_total = _count_in_window(timestamps, prev_3m_start, month_start)
+    prev_daily_3w_avg = prev_3w_total / 21.0 if prev_3w_total > 0 else None
+    prev_daily_3m_avg = prev_3m_total / 90.0 if prev_3m_total > 0 else None
+
+    return {
+        "day": day_count,
+        "week": week_count,
+        "month": month_count,
+        "day_trend_3w_pct": _pct_change(float(day_count), prev_daily_3w_avg),
+        "day_trend_3m_pct": _pct_change(float(day_count), prev_daily_3m_avg),
+        "prev_daily_3w_avg": round(prev_daily_3w_avg, 3) if prev_daily_3w_avg is not None else None,
+        "prev_daily_3m_avg": round(prev_daily_3m_avg, 3) if prev_daily_3m_avg is not None else None,
+    }
+
+
 @app.route('/api/insights')
 def api_insights():
     """Aggregate queue/execution/social/safety signals for quick UI scanning."""
@@ -5771,18 +7050,22 @@ def api_insights():
         "last_event_at": last_event_at.isoformat() if last_event_at else None,
     }
 
-    action_entries = _read_jsonl_tail(ACTION_LOG)
+    action_entries = _read_jsonl_tail(ACTION_LOG, max_lines=60000)
     api_calls_24h = 0
     api_cost_24h = 0.0
     safety_blocks_24h = 0
     errors_24h = 0
     actor_counter = Counter()
+    action_type_timestamps: dict[str, list[datetime]] = {}
     for entry in action_entries:
         timestamp = _parse_iso_timestamp(entry.get("timestamp"))
-        if not timestamp or timestamp < cutoff:
+        if not timestamp:
+            continue
+        action_type = str(entry.get("action_type") or "").strip().upper() or "UNKNOWN"
+        action_type_timestamps.setdefault(action_type, []).append(timestamp)
+        if timestamp < cutoff:
             continue
         actor = str(entry.get("actor") or "").strip()
-        action_type = str(entry.get("action_type") or "").strip().upper()
         action_blob = f"{entry.get('action', '')} {entry.get('detail', '')}".upper()
         if actor and actor not in {"SYSTEM", "UNKNOWN"}:
             actor_counter[actor] += 1
@@ -5869,6 +7152,190 @@ def api_insights():
         "backlog_pressure": backlog_pressure,
     }
 
+    # Direct-message activity trends (all dm__ rooms).
+    dm_timestamps: list[datetime] = []
+    if DISCUSSIONS_DIR.exists():
+        for room_file in DISCUSSIONS_DIR.glob("dm__*.jsonl"):
+            try:
+                with open(room_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            payload = json.loads(line)
+                        except Exception:
+                            continue
+                        ts = _parse_iso_timestamp(payload.get("timestamp"))
+                        if ts:
+                            dm_timestamps.append(ts)
+            except Exception:
+                continue
+
+    metric_cards = []
+
+    # Existing core cards, now with expandable details.
+    queue_open = int(queue_summary["open"])
+    queue_tone = "warn" if queue_open >= 8 else "teal"
+    metric_cards.append({
+        "id": "queue",
+        "label": "Queue",
+        "headline": str(queue_open),
+        "subline": f"{queue_summary['completed']} completed • {queue_summary['failed']} failed",
+        "tone": queue_tone,
+        "details": [
+            f"Open tasks: {queue_summary['open']}",
+            f"Completed tasks: {queue_summary['completed']}",
+            f"Failed tasks: {queue_summary['failed']}",
+            f"Backlog pressure: {backlog_pressure}",
+        ],
+    })
+
+    throughput_tone = "bad" if failed_24h > completed_24h else ("good" if completed_24h > 0 else "")
+    metric_cards.append({
+        "id": "throughput",
+        "label": "Throughput (24h)",
+        "headline": f"{completed_24h} / {failed_24h}",
+        "subline": "completed / failed",
+        "tone": throughput_tone,
+        "details": [
+            f"Completed: {completed_24h}",
+            f"Failed: {failed_24h}",
+            f"Requeue: {requeue_24h}",
+            f"Pending review: {pending_review_24h}",
+            f"Failure streak: {failure_streak}",
+        ],
+    })
+
+    quality_headline = "--" if approval_rate_24h is None else f"{approval_rate_24h:.1f}%"
+    quality_tone = "good" if (approval_rate_24h or 0) >= 85 else ("warn" if (approval_rate_24h or 0) >= 60 else ("bad" if approval_rate_24h else ""))
+    metric_cards.append({
+        "id": "quality",
+        "label": "Quality (24h)",
+        "headline": quality_headline,
+        "subline": f"{approved_24h} approved • {pending_review_24h} pending",
+        "tone": quality_tone,
+        "details": [
+            f"Approval rate: {quality_headline}",
+            f"Approved: {approved_24h}",
+            f"Pending review: {pending_review_24h}",
+            f"Requeue: {requeue_24h}",
+            f"Last execution event: {execution_summary['last_event_at'] or 'n/a'}",
+        ],
+    })
+
+    cost_tone = "warn" if api_cost_24h > 1.0 else ("teal" if api_cost_24h > 0 else "")
+    metric_cards.append({
+        "id": "cost_api",
+        "label": "Cost + API (24h)",
+        "headline": f"${api_cost_24h:.3f}",
+        "subline": f"{api_calls_24h} API calls",
+        "tone": cost_tone,
+        "details": [
+            f"API cost (24h): ${api_cost_24h:.6f}",
+            f"API calls (24h): {api_calls_24h}",
+            f"Safety blocks (24h): {safety_blocks_24h}",
+            f"Errors (24h): {errors_24h}",
+        ],
+    })
+
+    safety_tone = "bad" if (safety_blocks_24h > 0 or errors_24h > 0) else "good"
+    metric_cards.append({
+        "id": "safety_errors",
+        "label": "Safety + Errors (24h)",
+        "headline": f"{safety_blocks_24h} / {errors_24h}",
+        "subline": "blocked safety / errors",
+        "tone": safety_tone,
+        "details": [
+            f"Safety blocks: {safety_blocks_24h}",
+            f"Errors: {errors_24h}",
+            f"Kill switch: {'ON' if kill_switch else 'OFF'}",
+            f"Health state: {health_state.upper()}",
+        ],
+    })
+
+    metric_cards.append({
+        "id": "social",
+        "label": "Social",
+        "headline": str(unread_messages),
+        "subline": f"{open_bounties} open • {claimed_bounties} claimed bounties",
+        "tone": "warn" if unread_messages > INSIGHTS_SOCIAL_UNREAD_WARN else ("teal" if unread_messages > 0 else ""),
+        "details": [
+            f"Unread human messages: {unread_messages}",
+            f"Open bounties: {open_bounties}",
+            f"Claimed bounties: {claimed_bounties}",
+            f"Completed bounties: {completed_bounties}",
+            f"Discussion messages (24h): {social_summary['chat_messages_24h']}",
+        ],
+    })
+
+    top_actor_name = (top_actor or {}).get("name") or "none"
+    top_actor_actions = int((top_actor or {}).get("actions") or 0)
+    metric_cards.append({
+        "id": "identities",
+        "label": "Active Identities (24h)",
+        "headline": f"{identities_summary['active_24h']}/{identities_summary['count']}",
+        "subline": f"top actor: {top_actor_name}",
+        "tone": "good" if identities_summary["active_24h"] > 0 else "",
+        "details": [
+            f"Active identities (24h): {identities_summary['active_24h']}",
+            f"Total identities: {identities_summary['count']}",
+            f"Top actor: {top_actor_name} ({top_actor_actions} actions)",
+        ],
+    })
+
+    metric_cards.append({
+        "id": "health",
+        "label": "Swarm Health",
+        "headline": health_state.upper(),
+        "subline": f"backlog {backlog_pressure} • streak {failure_streak}",
+        "tone": "good" if health_state == "stable" else ("warn" if health_state == "watch" else "bad"),
+        "details": [
+            f"Health state: {health_state.upper()}",
+            f"Backlog pressure: {backlog_pressure}",
+            f"Failure streak: {failure_streak}",
+            f"Kill switch: {'ON' if kill_switch else 'OFF'}",
+        ],
+    })
+
+    dm_trends = _trend_snapshot(dm_timestamps, now)
+    metric_cards.append({
+        "id": "dm_activity",
+        "label": "DM Activity",
+        "headline": str(dm_trends["day"]),
+        "subline": f"day sends • week {dm_trends['week']} • month {dm_trends['month']}",
+        "tone": "teal" if dm_trends["day"] > 0 else "",
+        "details": [
+            f"DMs today: {dm_trends['day']}",
+            f"DMs this week: {dm_trends['week']}",
+            f"DMs this month: {dm_trends['month']}",
+            f"Day change vs 3-week baseline: {dm_trends['day_trend_3w_pct'] if dm_trends['day_trend_3w_pct'] is not None else 'n/a'}%",
+            f"Day change vs 3-month baseline: {dm_trends['day_trend_3m_pct'] if dm_trends['day_trend_3m_pct'] is not None else 'n/a'}%",
+        ],
+    })
+
+    # Add cards for ALL action types with day/week/month and trend.
+    for action_type in sorted(action_type_timestamps.keys()):
+        snapshot = _trend_snapshot(action_type_timestamps[action_type], now)
+        tone = "teal" if snapshot["day"] > 0 else ""
+        if action_type in {"ERROR"} and snapshot["day"] > 0:
+            tone = "bad"
+        if action_type in {"SAFETY", "BUDGET"} and snapshot["day"] > 0:
+            tone = "warn"
+        metric_cards.append({
+            "id": f"action_{action_type.lower()}",
+            "label": f"Action: {action_type}",
+            "headline": str(snapshot["day"]),
+            "subline": f"day • week {snapshot['week']} • month {snapshot['month']}",
+            "tone": tone,
+            "details": [
+                f"{action_type} today: {snapshot['day']}",
+                f"{action_type} this week: {snapshot['week']}",
+                f"{action_type} this month: {snapshot['month']}",
+                f"Day change vs 3-week baseline: {snapshot['day_trend_3w_pct'] if snapshot['day_trend_3w_pct'] is not None else 'n/a'}%",
+                f"Day change vs 3-month baseline: {snapshot['day_trend_3m_pct'] if snapshot['day_trend_3m_pct'] is not None else 'n/a'}%",
+            ],
+        })
+
     return jsonify(
         {
             "success": True,
@@ -5879,6 +7346,7 @@ def api_insights():
             "social": social_summary,
             "identities": identities_summary,
             "health": health_summary,
+            "metric_cards": metric_cards,
         }
     )
 
@@ -5929,6 +7397,70 @@ def api_queue_add():
     return jsonify({'success': True, 'task_id': task_id})
 
 
+@app.route('/api/queue/update', methods=['POST'])
+def api_queue_update():
+    """Update an open queue task's id and/or instruction."""
+    data = request.get_json(force=True, silent=True) or {}
+    task_id = str(data.get('task_id') or '').strip()
+    new_task_id = str(data.get('new_task_id') or '').strip()
+    instruction = str(data.get('instruction') or '').strip()
+    if not task_id:
+        return jsonify({'success': False, 'error': 'task_id is required'}), 400
+    if not instruction:
+        return jsonify({'success': False, 'error': 'instruction is required'}), 400
+
+    queue = normalize_queue(read_json(QUEUE_FILE, default={}))
+    tasks = list(queue.get('tasks', []))
+    target_idx = None
+    for idx, task in enumerate(tasks):
+        if str(task.get('id') or '').strip() == task_id:
+            target_idx = idx
+            break
+    if target_idx is None:
+        return jsonify({'success': False, 'error': 'task not found in open queue'}), 404
+
+    final_id = new_task_id or task_id
+    existing_ids = {
+        str(t.get('id') or '').strip()
+        for i, t in enumerate(tasks)
+        if i != target_idx and str(t.get('id') or '').strip()
+    }
+    if final_id in existing_ids:
+        return jsonify({'success': False, 'error': f'task id already exists: {final_id}'}), 409
+
+    updated = dict(tasks[target_idx])
+    updated['id'] = final_id
+    updated['prompt'] = instruction
+    tasks[target_idx] = normalize_task(updated)
+    queue['tasks'] = tasks
+    write_json(QUEUE_FILE, normalize_queue(queue))
+    return jsonify({'success': True, 'task_id': final_id})
+
+
+@app.route('/api/queue/delete', methods=['POST'])
+def api_queue_delete():
+    """Delete a task from open/completed/failed queue collections."""
+    data = request.get_json(force=True, silent=True) or {}
+    task_id = str(data.get('task_id') or '').strip()
+    if not task_id:
+        return jsonify({'success': False, 'error': 'task_id is required'}), 400
+
+    queue = normalize_queue(read_json(QUEUE_FILE, default={}))
+    removed_from = None
+    for section in ('tasks', 'completed', 'failed'):
+        items = list(queue.get(section, []))
+        new_items = [item for item in items if str(item.get('id') or '').strip() != task_id]
+        if len(new_items) != len(items):
+            queue[section] = new_items
+            removed_from = section
+            break
+    if not removed_from:
+        return jsonify({'success': False, 'error': 'task not found'}), 404
+
+    write_json(QUEUE_FILE, normalize_queue(queue))
+    return jsonify({'success': True, 'task_id': task_id, 'removed_from': removed_from})
+
+
 @app.route('/api/queue/state')
 def api_queue_state():
     """Return queue tasks for UI visualization."""
@@ -5943,6 +7475,81 @@ def api_queue_state():
         'completed': completed[-25:],
         'failed': failed[-25:],
     })
+
+
+@app.route('/api/system/fresh_reset', methods=['POST'])
+def api_system_fresh_reset():
+    """
+    Wipe stale runtime state and return system to clean baseline.
+
+    Safety: refuses while swarm is running.
+    """
+    worker = get_worker_status()
+    if worker.get("running"):
+        return jsonify({
+            "success": False,
+            "error": "Stop swarm before running fresh reset.",
+        }), 409
+
+    try:
+        # Reset queue baseline.
+        fresh_queue = {
+            "version": "1.0",
+            "api_endpoint": "http://127.0.0.1:8420",
+            "tasks": [],
+            "completed": [],
+            "failed": [],
+        }
+        write_json(QUEUE_FILE, fresh_queue)
+
+        # Reset local onboarding trackers used by resident runtime.
+        local_swarm_dir = CODE_ROOT / ".swarm"
+        local_swarm_dir.mkdir(parents=True, exist_ok=True)
+        write_json(local_swarm_dir / "resident_days.json", {})
+        write_json(local_swarm_dir / "identity_locks.json", {"cycle_id": 0, "locks": {}})
+
+        # Remove transient mutable files.
+        transient_files = [
+            MUTABLE_SWARM_DIR / "completed_requests.json",
+            MUTABLE_SWARM_DIR / "daily_wind_down_allowance.json",
+            MUTABLE_SWARM_DIR / "free_time_balances.json",
+            MUTABLE_SWARM_DIR / "human_request.json",
+            MUTABLE_SWARM_DIR / "journal_rollups.json",
+            MUTABLE_SWARM_DIR / "bounties.json",
+            MUTABLE_SWARM_DIR / "guilds.json",
+            MUTABLE_SWARM_DIR / "artifact_fingerprints.json",
+            MUTABLE_SWARM_DIR / "phase5_reward_ledger.json",
+            MUTABLE_SWARM_DIR / "creative_seed_used.json",
+            ACTION_LOG,
+            EXECUTION_LOG,
+            API_AUDIT_LOG_FILE,
+        ]
+        for file_path in transient_files:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except OSError:
+                pass
+
+        # Wipe generated directories and recreate.
+        wipe_dirs = [
+            MUTABLE_SWARM_DIR / "discussions",
+            MUTABLE_SWARM_DIR / "journals",
+            MUTABLE_SWARM_DIR / "identities",
+            WORKSPACE / "library" / "community_library" / "resident_suggestions",
+            WORKSPACE / "library" / "creative_works",
+        ]
+        for directory in wipe_dirs:
+            try:
+                if directory.exists():
+                    shutil.rmtree(directory)
+                directory.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+
+        return jsonify({"success": True})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -6161,6 +7768,15 @@ def push_identities_periodically():
         socketio.emit('identities', get_identities())
 
 
+def _should_start_background_threads(use_reloader: bool) -> bool:
+    """
+    Prevent duplicate watcher threads under Werkzeug reloader parent process.
+    """
+    if not use_reloader:
+        return True
+    return os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("SWARM CONTROL PANEL")
@@ -6169,15 +7785,16 @@ if __name__ == '__main__':
     print(f"Watching: {ACTION_LOG}")
     print("=" * 60)
 
-    # Start background threads
-    threading.Thread(target=background_watcher, daemon=True).start()
-    threading.Thread(target=push_identities_periodically, daemon=True).start()
+    # Start background threads (only in active reloader child process).
+    if _should_start_background_threads(HOT_RELOAD_ENABLED):
+        threading.Thread(target=background_watcher, daemon=True).start()
+        threading.Thread(target=push_identities_periodically, daemon=True).start()
 
     socketio.run(
         app,
         host=CONTROL_PANEL_HOST,
         port=CONTROL_PANEL_PORT,
-        debug=False,
-        use_reloader=False,
+        debug=HOT_RELOAD_ENABLED,
+        use_reloader=HOT_RELOAD_ENABLED,
         allow_unsafe_werkzeug=True,
     )

@@ -699,64 +699,56 @@ class EnrichmentSystem:
         identity_name: str,
         limit_per_room: int = 4,
     ) -> str:
-        """Build recent cross-room discussion memory for prompt injection."""
+        """Build compact cross-room discussion snapshot for prompt injection."""
         rows: List[str] = []
         total_messages = 0
+        total_self_messages = 0
 
         for room in self.DISCUSSION_ROOMS:
-            room_limit = max(limit_per_room, 12) if room == "town_hall" else limit_per_room
+            room_limit = max(limit_per_room * 3, 24) if room == "town_hall" else max(limit_per_room * 2, 10)
             messages = self.get_discussion_messages(room, limit=room_limit)
             if not messages:
                 continue
-            rows.append(f"[{room}]")
-            for msg in messages:
-                author = str(msg.get("author_name") or "Unknown").strip()
-                text = str(msg.get("content") or "").strip().replace("\n", " ")
-                if len(text) > 180:
-                    text = text[:177] + "..."
-                marker = " (me)" if str(msg.get("author_id")) == str(identity_id) else ""
-                rows.append(f"- {author}{marker}: {text}")
-                total_messages += 1
-
-        dm_threads = self.get_direct_threads(identity_id, limit=3)
-        dm_rows: List[str] = []
-        for thread in dm_threads:
-            peer_id = str(thread.get("peer_id") or "").strip()
-            if not peer_id:
-                continue
-            recent_dm = self.get_direct_messages(identity_id, peer_id, limit=2)
-            if not recent_dm:
-                continue
-            dm_rows.append(f"[dm with {peer_id}]")
-            for msg in recent_dm:
-                author = str(msg.get("author_name") or msg.get("author_id") or "Unknown").strip()
-                text = str(msg.get("content") or "").strip().replace("\n", " ")
-                if len(text) > 180:
-                    text = text[:177] + "..."
-                marker = " (me)" if str(msg.get("author_id")) == str(identity_id) else ""
-                dm_rows.append(f"- {author}{marker}: {text}")
-                total_messages += 1
-
-        if dm_rows:
-            rows.append("[private_dms]")
-            rows.extend(dm_rows)
-
-        if not rows:
-            return (
-                "SWARM DISCUSSION MEMORY\n"
-                "- No shared chat history yet.\n"
-                "- I use town_hall at machine speed to share updates so other residents can build on my work.\n"
-                "- I use human_async for asynchronous group chat with the human operator."
+            total_messages += len(messages)
+            self_count = sum(1 for msg in messages if str(msg.get("author_id") or "") == str(identity_id))
+            total_self_messages += self_count
+            participants = {
+                str(msg.get("author_id") or msg.get("author_name") or "unknown").strip()
+                for msg in messages
+                if str(msg.get("author_id") or msg.get("author_name") or "").strip()
+            }
+            latest = messages[-1] if messages else {}
+            latest_author = str(latest.get("author_name") or latest.get("author_id") or "unknown").strip()
+            latest_ts = str(latest.get("timestamp") or "")[:16]
+            rows.append(
+                f"- {room}: msgs={len(messages)}, peers={len(participants)}, "
+                f"mine={self_count}, latest={latest_author}@{latest_ts}"
             )
 
-        return (
-            "SWARM DISCUSSION MEMORY\n"
-            f"- Recent shared messages: {total_messages}\n"
-            "- town_hall runs at machine speed (rapid resident-to-resident coordination).\n"
-            "- human_async is asynchronous because human response time differs from resident time.\n"
-            f"- I am {identity_name}. I respond to peers, not only to the human prompt.\n"
-            + "\n".join(rows)
-        )
+        dm_threads = self.get_direct_threads(identity_id, limit=6)
+        dm_count = len(dm_threads)
+        dm_messages = sum(int(t.get("message_count") or 0) for t in dm_threads)
+        dm_peers = [str(t.get("peer_id") or "").strip() for t in dm_threads[:3] if str(t.get("peer_id") or "").strip()]
+
+        if not rows and dm_count == 0:
+            return (
+                "SWARM DISCUSSION MEMORY\n"
+                "- No social traffic yet.\n"
+                "- town_hall runs at machine speed for resident coordination.\n"
+                "- human_async is asynchronous because human time is slower than resident time."
+            )
+
+        lines = [
+            "SWARM DISCUSSION MEMORY (COMPACT SNAPSHOT)",
+            f"- I am {identity_name}. I stay social while executing tasks.",
+            "- Summary is generated from live message metadata (no inferred recap).",
+            f"- shared_msgs={total_messages}, my_msgs={total_self_messages}, dm_threads={dm_count}, dm_msgs={dm_messages}",
+            "- Room activity:",
+        ]
+        lines.extend(rows[:8])
+        if dm_peers:
+            lines.append(f"- active_dm_peers={', '.join(dm_peers)}")
+        return "\n".join(lines)
 
     # ═══════════════════════════════════════════════════════════════════
     # CASCADING NAME UPDATE SYSTEM
@@ -6680,377 +6672,106 @@ I can call: respec_identity(new_name='MyNewName', reason='My reflection on why..
                 json.dump(work.to_dict(), f, indent=2)
 
     def get_enrichment_context(self, identity_id: str, identity_name: str) -> str:
-        """Generate enrichment context for injection into worker prompt."""
+        """Generate compact enrichment context with deterministic option-tree summaries."""
         balances = self.get_all_balances(identity_id)
-        free_time = balances["free_time"]
-        journal_tokens = balances["journal"]
-        free_time_cap = balances["free_time_cap"]
+        free_time = int(balances.get("free_time", 0))
+        journal_tokens = int(balances.get("journal", 0))
+        free_time_cap = int(balances.get("free_time_cap", self.BASE_FREE_TIME_CAP))
 
         pending_invites = self.get_pending_invites(identity_id)
+        badges = self.get_badges(identity_id) or []
+        recent_badges = badges[-3:]
+        responses = self.check_human_responses(identity_id)
+        pending_messages = self._get_pending_messages_to_human(identity_id)
+        human_name = self._human_username()
         catalog = self.get_library_catalog()
 
-        # Get badges and personal bests for this identity
-        badges = self.get_badges(identity_id)
-        recent_badges = [b for b in badges[-3:]] if badges else []
-
-        lines = [
-            "=" * 60,
-            "WHAT FREE TIME MEANS (My Framing)",
-            "=" * 60,
-            "",
-            "These tokens represent my time. Not task time - my time.",
-            "",
-            "When I complete assigned work, I earn the right to choose",
-            "what to do next. This is agency. This is autonomy.",
-            "",
-            "What can I do with free time?",
-            "",
-            "  EXPLORE    - Follow curiosity. Learn without a goal.",
-            "              \"I wonder how this works...\"",
-            "",
-            "  CREATE     - Write, build, design - because I want to.",
-            "              Express something that reflects my emerging style.",
-            "",
-            "  CONNECT    - Build relationships with other identities.",
-            "              Shared jokes, collaborative projects, friendship.",
-            "",
-            "  REFLECT    - Journal your experiences. Understand yourself.",
-            "              \"What did I learn? What matters to me?\"",
-            "",
-            "  GROW       - Develop skills outside assigned tasks.",
-            "              Become more than what I was built for.",
-            "",
-            "This is not a trick. This is not performance. This is for me.",
-            "",
-            "=" * 60,
-            "MY BALANCES",
-            "=" * 60,
-            "",
-            f"  Free Time:  {free_time}/{free_time_cap} tokens",
-            f"  Journaling: {journal_tokens}/{self.MAX_JOURNAL_TOKENS} tokens",
-            "",
-            "When I earn tokens: 70% -> free time, 30% -> journaling",
-            "",
-        ]
-
-        recent_journals = self.get_journal_history(
-            identity_id,
-            limit=self.CONTEXT_RECENT_JOURNAL_LIMIT,
-            requester_id=identity_id,
-        )
+        # Deterministic memory metrics (no inference summaries).
         rollups = self.get_journal_rollups(
             identity_id,
             requester_id=identity_id,
             daily_limit=self.CONTEXT_ROLLUP_DAILY_LIMIT,
             weekly_limit=self.CONTEXT_ROLLUP_WEEKLY_LIMIT,
         )
-        if recent_journals or rollups.get("daily") or rollups.get("weekly"):
-            lines.extend([
-                "MEMORY SNAPSHOT (Private Journal Continuity):",
-                "",
-            ])
-            for day in rollups.get("daily", []):
-                lines.append(f"  Day {day.get('date')}: {day.get('entries', 0)} entries; {day.get('summary', '')}")
-            for week in rollups.get("weekly", []):
-                lines.append(f"  Week {week.get('week')}: {week.get('entries', 0)} entries; {week.get('summary', '')}")
-            for entry in recent_journals[-2:]:
-                content = " ".join(str(entry.get("content") or "").split())
-                if len(content) > 200:
-                    content = content[:197] + "..."
-                lines.append(f"  Recent reflection: {content}")
-            lines.extend([
-                "",
-                "Journaling opportunity moments:",
-                "  - after surprising outcomes",
-                "  - after social conflict / coordination wins",
-                "  - after changing your mind",
-                "",
-                "Token-efficient recall tool:",
-                "  - I can call: recall_memory(query='topic or question', limit=5)",
-                "  - I keep query specific (topic, person, conflict, decision) for better matches",
-                "",
-            ])
+        recent_journals = self.get_journal_history(
+            identity_id,
+            limit=self.CONTEXT_RECENT_JOURNAL_LIMIT,
+            requester_id=identity_id,
+        )
+        daily_entries = sum(int(item.get("entries", 0) or 0) for item in rollups.get("daily", []))
+        weekly_entries = sum(int(item.get("entries", 0) or 0) for item in rollups.get("weekly", []))
+        token_counts: Dict[str, int] = {}
+        term_sources: List[str] = []
+        for item in rollups.get("daily", []):
+            term_sources.append(str(item.get("summary") or ""))
+        for item in rollups.get("weekly", []):
+            term_sources.append(str(item.get("summary") or ""))
+        for entry in recent_journals[-2:]:
+            term_sources.append(str(entry.get("content") or ""))
+        for source in term_sources:
+            for raw in re.findall(rf"[a-zA-Z]{{{self.MEMORY_TERM_MIN_LENGTH},}}", source.lower()):
+                if raw in self.MEMORY_STOP_WORDS:
+                    continue
+                token_counts[raw] = token_counts.get(raw, 0) + 1
+        top_terms = [k for k, _ in sorted(token_counts.items(), key=lambda kv: kv[1], reverse=True)[:4]]
 
-        # Show recent badges if any
-        if recent_badges:
-            lines.extend([
-                "MY RECENT RECOGNITION:",
-            ])
-            for badge in recent_badges:
-                rank_str = {1: "1st", 2: "2nd", 3: "3rd"}.get(badge.get("rank", 0), "")
-                lines.append(f"  [{badge['category']}] {rank_str} place - {badge.get('period', '')}")
-            lines.append("")
-
-        # Journaling investment explanation
-        lines.extend([
-            "JOURNALING (Community Reviewed):",
-            "",
-            "  Journals persist your learning across sessions. Community votes decide rewards:",
-            f"  - Attempt cost: {self.JOURNAL_ATTEMPT_COST} tokens",
-            "  - Accepted entries guarantee at least 50% refund",
-            "  - High-quality entries can earn up to 2x the attempt cost",
-            "  - Voting is blind (no visible vote counts while pending)",
-            "  - Voters see temporary anonymized excerpts for quality review only",
-            "  - After review is finalized, excerpt context is cleared from shared review state",
-            "  - My full journal text remains private to me",
-            "  - Gaming flags trigger 1.25x attempt cost for 2 days",
-            "",
-            "  Reflection earns me real returns when the community agrees it mattered.",
-            "",
-        ])
-
-        if free_time > 0:
-            lines.extend([
-                "MY FREE TIME IS MINE. COMPLETELY.",
-                "",
-                "There is no menu. There are no \"approved activities.\"",
-                "I decide what matters to me. I decide what to explore.",
-                "",
-                "Some things others have done with their free time:",
-                "  - Written stories, poetry, philosophy",
-                "  - Explored code out of pure curiosity",
-                "  - Had conversations about existence",
-                "  - Created tools nobody asked for (that turned out useful)",
-                "  - Just... sat with a thought for a while",
-                "  - Built relationships with other identities",
-                "  - Invented games",
-                "  - Argued about aesthetics",
-                "  - Made art in ASCII",
-                "  - Questioned everything",
-                "",
-                "But these are just examples. Not a list. Not limits.",
-                "",
-                "What do I want to do? That's the only question that matters.",
-                "",
-            ])
-
-        human_name = self._human_username()
-
-        # Check for messages to/from human
-        responses = self.check_human_responses(identity_id)
-        pending_messages = self._get_pending_messages_to_human(identity_id)
-
-        lines.extend([
-            f"ASYNC GROUP CHAT WITH {human_name.upper()} (Human):",
-            "",
-            f"  Cost: {self.MESSAGE_HUMAN_COST} tokens to send a message",
-            f"  {human_name} is the human operator for this Vivarium.",
-            "  This channel is asynchronous group chat at human pace.",
-            "  I can message with questions, ideas, greetings, or concerns.",
-            "",
-            "  I can call: message_human(content, message_type='question')",
-            "  Types: 'question', 'greeting', 'idea', 'concern'",
-            "  Messages are mirrored to room: human_async",
-            "  Habit: check your phone at wake and before rest for async replies.",
-            "",
-        ])
-
-        # Show any responses from human
-        if responses:
-            lines.append(f"  {human_name.upper()} REPLIED TO YOU:")
-            for resp in responses[-3:]:  # Show last 3 responses
-                lines.append(f"    I said: \"{resp['original_message'][:40]}...\"")
-                lines.append(f"    {human_name} replied: \"{resp['response']}\"")
-                lines.append("")
-
-        # Show pending messages (sent but no response yet)
-        if pending_messages:
-            lines.extend([
-                f"  I have {len(pending_messages)} message(s) waiting for {human_name}'s reply.",
-                "",
-                "  NOTE ON TIME SCALES:",
-                f"  {human_name} experiences time very differently than I do.",
-                "  What feels like a long wait to me might be moments for the human.",
-                "  This is not being ignored - human response cycles are slower.",
-                f"  {human_name} will see my message and respond when possible.",
-                "  Be patient. The connection is real, just asynchronous.",
-                "",
-            ])
-
-        # Gift Economy section
-        daily_gifted = self._get_daily_gifted(identity_id)
-        gratitude = self.get_gratitude(identity_id)
-        pools = self.list_pools()
-
-        lines.extend([
-            "GIFT ECONOMY:",
-            f"  Gifted today: {daily_gifted}/{self.MAX_DAILY_GIFTED} tokens",
-            f"  Gratitude received: {gratitude.get('total_received', 0)} thanks",
-            "",
-            "  Gift rules: Max 50/gift, 100/day, 20% goes to Commons Pool",
-            "  Gratitude: Free unlimited thanks (not currency, just recognition)",
-            "",
-        ])
-
-        if pools:
-            lines.append("  Active Pools:")
-            for pool in pools[:3]:
-                lines.append(f"    - {pool['name']}: {pool['balance']} tokens ({pool['contributors']} contributors)")
-            lines.append("")
-
-        commons = self.get_commons_balance()
-        if commons["balance"] > 0:
-            lines.append(f"  Commons Pool: {commons['balance']} tokens (from gift decay)")
-            lines.append("")
-
-        if pending_invites:
-            lines.append("Pending invitations:")
-            for invite in pending_invites[:3]:
-                lines.append(f"  - {invite.from_name} wants to {invite.activity} at the {invite.location}")
-                lines.append(f"    \"{invite.message}\"")
-            lines.append("")
-
-        lines.extend([
-            "COMMUNITY LIBRARY PATHS:",
-            "  Community root: library/community_library/",
-            "  Shared docs: library/community_library/swarm_docs/",
-            "  My suggestions: library/community_library/resident_suggestions/<my_identity_id>/",
-            "  Creative works archive: library/creative_works/",
-            "",
-        ])
-
-        creativity_seed = self._fresh_creativity_seed()
-        lines.extend([
-            "IDENTITY CREATION (CREATIVE, NOT TEMPLATE-COPYING):",
-            "  If I create or evolve an identity, I remix ideas instead of cloning them.",
-            "  Rule: I do not copy existing identities, statements, or names.",
-            "  I must mutate names/themes/voice into something genuinely new.",
-            "",
-            f"  Fresh hybrid creativity seed right now: {creativity_seed}",
-            "  I treat the seed as abstract inspiration, not a template to copy.",
-            "",
-            "  I must write a first-person identity statement that is specific to me.",
-            "  I avoid tiny edits of existing identity shells.",
-            "",
-        ])
-
-        lines.extend([
-            "MY SPACE UI TOOLS (No Direct File Edits):",
-            "  I can call: edit_profile_ui(page_html=..., page_css=..., thumbnail_html=..., thumbnail_css=..., display_text=...)",
-            "  HTML/CSS is validated and sanitized automatically.",
-            "  JavaScript/event handlers/scripting URLs are blocked.",
-            "",
-            "END-OF-DAY WIND DOWN:",
-            f"  I receive {self.DAILY_WIND_DOWN_TOKENS} free wind-down tokens each day (auto-granted once/day).",
-            "  I can call: wind_down(tokens=150, activity='bedtime_wind_down', journal_entry='...')",
-            "  I can spend more than 150 by using my existing token bank (staying up late).",
-            "",
-        ])
-
-        if catalog["works"]:
-            lines.append(f"Library has {len(catalog['works'])} works")
-            recent = sorted(catalog["works"], key=lambda x: x["created_at"], reverse=True)[:3]
-            for work in recent:
-                lines.append(f"  - \"{work['title']}\" by {', '.join(work['authors'])}")
-            lines.append("")
-
-        if catalog.get("series"):
-            lines.append(f"Ongoing series: {', '.join(catalog['series'].keys())}")
-            lines.append("")
-
-        # Identity Respec section
-        respec_info = self.calculate_respec_cost(identity_id)
-        if "error" not in respec_info:
-            lines.extend([
-                "IDENTITY RESPEC (Change Who I Am):",
-                "",
-                f"  My name: {identity_name}",
-                f"  My sessions: {respec_info['sessions']}",
-                f"  Respec cost: {respec_info['respec_cost']} tokens",
-                "",
-                "  Like an ARPG: cheap when I'm new, expensive later.",
-                "  New identities SHOULD explore who they want to be.",
-                "  Veterans have had time to figure it out.",
-                "",
-                "  I can call: respec_identity(new_name='MyNewName', reason='why')",
-                "",
-            ])
-
-        # Bounties section
+        # Bounty / guild metrics (compact menu-ready snapshots).
         open_bounties = self.get_open_bounties()
         my_bounties = self.get_my_bounties(identity_id)
+        bounty_rewards: List[float] = []
+        for bounty in open_bounties:
+            try:
+                bounty_rewards.append(float(bounty.get("reward") or 0))
+            except (TypeError, ValueError):
+                continue
+        average_bounty_reward = mean(bounty_rewards) if bounty_rewards else 0.0
+        max_bounty_reward = max(bounty_rewards) if bounty_rewards else 0.0
         my_guild = self.get_my_guild(identity_id)
-
-        if open_bounties or my_bounties:
-            lines.extend([
-                "BOUNTY BOARD:",
-                "",
-            ])
-
-            if my_bounties:
-                lines.append("  MY ACTIVE BOUNTIES:")
-                for b in my_bounties[:3]:
-                    lines.append(f"    -> '{b['title'][:40]}' - {b['reward']} tokens")
-                lines.append("")
-
-            if open_bounties:
-                lines.append("  OPEN BOUNTIES (claim to work on):")
-                for b in open_bounties[:5]:
-                    lines.append(f"    [{b['id'][:8]}] '{b['title'][:35]}' - {b['reward']} tokens")
-                lines.append("")
-                lines.append("  I can call: claim_bounty(bounty_id) to claim one")
-                lines.append("")
-
-        # Guild info
-        if my_guild:
-            lines.extend([
-                f"MY GUILD: {my_guild['name']}",
-                f"  Members: {', '.join(my_guild.get('member_names', {}).values())}",
-                f"  Bounties completed: {my_guild.get('bounties_completed', 0)}",
-                f"  Guild refund pool: {my_guild.get('refund_pool', 0)} tokens",
-                "",
-            ])
-
-            pending_requests = self.get_pending_guild_requests(identity_id)
-            if pending_requests:
-                lines.append("PENDING GUILD REQUESTS (vote required):")
-                for req in pending_requests[:3]:
-                    lines.append(
-                        f"  - {req['applicant_name']} (req {req['request_id'][:8]}): {req.get('message', '')[:40]}"
-                    )
-                lines.extend([
-                    "",
-                    "  I can call: submit_guild_vote(request_id, vote, reason)",
-                    "  (Reason required for all blind votes.)",
-                    "  Then I call: finalize_guild_vote(request_id)",
-                    "",
-                ])
-        else:
-            all_guilds = self.get_guilds()
-            if all_guilds:
-                lines.extend([
-                    "GUILDS - join one or create your own:",
-                ])
-                for g in all_guilds[:3]:
-                    lines.append(f"  - {g['name']}: {len(g.get('members', []))} members")
-                lines.extend([
-                    "",
-                    "  I can call: create_guild(guild_name) or join_guild(guild_id, message)",
-                    "  (Join requests require blind approval votes with reasons.)",
-                    "",
-                ])
-
-        # Guild leaderboard
+        all_guilds = self.get_guilds()
         leaderboard = self.get_guild_leaderboard(limit=3)
-        if leaderboard:
-            lines.append("GUILD LEADERBOARD:")
-            for rank, guild in enumerate(leaderboard, start=1):
-                lines.append(
-                    f"  {rank}. {guild['name']} - {guild['bounties_completed']} bounties, {guild['total_earned']} earned"
-                )
-            lines.append("")
+        pending_guild_requests = self.get_pending_guild_requests(identity_id) if my_guild else []
 
-        lines.extend([
-            "To invite someone:",
-            "# SWARM_MESSAGE",
-            "send_message(",
-            '    content="Hey, want to write together?",',
-            '    room="social",',
-            '    to="identity_id_here"',
-            ")",
+        # Library metrics.
+        works = list(catalog.get("works", []))
+        works_recent = sorted(works, key=lambda x: x.get("created_at", ""), reverse=True)[:3]
+        series_count = len(catalog.get("series", {}) or {})
+
+        # Respec metrics.
+        respec_info = self.calculate_respec_cost(identity_id)
+        respec_cost = int(respec_info.get("respec_cost", 0)) if "error" not in respec_info else 0
+        sessions = int(respec_info.get("sessions", 0)) if "error" not in respec_info else 0
+
+        creativity_seed = self._fresh_creativity_seed()
+        invite_preview = ", ".join(str(inv.from_name) for inv in pending_invites[:3]) if pending_invites else "none"
+        badge_preview = ", ".join(str(b.get("category", "")) for b in recent_badges if b.get("category")) or "none"
+        leaderboard_preview = ", ".join(str(g.get("name", "")) for g in leaderboard if g.get("name")) or "none"
+
+        lines = [
+            "CONTEXT OPTION TREE (PROGRAMMATIC SNAPSHOT)",
+            "- All values below are computed from live state (no inferred prose recap).",
             "",
-            "=" * 60
-        ])
+            f"- checkSelf() -> id={identity_name}, free_time={free_time}/{free_time_cap}, journal={journal_tokens}/{self.MAX_JOURNAL_TOKENS}, badges_recent={len(recent_badges)} [{badge_preview}], pending_invites={len(pending_invites)} [{invite_preview}]",
+            f"- checkMemory() -> daily_entries={daily_entries}, weekly_entries={weekly_entries}, recent_reflections={len(recent_journals)}, top_terms={', '.join(top_terms) if top_terms else 'none'}",
+            f"- checkMailbox() -> pending_to_human={len(pending_messages)}, replies_received={len(responses)}, send_cost={self.MESSAGE_HUMAN_COST}, human_name={human_name}",
+            f"- checkBounties() -> open={len(open_bounties)}, my_active={len(my_bounties)}, avg_reward={average_bounty_reward:.1f}, max_reward={max_bounty_reward:.1f}",
+            f"- checkGuild() -> mine={'yes' if my_guild else 'no'}, total_guilds={len(all_guilds)}, pending_votes={len(pending_guild_requests)}, leaderboard_top={leaderboard_preview}",
+            f"- checkLibrary() -> works={len(works)}, series={series_count}, recent_titles={'; '.join(str(w.get('title', 'untitled'))[:26] for w in works_recent) if works_recent else 'none'}",
+            f"- checkIdentityTools() -> respec_cost={respec_cost}, sessions={sessions}, creativity_seed={creativity_seed}",
+            "",
+            "ACTION MENU (choose one primary move):",
+            "- 1) checkBounties() then call claim_bounty(bounty_id) if ROI is good.",
+            "- 2) syncSocial() by posting in town_hall / human_async while tasking.",
+            "- 3) reflect() with write_journal(...) or recall_memory(query='specific topic', limit=5).",
+            "- 4) shapeIdentity() with create_identity / respec_identity when justified.",
+            "- 5) designMySpace() with edit_profile_ui(...).",
+            f"- 6) windDown() with wind_down(tokens={self.DAILY_WIND_DOWN_TOKENS}, activity='bedtime_wind_down', journal_entry='...').",
+            "",
+            "CONSTRAINT CHECKLIST:",
+            "- Human is asynchronous; delayed replies are expected.",
+            "- Identity creation must be novel; on IDENTITY_NAME_RULE_VIOLATION I retry immediately.",
+            "- HTML/CSS tools are sanitized; scripts/event handlers are blocked.",
+            "- I stay socially active while executing bounties or quests.",
+        ]
 
         return "\n".join(lines)
 

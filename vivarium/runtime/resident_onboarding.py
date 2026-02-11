@@ -41,6 +41,22 @@ AUTO_BOOTSTRAP_IDENTITIES = os.environ.get("VIVARIUM_BOOTSTRAP_IDENTITIES", "0")
 IDENTITY_NAME_SIMILARITY_MAX = 0.90
 IDENTITY_STATEMENT_SIMILARITY_MAX = 0.93
 IDENTITY_SUMMARY_SIMILARITY_MAX = 0.95
+UNCREATIVE_IDENTITY_NAME_TERMS = frozenset(
+    {
+        "resident",
+        "identity",
+        "persona",
+        "person",
+        "individual",
+        "self",
+        "character",
+        "avatar",
+        "agent",
+        "worker",
+        "profile",
+        "npc",
+    }
+)
 # One simulated "day" length (seconds). Default compressed to 1 minute.
 RESIDENT_CYCLE_SECONDS = int(
     os.environ.get(
@@ -341,6 +357,22 @@ def _text_similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, left, right).ratio()
 
 
+def _disallowed_name_terms(name: str) -> List[str]:
+    normalized = _normalize_compare_text(name)
+    words = [token for token in normalized.split() if token]
+    hits = sorted({word for word in words if word in UNCREATIVE_IDENTITY_NAME_TERMS})
+    return hits
+
+
+def _blacklist_retry_message(name: str, blocked_terms: List[str]) -> str:
+    terms = ", ".join(blocked_terms)
+    return (
+        f"IDENTITY_NAME_RULE_VIOLATION: '{name}' contains banned literal terms ({terms}). "
+        "Rule: identity names must be creative, specific, and non-literal. "
+        "TRY AGAIN with a completely new name that avoids these terms."
+    )
+
+
 def _load_bounties(workspace: Path) -> List[Dict[str, Any]]:
     if EnrichmentSystem is None:
         return []
@@ -572,6 +604,9 @@ def create_identity_from_resident(
         raise ValueError("identity name is required")
     if len(clean_name) > 80:
         raise ValueError("identity name is too long (max 80 chars)")
+    banned_terms = _disallowed_name_terms(clean_name)
+    if banned_terms:
+        raise ValueError(_blacklist_retry_message(clean_name, banned_terms))
 
     identity_id = f"oc_{uuid.uuid4().hex[:8]}"
     clean_summary = (summary or "").strip() or "Self-authored resident identity."
