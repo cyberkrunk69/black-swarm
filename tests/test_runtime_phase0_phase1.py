@@ -429,7 +429,7 @@ def test_run_groq_task_uses_secure_wrapper(monkeypatch):
             self.calls = []
             self.auditor = _Auditor()
 
-        def _estimate_cost(self, prompt, model):
+        def estimate_cost_for_request(self, prompt, model):
             return 0.001
 
         def call_llm(self, **kwargs):
@@ -476,7 +476,7 @@ def test_run_groq_task_blocks_when_estimate_exceeds_task_budget(monkeypatch):
             self.calls = []
             self.auditor = _Auditor()
 
-        def _estimate_cost(self, prompt, model):
+        def estimate_cost_for_request(self, prompt, model):
             return 0.5
 
         def call_llm(self, **kwargs):

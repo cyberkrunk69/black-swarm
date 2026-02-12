@@ -12,6 +12,8 @@ import re
 from enum import Enum
 from typing import List
 
+from vivarium.utils.llm_cost import rough_token_count
+
 
 class EngineType(Enum):
     """Available inference backends."""
@@ -48,12 +50,6 @@ _COMPLEXITY_KEYWORDS: List[str] = [
 ]
 
 
-def _token_count(text: str) -> int:
-    """Approximate token count using whitespace split."""
-
-    return len(text.split())
-
-
 def estimate_complexity(request: str) -> int:
     """
     Return a numeric complexity score. Higher scores -> more demanding request.
@@ -64,7 +60,7 @@ def estimate_complexity(request: str) -> int:
     - +5 if request length > 800 characters
     """
 
-    score = _token_count(request) // 10
+    score = rough_token_count(request) // 10
 
     lowered = request.lower()
     for keyword in _COMPLEXITY_KEYWORDS:

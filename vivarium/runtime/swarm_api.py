@@ -541,7 +541,7 @@ async def _run_groq_task(
         model = auto_easy_model if complexity_score <= auto_easy_threshold else auto_large_model
         validate_model_id(model)
 
-    estimated_cost = SECURE_API_WRAPPER._estimate_cost(req.prompt, model)
+    estimated_cost = SECURE_API_WRAPPER.estimate_cost_for_request(req.prompt, model)
     if req.max_budget is not None and estimated_cost > req.max_budget:
         SECURE_API_WRAPPER.auditor.log({
             "event": "TASK_BUDGET_EXCEEDED",

@@ -41,14 +41,25 @@ class GroqModel:
 # Groq model registry
 GROQ_MODELS = {
     # GPT-OSS 120B - The big one, always use this
+    # Pricing: https://console.groq.com/docs/models
     "openai/gpt-oss-120b": GroqModel(
         model_id="openai/gpt-oss-120b",
         display_name="GPT-OSS 120B",
-        input_cost_per_1m=0.20,
-        output_cost_per_1m=0.80,
+        input_cost_per_1m=0.15,
+        output_cost_per_1m=0.60,
         context_window=131072,
         max_completion=32768,
         tokens_per_second=300
+    ),
+    # GPT-OSS 20B
+    "openai/gpt-oss-20b": GroqModel(
+        model_id="openai/gpt-oss-20b",
+        display_name="GPT-OSS 20B",
+        input_cost_per_1m=0.075,
+        output_cost_per_1m=0.30,
+        context_window=131072,
+        max_completion=4096,
+        tokens_per_second=400
     ),
     # COMPOUND: Auto-selects model (keeping for backwards compat)
     "groq/compound": GroqModel(
@@ -252,16 +263,6 @@ class GroqInferenceEngine:
         # Default: GPT-OSS 120B
         return "openai/gpt-oss-120b"
 
-    def _estimate_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float:
-        """Estimate cost for a request."""
-        if model_id not in GROQ_MODELS:
-            return 0.0
-
-        model = GROQ_MODELS[model_id]
-        input_cost = (input_tokens / 1_000_000) * model.input_cost_per_1m
-        output_cost = (output_tokens / 1_000_000) * model.output_cost_per_1m
-        return input_cost + output_cost
-
     def _rate_limit_wait(self):
         """Enforce rate limiting between requests (thread-safe)."""
         with self._rate_lock:
@@ -351,8 +352,10 @@ class GroqInferenceEngine:
             input_tokens = response.usage.prompt_tokens if response.usage else 0
             output_tokens = response.usage.completion_tokens if response.usage else 0
 
-            # Calculate cost
-            cost = self._estimate_cost(model_id, input_tokens, output_tokens)
+            # Calculate cost via shared llm_cost module
+            from vivarium.utils.llm_cost import estimate_cost
+
+            cost = estimate_cost(model_id, input_tokens, output_tokens)
 
             # Update totals
             self.total_cost += cost
