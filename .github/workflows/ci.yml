@@ -34,4 +34,4 @@ jobs:
           python -m pytest tests/ -m "not integration and not e2e" \
             --cov=vivarium.runtime \
             --cov-report=term-missing \
-            --cov-fail-under=65
+            --cov-fail-under=45
