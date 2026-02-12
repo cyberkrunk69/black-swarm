@@ -36,8 +36,6 @@ def _configure_control_panel_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cp, "BOUNTIES_FILE", swarm_dir / "bounties.json")
     monkeypatch.setattr(cp, "DISCUSSIONS_DIR", swarm_dir / "discussions")
     monkeypatch.setattr(cp, "RUNTIME_SPEED_FILE", swarm_dir / "runtime_speed.json")
-    monkeypatch.setattr(cp, "GROQ_API_KEY_FILE", tmp_path / "security" / "groq_api_key.txt")
-    monkeypatch.setattr(cp.runtime_config, "GROQ_API_KEY_FILE", cp.GROQ_API_KEY_FILE)
     cp.runtime_config.set_groq_api_key(None)
 
     # Sync paths to app.config so blueprints (e.g. identities, stop_toggle, groq_key, chatrooms) use test paths
@@ -48,7 +46,6 @@ def _configure_control_panel_paths(monkeypatch, tmp_path):
     cp.app.config["FREE_TIME_BALANCES"] = swarm_dir / "free_time_balances.json"
     cp.app.config["RUNTIME_SPEED_FILE"] = swarm_dir / "runtime_speed.json"
     cp.app.config["KILL_SWITCH"] = swarm_dir / "kill_switch.json"
-    cp.app.config["GROQ_API_KEY_FILE"] = tmp_path / "security" / "groq_api_key.txt"
     cp.app.config["DISCUSSIONS_DIR"] = swarm_dir / "discussions"
     cp.app.config["QUEUE_FILE"] = tmp_path / "queue.json"
 
@@ -539,7 +536,6 @@ def test_groq_key_api_round_trip_and_clear(monkeypatch, tmp_path):
     ).get_json()
     assert saved["success"] is True
     assert saved["configured"] is True
-    assert cp.GROQ_API_KEY_FILE.exists()
 
     loaded = client.get("/api/groq_key", **_localhost_request_kwargs()).get_json()
     assert loaded["configured"] is True
@@ -548,7 +544,6 @@ def test_groq_key_api_round_trip_and_clear(monkeypatch, tmp_path):
     cleared = client.delete("/api/groq_key", **_localhost_request_kwargs()).get_json()
     assert cleared["success"] is True
     assert cleared["configured"] is False
-    assert not cp.GROQ_API_KEY_FILE.exists()
 
 
 def test_identity_create_api_creates_resident_authored_identity(monkeypatch, tmp_path):

@@ -72,7 +72,6 @@ FREE_TIME_BALANCES = MUTABLE_SWARM_DIR / "free_time_balances.json"
 IDENTITIES_DIR = MUTABLE_SWARM_DIR / "identities"
 DISCUSSIONS_DIR = WORKSPACE / ".swarm" / "discussions"
 RUNTIME_SPEED_FILE = MUTABLE_SWARM_DIR / "runtime_speed.json"
-GROQ_API_KEY_FILE = SECURITY_ROOT / "groq_api_key.txt"
 WORKER_PROCESS_FILE = MUTABLE_SWARM_DIR / "worker_process.json"
 # Operator-only UI controls (kept out of resident-visible world/config paths).
 UI_SETTINGS_FILE = SECURITY_ROOT / "local_ui_settings.json"
@@ -103,7 +102,6 @@ app.config.update({
     'IDENTITIES_DIR': IDENTITIES_DIR,
     'DISCUSSIONS_DIR': DISCUSSIONS_DIR,
     'RUNTIME_SPEED_FILE': RUNTIME_SPEED_FILE,
-    'GROQ_API_KEY_FILE': GROQ_API_KEY_FILE,
     'WORKER_PROCESS_FILE': WORKER_PROCESS_FILE,
     'UI_SETTINGS_FILE': UI_SETTINGS_FILE,
     'LEGACY_UI_SETTINGS_FILE': LEGACY_UI_SETTINGS_FILE,
@@ -287,6 +285,7 @@ def _default_ui_settings() -> dict:
 
 
 def load_ui_settings() -> dict:
+    """Load UI settings from security path. ⚠️ Secrets NEVER committed — see EXAMPLE_ui_settings.json."""
     defaults = _default_ui_settings()
     settings_path = UI_SETTINGS_FILE
     if not settings_path.exists() and LEGACY_UI_SETTINGS_FILE.exists():

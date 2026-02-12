@@ -85,6 +85,9 @@ tests/control_panel/coverage_html/
 
 /vivarium/meta/security/*
 !/vivarium/meta/security/.gitkeep
+# ⚠️ Secrets NEVER committed — see EXAMPLE_ui_settings.json
+vivarium/meta/security/*_ui_settings.json
+!/vivarium/meta/security/EXAMPLE_ui_settings.json
 
 # Local UI defaults (persisted across sessions, machine-local)
 /config/local_ui_settings.json
