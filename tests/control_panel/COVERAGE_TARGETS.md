@@ -7,7 +7,7 @@
 ## Targets by Milestone
 
 ### Milestone 1: Stable (Now)
-- Overall: 50%
+- Overall: 65%
 - Critical paths: 75% (queue, worker, identities)
 - Status: ✅ Achieved with DM/chatrooms tests
 
