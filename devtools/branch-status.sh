@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # branch-status.sh — Branch status, unmerged commits, PR info, diff-stat vs master
-# Output: devtools/branch-status/branch-status_YYYYMMDD_HHMMSS.md (single artifact, lean)
+# Output: devtools/branch-status/branch-status_YYYY-MM-DD_HH-MM-SS.md (single artifact, lean)
 # READ-ONLY: Never modifies repo state.
 
 set -euo pipefail
@@ -12,7 +12,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -f "$REPO_ROOT/requirements.txt" ]] || { echo "❌ Not a Vivarium repo root (requirements.txt missing)"; exit 1; }
 cd "$REPO_ROOT"
 
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 OUT_DIR="$REPO_ROOT/devtools/branch-status"
 OUT_FILE="$OUT_DIR/branch-status_${TIMESTAMP}.md"
 mkdir -p "$OUT_DIR"
@@ -71,6 +71,10 @@ DIFF_STAT=$(git diff "$BASE_REF..HEAD" --stat 2>/dev/null) || true
   echo '```'
 } > "$OUT_FILE"
 
+# Copy to clipboard (macOS)
+[[ "$(uname -s)" == "Darwin" ]] && pbcopy < "$OUT_FILE" 2>/dev/null || true
+
 echo ""
 echo "✅ Branch status captured: $BRANCH ($COMMIT_COUNT commits ahead of $BASE_REF)"
 echo "   Output: $OUT_FILE"
+echo "   Copied to clipboard."

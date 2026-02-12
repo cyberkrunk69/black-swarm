@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # repo-map.sh — Pure structural inventory for Python/GitHub repos
 # Principle: "I collect data. I do NOT interpret risk. LLMs analyze later."
-# Output: devtools/repo-map/repo-map_YYYYMMDD_HHMMSS.md — single consolidated markdown file
+# Output: devtools/repo-map/repo-map_YYYY-MM-DD_HH-MM-SS.md — single consolidated markdown file
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ fi
 # Exclusions (read-only; never modify)
 EXCLUDE=".git|venv|.venv|__pycache__|node_modules|.pytest_cache"
 
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 OUT_DIR="$SCRIPT_DIR/repo-map"
 OUT_FILE="$OUT_DIR/repo-map_${TIMESTAMP}.md"
 mkdir -p "$OUT_DIR"
@@ -243,6 +243,9 @@ print(json.dumps({'file': f, 'imports': lines}))
 
 } > "$OUT_FILE"
 
+# Copy to clipboard (macOS)
+[[ "$(uname -s)" == "Darwin" ]] && pbcopy < "$OUT_FILE" 2>/dev/null || true
+
 # --- FINAL MESSAGE ---
 echo "✅ Repo map generated at $OUT_FILE"
-echo "   Feed to your LLM for debt synthesis."
+echo "   Copied to clipboard. Feed to your LLM for debt synthesis."
