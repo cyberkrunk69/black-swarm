@@ -97,6 +97,10 @@ vivarium/meta/security/*_ui_settings.json
 # Local runtime workspace artifacts
 /.swarm/
 
+# Devtools artifacts (branch-status, repo-map output)
+/devtools/branch-status/
+/devtools/repo-map/
+
 # Build artifacts
 # Swarm sheds its exoskeleton after each molt — no fossilized artifacts
 .swarm/
