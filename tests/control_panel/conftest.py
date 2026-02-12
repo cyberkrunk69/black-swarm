@@ -20,8 +20,6 @@ def app(monkeypatch):
     swarm_dir.mkdir(exist_ok=True)
     identities_dir = swarm_dir / "identities"
     identities_dir.mkdir(exist_ok=True)
-    security_dir = workspace / "security"
-    security_dir.mkdir(exist_ok=True)
 
     _app.config["TESTING"] = True
     _app.config["WORKSPACE"] = workspace
@@ -31,7 +29,6 @@ def app(monkeypatch):
     _app.config["KILL_SWITCH"] = swarm_dir / "kill_switch.json"
     _app.config["FREE_TIME_BALANCES"] = swarm_dir / "free_time_balances.json"
     _app.config["IDENTITIES_DIR"] = identities_dir
-    _app.config["GROQ_API_KEY_FILE"] = security_dir / "groq_key.txt"
     worker_file = swarm_dir / "worker_process.json"
     _app.config["WORKER_PROCESS_FILE"] = worker_file
     monkeypatch.setattr("vivarium.runtime.control_panel_app.WORKER_PROCESS_FILE", worker_file)

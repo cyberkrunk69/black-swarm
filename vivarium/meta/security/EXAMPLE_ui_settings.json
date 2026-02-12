@@ -1,0 +1,10 @@
+{
+  "override_model": false,
+  "model": "auto",
+  "auto_scale": false,
+  "budget_limit": 1.0,
+  "task_min_budget": 0.05,
+  "task_max_budget": 0.10,
+  "resident_count": 1,
+  "human_username": "human"
+}

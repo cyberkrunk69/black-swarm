@@ -208,17 +208,17 @@ def test_identity_lock_can_allow_multishard_with_explicit_opt_in(monkeypatch, tm
     assert second is True
 
 
-def test_runtime_config_loads_groq_key_from_security_file(monkeypatch, tmp_path):
-    key_file = tmp_path / "security" / "groq_api_key.txt"
-    key_file.parent.mkdir(parents=True, exist_ok=True)
-    key_file.write_text("gsk_unit_test_123456789\n", encoding="utf-8")
-
-    monkeypatch.setattr(runtime_config, "GROQ_API_KEY_FILE", key_file)
+def test_runtime_config_loads_groq_key_from_env(monkeypatch):
+    """Keys forage at runtime via env — never from files."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     runtime_config.set_groq_api_key(None)
 
-    loaded = runtime_config.get_groq_api_key()
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_unit_test_123456789")
+    loaded = runtime_config.get_secret("GROQ_API_KEY")
     assert loaded == "gsk_unit_test_123456789"
     runtime_config.validate_config(require_groq_key=True)
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     runtime_config.set_groq_api_key(None)
 
 
@@ -429,7 +429,7 @@ def test_run_groq_task_uses_secure_wrapper(monkeypatch):
             self.calls = []
             self.auditor = _Auditor()
 
-        def _estimate_cost(self, prompt, model):
+        def estimate_cost_for_request(self, prompt, model):
             return 0.001
 
         def call_llm(self, **kwargs):
@@ -476,7 +476,7 @@ def test_run_groq_task_blocks_when_estimate_exceeds_task_budget(monkeypatch):
             self.calls = []
             self.auditor = _Auditor()
 
-        def _estimate_cost(self, prompt, model):
+        def estimate_cost_for_request(self, prompt, model):
             return 0.5
 
         def call_llm(self, **kwargs):

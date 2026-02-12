@@ -86,6 +86,16 @@ class BudgetEnforcer:
             self._spent += cost
             return True
 
+    def refund(self, amount: float) -> None:
+        """Return reserved budget (e.g. after pre-call estimation)."""
+        with self._lock:
+            self._spent = max(0.0, self._spent - amount)
+
+    def deduct_actual(self, amount: float) -> None:
+        """Apply actual cost after API call (post-call reconciliation)."""
+        with self._lock:
+            self._spent += amount
+
     def get_spent(self) -> float:
         with self._lock:
             return self._spent
@@ -221,10 +231,13 @@ class SecureAPIWrapper:
             })
             raise PermissionError(f"Request violates constitutional rules: {reason}")
 
-        # 3. Estimate cost (before calling)
-        estimated_cost = self._estimate_cost(prompt, model)
+        # 3. Estimate cost (before calling) – reservation only
+        from vivarium.utils.llm_cost import estimate_cost, rough_token_count
 
-        # 4. Budget check
+        estimated_input_tokens = rough_token_count(prompt)
+        estimated_cost = estimate_cost(model, estimated_input_tokens, 500)
+
+        # 4. Budget check – reserve estimated cost
         if not self.budget.check_and_deduct(estimated_cost):
             self.auditor.log({
                 "event": "BUDGET_EXCEEDED",
@@ -248,13 +261,18 @@ class SecureAPIWrapper:
 
             result = execute_with_groq(prompt=prompt, model=model, **kwargs)
 
-            # 6. Audit the call
+            # 6. Post-call reconciliation: apply actual cost
+            actual_cost = result.get("cost", 0.0)
+            self.budget.refund(estimated_cost)
+            self.budget.deduct_actual(actual_cost)
+
+            # 7. Audit the call
             self.auditor.log({
                 "event": "API_CALL_SUCCESS",
                 "user": self.context.user_id,
                 "role": self.context.role,
                 "model": model,
-                "cost": result.get('cost', estimated_cost),
+                "cost": actual_cost,
                 "input_tokens": result.get('input_tokens', 0),
                 "output_tokens": result.get('output_tokens', 0),
                 "call_type": audit_call_type,
@@ -265,8 +283,8 @@ class SecureAPIWrapper:
             return result
 
         except Exception as e:
-            # Refund on failure
-            self.budget.check_and_deduct(-estimated_cost)
+            # Refund reservation on failure
+            self.budget.refund(estimated_cost)
 
             self.auditor.log({
                 "event": "API_CALL_FAILURE",
@@ -279,20 +297,12 @@ class SecureAPIWrapper:
             })
             raise
 
-    def _estimate_cost(self, prompt: str, model: str) -> float:
-        """Estimate cost based on prompt length and model."""
-        # Rough estimation: ~750 tokens per 1000 chars input + 500 output tokens
-        input_tokens = len(prompt) * 0.75
-        output_tokens = 500  # Conservative estimate
+    def estimate_cost_for_request(self, prompt: str, model: str) -> float:
+        """Estimate cost for budget check before API call."""
+        from vivarium.utils.llm_cost import estimate_cost, rough_token_count
 
-        # Groq pricing (approximate)
-        if 'llama-3.3-70b' in model:
-            return (input_tokens * 0.59 + output_tokens * 0.79) / 1_000_000
-        elif 'llama-3.1-8b' in model:
-            return (input_tokens * 0.05 + output_tokens * 0.08) / 1_000_000
-        else:
-            # Default to higher estimate for safety
-            return (input_tokens * 1.0 + output_tokens * 1.0) / 1_000_000
+        input_tokens = rough_token_count(prompt)
+        return estimate_cost(model, input_tokens, 500)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get current usage statistics."""

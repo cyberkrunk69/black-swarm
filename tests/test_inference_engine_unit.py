@@ -21,7 +21,8 @@ def test_estimate_complexity_keywords():
 def test_estimate_complexity_length_bonus():
     request = "word " * 170
     assert len(request) > 800
-    assert estimate_complexity(request) == 22
+    # rough_token_count: 170 words * 1.3 ≈ 221; score = 221//10 + 5 = 27
+    assert estimate_complexity(request) == 27
 
 
 def test_get_engine_type_from_env(monkeypatch):

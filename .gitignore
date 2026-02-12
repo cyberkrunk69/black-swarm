@@ -69,6 +69,8 @@ tests/control_panel/coverage_html/
 # Vivarium scoped runtime data
 /vivarium/world/mutable/*
 !/vivarium/world/mutable/.gitkeep
+/vivarium/world/mutable/.swarm/
+!/vivarium/world/mutable/EXAMPLE_swarm_state/
 
 /vivarium/world/fresh_swarm/*
 !/vivarium/world/fresh_swarm/.gitkeep
@@ -85,9 +87,26 @@ tests/control_panel/coverage_html/
 
 /vivarium/meta/security/*
 !/vivarium/meta/security/.gitkeep
+# ⚠️ Secrets NEVER committed — see EXAMPLE_ui_settings.json
+vivarium/meta/security/*_ui_settings.json
+!/vivarium/meta/security/EXAMPLE_ui_settings.json
 
 # Local UI defaults (persisted across sessions, machine-local)
 /config/local_ui_settings.json
 
 # Local runtime workspace artifacts
 /.swarm/
+
+# Devtools artifacts (branch-status, repo-map, ci-status, pr-message-gen output)
+/devtools/branch-status/
+/devtools/repo-map/
+/devtools/ci-status/
+/devtools/pr-message-gen/
+
+# Build artifacts
+# Swarm sheds its exoskeleton after each molt — no fossilized artifacts
+.swarm/
+!.swarm/README.md
+tests/control_panel/coverage_html/
+coverage.xml
+.coverage*

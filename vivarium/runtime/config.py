@@ -4,7 +4,6 @@ import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
-from vivarium.runtime.vivarium_scope import SECURITY_ROOT
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -33,7 +32,6 @@ SWARM_API_URL = os.environ.get("SWARM_API_URL", "http://127.0.0.1:8420")
 # Groq API settings
 GROQ_API_URL = os.environ.get("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_API_KEY_FILE = SECURITY_ROOT / "groq_api_key.txt"
 
 # Groq-only model whitelist (hard policy)
 GROQ_MODEL_WHITELIST = {
@@ -78,23 +76,21 @@ AUTO_APPROVE_MIN_CONFIDENCE = _safe_float_env("VIVARIUM_AUTO_APPROVE_MIN_CONFIDE
 
 
 def get_groq_api_key() -> str | None:
-    """Return live GROQ API key (env overrides cached value)."""
+    """Return live GROQ API key (env overrides cached value). Never reads from files."""
     global GROQ_API_KEY
     env_key = os.environ.get("GROQ_API_KEY")
     if env_key:
         return env_key
     if GROQ_API_KEY:
         return GROQ_API_KEY
-    if GROQ_API_KEY_FILE.exists():
-        try:
-            persisted = GROQ_API_KEY_FILE.read_text(encoding="utf-8").strip()
-        except OSError:
-            persisted = ""
-        if persisted:
-            os.environ["GROQ_API_KEY"] = persisted
-            GROQ_API_KEY = persisted
-            return persisted
     return None
+
+
+def get_secret(name: str) -> str | None:
+    """Return secret from runtime config (env vars + in-memory). Never reads from files."""
+    if name == "GROQ_API_KEY":
+        return get_groq_api_key()
+    return os.environ.get(name)
 
 
 def set_groq_api_key(api_key: str | None) -> None:

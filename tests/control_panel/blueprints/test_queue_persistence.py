@@ -37,7 +37,6 @@ def test_queue_survives_app_restart(app, client, localhost_kwargs):
     new_app_instance.config["EXECUTION_LOG"] = app.config["EXECUTION_LOG"]
     new_app_instance.config["IDENTITIES_DIR"] = app.config["IDENTITIES_DIR"]
     new_app_instance.config["KILL_SWITCH"] = app.config["KILL_SWITCH"]
-    new_app_instance.config["GROQ_API_KEY_FILE"] = app.config["GROQ_API_KEY_FILE"]
     new_app_instance.config["RUNTIME_SPEED_FILE"] = app.config["RUNTIME_SPEED_FILE"]
     new_app_instance.config["MAILBOX_QUESTS_FILE"] = app.config["MAILBOX_QUESTS_FILE"]
 
@@ -92,7 +91,6 @@ def test_one_time_task_survives_restart(app, client, localhost_kwargs):
             "EXECUTION_LOG": app.config["EXECUTION_LOG"],
             "IDENTITIES_DIR": app.config["IDENTITIES_DIR"],
             "KILL_SWITCH": app.config["KILL_SWITCH"],
-            "GROQ_API_KEY_FILE": app.config["GROQ_API_KEY_FILE"],
             "RUNTIME_SPEED_FILE": app.config["RUNTIME_SPEED_FILE"],
             "MAILBOX_QUESTS_FILE": app.config["MAILBOX_QUESTS_FILE"],
         }
