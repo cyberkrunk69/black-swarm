@@ -103,6 +103,9 @@ vivarium/meta/security/*_ui_settings.json
 /devtools/ci-status/
 /devtools/pr-message-gen/
 
+# Scout index (local code search cache)
+.scout/
+
 # Build artifacts
 # Swarm sheds its exoskeleton after each molt — no fossilized artifacts
 .swarm/

@@ -1,0 +1,8 @@
+#!/bin/bash
+# devtools/scripts/scout-brief — Scout Investigation Plan CLI
+# Generates comprehensive briefings for expensive models with git context,
+# dependencies, and "Recommended Deep Model Prompt" section.
+set -e
+
+cd "$(dirname "$0")/../.."
+python3 -m vivarium.scout.cli.brief "$@"

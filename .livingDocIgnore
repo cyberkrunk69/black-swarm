@@ -1,0 +1,21 @@
+# Scout system files (NEVER trigger on these)
+~/.scout/
+.scout/
+scout-*.py
+scout-config.yaml
+
+# Auto-generated outputs (changes here are RESULTS, not TRIGGERS)
+docs/drafts/**
+docs/.scout-cache/
+
+# Audit trail (writing logs must not trigger more logs)
+~/.scout/*.scoutlog
+
+# Self-protection
+.livingDocIgnore
+
+# Build artifacts
+__pycache__/
+*.pyc
+dist/
+node_modules/

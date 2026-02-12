@@ -1,0 +1,7 @@
+#!/bin/bash
+# devtools/scripts/scout-roast — Scout Roast CLI
+# Generate efficiency reports from audit logs. "Big AI hates this one simple trick."
+set -e
+
+cd "$(dirname "$0")/../.."
+python3 -m vivarium.scout.cli.roast "$@"

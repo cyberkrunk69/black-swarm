@@ -1,0 +1,7 @@
+#!/bin/bash
+# devtools/scripts/scout-index — Local code search (ctags + ripgrep + SQLite)
+# Zero LLM calls for lookups. Free and instant (<100ms).
+set -e
+
+cd "$(dirname "$0")/../.."
+python3 -m vivarium.scout.cli.index "$@"

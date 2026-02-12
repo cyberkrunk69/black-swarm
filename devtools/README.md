@@ -11,7 +11,11 @@ devtools/
 │   ├── branch-status.sh
 │   ├── repo-map.sh
 │   ├── commit-message-gen.sh
-│   └── pr-message-gen.sh
+│   ├── pr-message-gen.sh
+│   ├── scout-nav               # Scout navigation CLI (find code in 2s)
+│   ├── scout-index             # Local code search (ctags + SQLite, zero LLM)
+│   ├── scout-brief              # Scout investigation plan CLI (briefing for expensive models)
+│   └── scout-roast              # Scout Roast CLI (efficiency reports from audit logs)
 ├── _internal/                  # Internal logic, shared libs, supporting files
 │   ├── ci-status/              # Dry-run + execute split, ci-status-lib.py
 │   ├── common/                 # utils.sh, api-confirm.sh
@@ -42,6 +46,11 @@ devtools/
 - `./devtools/scripts/repo-map.sh`
 - `./devtools/scripts/commit-message-gen.sh` — requires staged files (`git add` first)
 - `./devtools/scripts/pr-message-gen.sh`
+- `./devtools/scripts/scout-nav --task "fix auth timeout bug"` — Scout navigation (uses scout-index when possible, else GROQ_API_KEY)
+- `./devtools/scripts/scout-index build` — Build local code index (ctags + SQLite)
+- `./devtools/scripts/scout-index query "auth token"` — Search symbols (no API calls)
+- `./devtools/scripts/scout-brief --task "fix race condition in token refresh"` — Investigation plan (requires GROQ_API_KEY)
+- `./devtools/scripts/scout-roast --today` — Efficiency report (today/week/month, optional --compare)
 
 ## Unified API Confirmation
 
@@ -77,6 +86,64 @@ Generate a draft PR description from branch commits, CI status, and repo map. Ru
 **Requirements:** `gh` optionally for CI status and related issues. Repo map requires macOS.
 
 **Options:** `COPY_CLIPBOARD=0` to disable clipboard copy.
+
+## scout-index
+
+Local code search — zero LLM calls. Uses ctags + ripgrep + SQLite FTS5 for instant lookups (<100ms).
+
+**Usage:**
+- `./devtools/scripts/scout-index build` — Build index from scratch
+- `./devtools/scripts/scout-index update` — Incremental update (git diff)
+- `./devtools/scripts/scout-index query "auth token"` — Search symbols and files
+- `./devtools/scripts/scout-index watch` — Background daemon, auto-update
+- `./devtools/scripts/scout-index stats` — Show coverage
+
+**Requirements:** `ctags` (Universal Ctags recommended: `brew install universal-ctags`). Optional: `rg` (ripgrep) for content search.
+
+**Output:** Index stored in `.scout/index.db`. scout-nav uses it when confidence ≥80% (free); otherwise falls back to LLM ($0.002).
+
+## scout-nav
+
+Scout navigation CLI — find code in 2 seconds. Tries scout-index first (free); uses Groq LLM when index uncertain.
+
+**Usage:**
+- `./devtools/scripts/scout-nav --task "fix auth timeout bug"`
+- `./devtools/scripts/scout-nav --task "add OAuth provider" --entry vivarium/runtime/`
+- `./devtools/scripts/scout-nav --file vivarium/runtime/auth.py --question "where is token refresh?"`
+- `./devtools/scripts/scout-nav --task "fix race condition" --json`
+- `./devtools/scripts/scout-nav --task "optimize query" --output briefing.md`
+
+**Requirements:** `GROQ_API_KEY` (env or runtime config), `httpx`, `vivarium`
+
+**Output:** Pretty-printed result (default), JSON (with `--json`), or markdown briefing (with `--output`)
+
+## scout-brief
+
+Scout investigation plan CLI — generates comprehensive briefings for expensive models with git context, dependencies, and "Recommended Deep Model Prompt" section. Uses Groq (Llama 8B/70B) only; vendor-agnostic for expensive models.
+
+**Usage:**
+- `./devtools/scripts/scout-brief --task "fix race condition in token refresh"`
+- `./devtools/scripts/scout-brief --task "add OAuth provider" --entry vivarium/runtime/auth/`
+- `./devtools/scripts/scout-brief --pr 42 --output pr-briefing.md`
+- `./devtools/scripts/scout-brief --task "optimize query" --output brief.md`
+
+**Requirements:** `GROQ_API_KEY` (env or runtime config), `httpx`, `vivarium`
+
+**Output:** Markdown briefing (stdout or file via `--output`)
+
+## scout-roast
+
+Scout Roast CLI — efficiency reports from audit logs. "Big AI hates this one simple trick." Generates savings reports that make expensive tool usage tangible.
+
+**Usage:**
+- `./devtools/scripts/scout-roast --today` — Today's savings
+- `./devtools/scripts/scout-roast --week` — This week
+- `./devtools/scripts/scout-roast --month` — This month
+- `./devtools/scripts/scout-roast --today --compare gpt-4` — Compare vs specific model
+
+**Requirements:** Audit log at `~/.scout/audit.jsonl` (populated by scout-nav / scout-brief)
+
+**Output:** ASCII box report with Scout cost, avoided cost, savings %, accuracy, avg nav time
 
 ## repo-map
 

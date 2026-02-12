@@ -1,0 +1,6 @@
+#!/bin/bash
+# devtools/scripts/scout-nav — Scout navigation CLI
+set -e
+
+cd "$(dirname "$0")/../.."
+python3 -m vivarium.scout.cli.nav "$@"
