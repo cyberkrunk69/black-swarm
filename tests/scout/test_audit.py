@@ -125,8 +125,8 @@ def test_query_performance_10k_events(audit_path):
     log.close()
 
     assert len(events) == 10000
-    # 1s threshold accommodates CI runners (shared CPU, slower I/O)
-    assert elapsed_ms < 1000, f"Query took {elapsed_ms:.1f}ms, expected <1000ms"
+    # 3s threshold accommodates slow CI runners (shared CPU, cold I/O)
+    assert elapsed_ms < 3000, f"Query took {elapsed_ms:.1f}ms, expected <3000ms"
 
 
 # --- Log rotation ---

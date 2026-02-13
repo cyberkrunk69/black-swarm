@@ -37,7 +37,7 @@ def audit_path(tmp_path):
 def mock_llm_valid():
     """Mock LLM returning valid navigation suggestion."""
 
-    async def _mock(prompt, model="llama-3.1-8b-instant", system=None):
+    async def _mock(prompt, model="llama-3.1-8b-instant", system=None, max_tokens=500, **kwargs):
         return NavResponse(
             content=json.dumps({
                 "file": "vivarium/scout/router.py",
@@ -60,7 +60,7 @@ def mock_llm_valid():
 def mock_llm_file_qa():
     """Mock LLM for file Q&A mode."""
 
-    async def _mock(prompt, model="llama-3.1-8b-instant", system=None):
+    async def _mock(prompt, model="llama-3.1-8b-instant", system=None, max_tokens=500, **kwargs):
         return NavResponse(
             content=json.dumps({
                 "file": "vivarium/scout/router.py",
@@ -204,7 +204,7 @@ def test_validation_failure_and_retry(tmp_repo, audit_path):
     """Validation failure triggers retry with alternatives."""
     call_count = 0
 
-    async def mock_invalid_then_valid(prompt, model="llama-3.1-8b-instant", system=None):
+    async def mock_invalid_then_valid(prompt, model="llama-3.1-8b-instant", system=None, max_tokens=500, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -253,7 +253,7 @@ def test_validation_failure_and_retry(tmp_repo, audit_path):
 
 def test_escalation_to_70b(tmp_repo, audit_path):
     """Persistent validation failure escalates to 70B model."""
-    async def mock_always_invalid(prompt, model="llama-3.1-8b-instant", system=None):
+    async def mock_always_invalid(prompt, model="llama-3.1-8b-instant", system=None, max_tokens=500, **kwargs):
         return NavResponse(
             content=json.dumps({
                 "file": "vivarium/scout/hallucinated.py",
