@@ -1,18 +1,25 @@
 """
-Scout doc generation — process Python files and directories for documentation sync.
+Scout doc generation — process files and directories for documentation sync.
 
+Supports Python, JavaScript, and plain-text fallback via language adapters.
 Provides process_single_file and process_directory for use by doc_sync CLI.
 """
 
 from __future__ import annotations
 
 import asyncio
-import ast
+import hashlib
+import json
 import logging
+import os
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from vivarium.scout.adapters.base import SymbolTree
+from vivarium.scout.adapters.registry import get_adapter_for_path
 from vivarium.scout.audit import AuditLog
 from vivarium.scout.config import ScoutConfig
 from vivarium.scout.ignore import IgnorePatterns
@@ -20,228 +27,438 @@ from vivarium.scout.llm import call_groq_async
 
 logger = logging.getLogger(__name__)
 
-# Default model for TL;DR generation
+# ANSI escape codes for terminal output (no extra deps)
+_RESET = "\033[0m"
+_RED = "\033[91m"
+_CLEAR_SCREEN = "\033[H\033[J"  # cursor home + clear
+_INVERSE = "\033[7m"   # inverse video (pulse)
+_INVERSE_OFF = "\033[27m"
+
+
+class BudgetExceededError(RuntimeError):
+    """Raised when doc-sync exceeds the --budget limit."""
+
+    def __init__(self, total_cost: float, budget: float) -> None:
+        super().__init__(f"Budget exceeded: ${total_cost:.4f} >= ${budget}")
+        self.total_cost = total_cost
+        self.budget = budget
+
+
+@dataclass
+class FileProcessResult:
+    """Result of processing a single file for doc generation."""
+
+    success: bool
+    cost_usd: float
+    symbols_count: int
+    calls_count: int
+    types_count: int
+    exports_count: int
+    model: str
+    skipped: bool = False  # True when skipped due to freshness (up to date)
+    error: Optional[str] = None
+    call_chain: Optional[str] = None  # e.g. "funcA → pkgB.funcB → pkgC.funcC"
+
+
+@dataclass
+class TraceResult:
+    """Result of pure static analysis (no LLM)."""
+
+    root_tree: SymbolTree
+    symbols_to_doc: List[SymbolTree]
+    all_calls: set
+    all_types: set
+    all_exports: set
+    adapter: Any
+    dependencies: List[str]
+
+
+def _get_tldr_meta_path(file_path: Path, output_dir: Optional[Path]) -> Path:
+    """Path to .tldr.md.meta for freshness check. Mirrors write_documentation_files logic."""
+    file_path = Path(file_path).resolve()
+    if output_dir is not None:
+        out = Path(output_dir).resolve()
+        base_name = file_path.stem
+        return out / f"{base_name}.tldr.md.meta"
+    local_dir = file_path.parent / ".docs"
+    base_name = file_path.name
+    return local_dir / f"{base_name}.tldr.md.meta"
+
+
+def _compute_source_hash(file_path: Path) -> str:
+    """SHA256 of file content for freshness check."""
+    data = file_path.read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+def _compute_symbol_hash(symbol: SymbolTree, file_path: Path) -> str:
+    """SHA256 of symbol's source range for diff-aware patching."""
+    snippet = extract_source_snippet(file_path, symbol.lineno, symbol.end_lineno)
+    return hashlib.sha256(snippet.encode("utf-8")).hexdigest()
+
+
+def _read_freshness_meta(meta_path: Path) -> Optional[Dict[str, Any]]:
+    """Read .tldr.md.meta JSON. Returns None if missing or invalid."""
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _is_up_to_date(file_path: Path, output_dir: Optional[Path]) -> bool:
+    """True if .tldr.md.meta exists and source_hash matches current file."""
+    meta_path = _get_tldr_meta_path(file_path, output_dir)
+    meta = _read_freshness_meta(meta_path)
+    if not meta:
+        return False
+    current_hash = _compute_source_hash(file_path)
+    return meta.get("source_hash") == current_hash
+
+
+def _module_to_file_path(repo_root: Path, qual: str) -> Optional[Tuple[str, str]]:
+    """
+    Resolve qualified name (e.g. vivarium.scout.llm.call_groq_async) to (file_path, symbol).
+    Returns (repo_relative_path, symbol_name) or None if unresolvable.
+    """
+    parts = qual.split(".")
+    if len(parts) < 2:
+        return None
+    symbol = parts[-1]  # e.g. call_groq_async
+    # Try progressively shorter module paths: vivarium.scout.llm -> vivarium.scout -> vivarium
+    for i in range(len(parts) - 1, 0, -1):
+        mod = ".".join(parts[:i])
+        path_str = mod.replace(".", "/")
+        for candidate in [
+            repo_root / f"{path_str}.py",
+            repo_root / path_str / "__init__.py",
+        ]:
+            if candidate.exists():
+                try:
+                    rel = str(candidate.relative_to(repo_root))
+                    return (rel, symbol)
+                except ValueError:
+                    pass
+    return None
+
+
+def export_call_graph(
+    target_path: Path,
+    *,
+    output_path: Optional[Path] = None,
+    repo_root: Optional[Path] = None,
+) -> Path:
+    """
+    Build and export call graph as JSON (nodes: path::symbol, edges: calls).
+    Used by scout-pr for impact analysis.
+
+    Format:
+      nodes: { "path::symbol": { "type": "function", "file": "path" } }
+      edges: [ { "from": "path::symbol", "to": "path::symbol", "type": "calls" } ]
+    """
+    target_path = Path(target_path).resolve()
+    root = repo_root or Path.cwd().resolve()
+    if output_path is None:
+        docs_dir = target_path / ".docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        output_path = docs_dir / "call_graph.json"
+    output_path = Path(output_path).resolve()
+
+    nodes: Dict[str, Dict[str, Any]] = {}
+    edges: List[Dict[str, str]] = []
+
+    for py_path in target_path.rglob("*.py"):
+        if "__pycache__" in str(py_path):
+            continue
+        try:
+            adapter = get_adapter_for_path(py_path, "python")
+        except Exception:
+            continue
+        try:
+            root_tree = adapter.parse(py_path)
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+
+        try:
+            rel = str(py_path.relative_to(root))
+        except ValueError:
+            rel = str(py_path)
+
+        for symbol in root_tree.iter_symbols():
+            if symbol.name.startswith("_") and not symbol.name.startswith("__"):
+                continue
+            node_key = f"{rel}::{symbol.name}"
+            if node_key not in nodes:
+                nodes[node_key] = {"type": symbol.type, "file": rel}
+
+            for call in getattr(symbol, "calls", None) or []:
+                resolved = _module_to_file_path(root, call)
+                if resolved:
+                    callee_path, callee_sym = resolved
+                    callee_key = f"{callee_path}::{callee_sym}"
+                    if callee_key not in nodes:
+                        nodes[callee_key] = {"type": "function", "file": callee_path}
+                    edges.append({"from": node_key, "to": callee_key, "type": "calls"})
+
+    payload = {"nodes": nodes, "edges": edges}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output_path
+
+
+def get_downstream_impact(
+    changed_files: List[Path],
+    call_graph_path: Path,
+    repo_root: Path,
+) -> List[str]:
+    """
+    Given changed files and call_graph.json, return list of module paths
+    affected (changed files + their downstream callees).
+    """
+    if not call_graph_path.exists():
+        return []
+    try:
+        data = json.loads(call_graph_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    nodes = data.get("nodes", {})
+    edges = data.get("edges", [])
+
+    def _rel(p: Path) -> str:
+        try:
+            return str(p.resolve().relative_to(repo_root))
+        except ValueError:
+            return str(p)
+
+    changed_set: Set[str] = set()
+    for f in changed_files:
+        if f.suffix == ".py":
+            changed_set.add(_rel(f))
+
+    # Build reverse: callee -> callers (we need forward: caller -> callees)
+    # Affected = changed files + all files they call (transitively)
+    affected: Set[str] = set(changed_set)
+    from_to: Dict[str, Set[str]] = {}
+    for e in edges:
+        fr = e.get("from", "")
+        to = e.get("to", "")
+        if "::" in fr and "::" in to:
+            file_from = fr.split("::", 1)[0]
+            file_to = to.split("::", 1)[0]
+            if file_from not in from_to:
+                from_to[file_from] = set()
+            from_to[file_from].add(file_to)
+
+    # Transitive closure: from each changed file, add all reachable callees
+    work = list(changed_set)
+    while work:
+        f = work.pop()
+        for callee in from_to.get(f, []):
+            if callee not in affected:
+                affected.add(callee)
+                work.append(callee)
+
+    return sorted(affected)
+
+
+def export_knowledge_graph(
+    target_path: Path,
+    *,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """
+    Build and export knowledge graph as JSON (nodes: files/funcs/classes, edges: calls/uses/exports).
+
+    Format compatible with Neo4j, Obsidian, or RAG ingestion.
+    Returns path to written file.
+    """
+    target_path = Path(target_path).resolve()
+    if output_path is None:
+        output_path = target_path / "vivarium.kg.json"
+    output_path = Path(output_path).resolve()
+
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    node_ids: Dict[str, str] = {}
+
+    def _id(typ: str, path: str, name: str = "") -> str:
+        key = f"{typ}:{path}:{name}"
+        if key not in node_ids:
+            nid = f"n{len(node_ids)}"
+            node_ids[key] = nid
+        return node_ids[key]
+
+    for py_path in target_path.rglob("*.py"):
+        if "__pycache__" in str(py_path):
+            continue
+        try:
+            adapter = get_adapter_for_path(py_path, "python")
+        except Exception:
+            continue
+        try:
+            root = adapter.parse(py_path)
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+
+        rel = str(py_path.relative_to(target_path))
+        file_id = _id("file", rel)
+        nodes.append({
+            "id": file_id,
+            "type": "file",
+            "path": rel,
+            "name": py_path.stem,
+            "tldr": None,
+        })
+
+        for symbol in root.iter_symbols():
+            if symbol.name.startswith("_") and not symbol.name.startswith("__"):
+                continue
+            sym_type = symbol.type
+            qual = f"{rel}::{symbol.name}"
+            sym_id = _id("symbol", rel, symbol.name)
+            nodes.append({
+                "id": sym_id,
+                "type": sym_type,
+                "path": rel,
+                "name": symbol.name,
+                "qual": qual,
+            })
+            edges.append({"from": sym_id, "to": file_id, "type": "defined_in"})
+
+            for call in getattr(symbol, "calls", None) or []:
+                edges.append({"from": sym_id, "to": call, "type": "calls"})
+            for typ in getattr(symbol, "uses_types", None) or []:
+                edges.append({"from": sym_id, "to": typ, "type": "uses"})
+            for exp in getattr(symbol, "exports", None) or []:
+                edges.append({"from": sym_id, "to": exp, "type": "exports"})
+
+    kg = {"nodes": nodes, "edges": edges}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(kg, indent=2), encoding="utf-8")
+    return output_path
+
+
+def find_stale_files(
+    target_path: Path,
+    *,
+    recursive: bool = True,
+    output_dir: Optional[Path] = None,
+) -> List[Path]:
+    """
+    Find .py files whose docs are stale (meta exists but source_hash mismatch).
+
+    Returns list of file paths that need reprocessing.
+    """
+    if not target_path.exists():
+        return []
+    if target_path.is_file():
+        if target_path.suffix == ".py":
+            meta = _read_freshness_meta(_get_tldr_meta_path(target_path, output_dir))
+            if meta and meta.get("source_hash") != _compute_source_hash(target_path):
+                return [target_path]
+        return []
+
+    patterns = _DIRECTORY_PATTERNS if recursive else ["*.py", "*.js", "*.mjs", "*.cjs"]
+    files: List[Path] = []
+    for pattern in patterns:
+        for f in target_path.glob(pattern):
+            if f.is_file() and "__pycache__" not in str(f) and f.suffix == ".py":
+                meta = _read_freshness_meta(_get_tldr_meta_path(f, output_dir))
+                if meta and meta.get("source_hash") != _compute_source_hash(f):
+                    files.append(f)
+    return files
+
+
+def _write_freshness_meta(
+    meta_path: Path,
+    source_hash: str,
+    model: str,
+    symbols: Optional[Dict[str, Dict[str, str]]] = None,
+) -> None:
+    """Write .tldr.md.meta. Not mirrored to docs/livingDoc/."""
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta: Dict[str, Any] = {
+        "source_hash": source_hash,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "model": model,
+    }
+    if symbols:
+        meta["symbols"] = symbols
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+# Fallback models when config does not specify
 TLDR_MODEL = "llama-3.1-8b-instant"
-
-# Default model for deep content (use 70b for more detail if needed)
 DEEP_MODEL = "llama-3.1-8b-instant"
-
-# Default model for ELIV (Explain Like I'm Very Young) generation
 ELIV_MODEL = "llama-3.1-8b-instant"
 
 
-def _extract_logic_hints(node: ast.FunctionDef | ast.AsyncFunctionDef) -> List[str]:
-    """Extract logic hints from a function/method body by scanning AST nodes."""
-    hints: List[str] = []
-    for child in ast.walk(node):
-        if isinstance(child, (ast.For, ast.While)):
-            if "loop" not in hints:
-                hints.append("loop")
-        elif isinstance(child, ast.If):
-            if "conditional" not in hints:
-                hints.append("conditional")
-        elif isinstance(child, (ast.Try, ast.With, ast.Raise)):
-            if "exception_handling" not in hints:
-                hints.append("exception_handling")
-        elif isinstance(child, ast.Return):
-            if "return" not in hints:
-                hints.append("return")
-        elif isinstance(child, (ast.Yield, ast.YieldFrom)):
-            if "generator" not in hints:
-                hints.append("generator")
-        elif isinstance(child, ast.Await):
-            if "async" not in hints:
-                hints.append("async")
-        elif isinstance(child, ast.Call):
-            if "call" not in hints:
-                hints.append("call")
-    return hints
-
-
-def _build_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    """Build a signature string for a function or async function."""
-    try:
-        # Create a minimal node with empty body for unparsing (Python 3.9+)
-        if isinstance(node, ast.AsyncFunctionDef):
-            sig_node: ast.AST = ast.AsyncFunctionDef(
-                name=node.name,
-                args=node.args,
-                body=[ast.Pass()],
-                decorator_list=[],
-                returns=node.returns,
-            )
-        else:
-            sig_node = ast.FunctionDef(
-                name=node.name,
-                args=node.args,
-                body=[ast.Pass()],
-                decorator_list=[],
-                returns=node.returns,
-            )
-        ast.copy_location(sig_node, node)
-        unparsed = ast.unparse(sig_node)
-        idx = unparsed.find(":\n")
-        sig = unparsed[:idx] if idx != -1 else unparsed.replace(": pass", "").rstrip()
-        return sig
-    except (AttributeError, TypeError):
-        pass
-    # Fallback: manual signature from args
-    prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
-    parts: List[str] = []
-    for arg in node.args.args:
-        if arg.arg == "self" or arg.arg == "cls":
-            continue
-        parts.append(arg.arg)
-    for i, default in enumerate(node.args.defaults):
-        arg_idx = len(node.args.args) - len(node.args.defaults) + i
-        if arg_idx >= 0 and node.args.args[arg_idx].arg not in ("self", "cls"):
-            if arg_idx < len(parts):
-                parts[arg_idx] = f"{parts[arg_idx]}=..."
-    return prefix + node.name + "(" + ", ".join(parts) + ")"
-
-
-def _parse_assign_targets(node: ast.Assign) -> List[str]:
-    """Extract names from an assignment target (handles tuple unpacking)."""
-    names: List[str] = []
-    for target in node.targets:
-        if isinstance(target, ast.Name):
-            names.append(target.id)
-        elif isinstance(target, ast.Tuple):
-            for elt in target.elts:
-                if isinstance(elt, ast.Name):
-                    names.append(elt.id)
-    return names
-
-
-def parse_python_file(file_path: Path) -> Dict[str, Any]:
-    """
-    Parse a Python file using the AST and extract top-level symbols.
-
-    Extracts classes, functions, async functions, methods, and module-level
-    constants. For each symbol, captures name, type, line range, docstring,
-    signature (for callables), and logic hints (for callables).
-
-    Args:
-        file_path: Path to the Python file to parse.
-
-    Returns:
-        A dict with keys:
-        - path: str, the file path as string
-        - symbols: list of symbol dicts, each with name, type, lineno,
-          end_lineno, docstring, signature (callables), logic_hints (callables)
-        - error: str or None, set if parsing failed
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-        ValueError: If the path is not a .py file.
-    """
-    file_path = Path(file_path).resolve()
-    if not file_path.exists() or not file_path.is_file():
-        raise FileNotFoundError(f"Target file not found: {file_path}")
-    if file_path.suffix != ".py":
-        raise ValueError(f"Target is not a Python file: {file_path}")
-
-    result: Dict[str, Any] = {
-        "path": str(file_path),
-        "symbols": [],
-        "error": None,
+def _resolve_doc_model(kind: str) -> str:
+    """Resolve model from config (models.tldr, models.deep, models.eliv, models.pr_synthesis)."""
+    config = ScoutConfig()
+    models = config.get("models") or {}
+    model = models.get(kind)
+    if model:
+        return model
+    fallbacks = {
+        "tldr": TLDR_MODEL,
+        "deep": DEEP_MODEL,
+        "eliv": ELIV_MODEL,
+        "pr_synthesis": TLDR_MODEL,
     }
+    return fallbacks.get(kind, TLDR_MODEL)
 
-    try:
-        content = file_path.read_text(encoding="utf-8", errors="strict")
-    except UnicodeDecodeError as e:
-        result["error"] = f"UnicodeDecodeError: {e}"
-        logger.warning("Could not read %s: %s", file_path, e)
-        return result
-    except OSError as e:
-        result["error"] = f"OSError: {e}"
-        logger.warning("Could not read %s: %s", file_path, e)
-        return result
+# File extensions to process in directory mode (Python + JavaScript + common fallbacks)
+_DIRECTORY_PATTERNS = ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs"]
 
-    try:
-        tree = ast.parse(content, filename=str(file_path))
-    except SyntaxError as e:
-        result["error"] = f"SyntaxError: {e}"
-        logger.warning("Could not parse %s: %s", file_path, e)
-        return result
+# Path to groq model specs (relative to this package)
+_GROQ_SPECS_PATH = Path(__file__).parent / "config" / "groq_model_specs.json"
 
-    symbols: List[Dict[str, Any]] = []
+_groq_specs_cache: Optional[Dict[str, Any]] = None
 
-    def process_callable(
-        node: ast.FunctionDef | ast.AsyncFunctionDef,
-        symbol_type: str,
-    ) -> Dict[str, Any]:
-        end_lineno = getattr(node, "end_lineno", None) or node.lineno
-        return {
-            "name": node.name,
-            "type": symbol_type,
-            "lineno": node.lineno,
-            "end_lineno": end_lineno,
-            "docstring": ast.get_docstring(node),
-            "signature": _build_signature(node),
-            "logic_hints": _extract_logic_hints(node),
-        }
 
-    def process_class(cls: ast.ClassDef) -> Dict[str, Any]:
-        end_lineno = getattr(cls, "end_lineno", None) or cls.lineno
-        class_info: Dict[str, Any] = {
-            "name": cls.name,
-            "type": "class",
-            "lineno": cls.lineno,
-            "end_lineno": end_lineno,
-            "docstring": ast.get_docstring(cls),
-            "signature": None,
-            "logic_hints": [],
-        }
-        symbols.append(class_info)
-        for item in cls.body:
-            if isinstance(item, ast.FunctionDef):
-                method_info = process_callable(item, "method")
-                method_info["lineno"] = item.lineno
-                method_info["end_lineno"] = getattr(item, "end_lineno", None) or item.lineno
-                symbols.append(method_info)
-            elif isinstance(item, ast.AsyncFunctionDef):
-                method_info = process_callable(item, "method")
-                method_info["lineno"] = item.lineno
-                method_info["end_lineno"] = getattr(item, "end_lineno", None) or item.lineno
-                symbols.append(method_info)
+def get_model_specs() -> Dict[str, Any]:
+    """Load groq_model_specs.json. Cached after first load."""
+    global _groq_specs_cache
+    if _groq_specs_cache is not None:
+        return _groq_specs_cache
+    if _GROQ_SPECS_PATH.exists():
+        try:
+            with open(_GROQ_SPECS_PATH, encoding="utf-8") as f:
+                _groq_specs_cache = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Could not load groq_model_specs.json: %s", e)
+    _groq_specs_cache = _groq_specs_cache or {}
+    return _groq_specs_cache
 
-    def process_constant(node: ast.Assign, lineno: int) -> None:
-        for name in _parse_assign_targets(node):
-            end_lineno = getattr(node, "end_lineno", None) or lineno
-            symbols.append({
-                "name": name,
-                "type": "constant",
-                "lineno": lineno,
-                "end_lineno": end_lineno,
-                "docstring": None,
-                "signature": None,
-                "logic_hints": [],
-            })
 
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.FunctionDef):
-            symbols.append(process_callable(node, "function"))
-        elif isinstance(node, ast.AsyncFunctionDef):
-            symbols.append(process_callable(node, "async_function"))
-        elif isinstance(node, ast.ClassDef):
-            process_class(node)
-        elif isinstance(node, ast.Assign):
-            process_constant(node, node.lineno)
+def _safe_workers_from_rpm(model_name: str, rpm: int) -> int:
+    """Compute safe worker count: 80% of RPM, divided by 60 (per sec) and 3 (tldr/deep/eliv per file)."""
+    safe = max(1, int((rpm * 0.8) / 60 / 3))
+    return safe
 
-    result["symbols"] = symbols
-    return result
+
+def _max_concurrent_from_rpm(rpm: int) -> int:
+    """Max concurrent LLM calls to stay just below rate limit.
+    Assumes ~2 sec avg latency: rpm/60 req/sec * 2 sec ≈ rpm/30 in-flight. Use 85% for safety."""
+    return min(100, max(1, int(rpm * 0.85 / 30)))
+
+
+def _default_workers() -> int:
+    """Default max concurrent LLM calls: min(8, cpu_count)."""
+    n = os.cpu_count()
+    return min(8, n if n is not None else 1)
 
 
 def extract_source_snippet(file_path: Path, start_line: int, end_line: int) -> str:
     """
-    Read a specific Python file and return the raw source code lines between
+    Read a file and return the raw source code lines between
     start_line and end_line inclusive.
 
-    Relies on accurate line numbers from parse_python_file.
-
     Args:
-        file_path: Path to the Python file to read.
+        file_path: Path to the file to read.
         start_line: First line number (1-indexed, inclusive).
         end_line: Last line number (1-indexed, inclusive).
 
@@ -266,327 +483,40 @@ def extract_source_snippet(file_path: Path, start_line: int, end_line: int) -> s
     if not lines:
         return ""
 
-    # Convert to zero-indexed
-    start_idx = start_line - 1
-    end_idx = end_line - 1
-
-    # Clamp to valid range
-    num_lines = len(lines)
-    start_idx = max(0, min(start_idx, num_lines - 1))
-    end_idx = max(0, min(end_idx, num_lines - 1))
-
-    # Ensure start <= end
+    start_idx = max(0, min(start_line - 1, len(lines) - 1))
+    end_idx = max(0, min(end_line - 1, len(lines) - 1))
     if start_idx > end_idx:
         start_idx, end_idx = end_idx, start_idx
 
-    snippet_lines = lines[start_idx : end_idx + 1]
-    return "".join(snippet_lines)
+    return "".join(lines[start_idx : end_idx + 1])
 
 
-def _build_tldr_prompt(symbol_info: Dict[str, Any], dependencies: List[str]) -> str:
-    """Build the LLM prompt for TL;DR generation."""
-    name = symbol_info.get("name", "unknown")
-    symbol_type = symbol_info.get("type", "symbol")
-    docstring = symbol_info.get("docstring") or "(no docstring)"
-    signature = symbol_info.get("signature")
-    logic_hints = symbol_info.get("logic_hints") or []
-
-    purpose_parts = [f"Docstring: {docstring}"]
-    if signature:
-        purpose_parts.append(f"Signature: {signature}")
-    if logic_hints:
-        purpose_parts.append(f"Logic hints: {', '.join(logic_hints)}")
-
-    deps_str = ", ".join(dependencies) if dependencies else "nothing specific"
-
-    return f"""Provide a concise summary of the Python {symbol_type} '{name}'.
-
-Purpose: Based on the following information:
-{chr(10).join('- ' + p for p in purpose_parts)}
-
-Interactions: Depends on {deps_str}.
-
-Requirements:
-- Keep it to 1-3 sentences max.
-- Explain the primary purpose and key responsibilities.
-- Briefly describe its relationship with the dependencies above (if any).
-- Format as plain text or basic Markdown.
-
-Output ONLY the summary, no preamble."""
-
-
-async def _generate_tldr_async(symbol_info: Dict[str, Any], dependencies: List[str]) -> str:
-    """Async implementation of TL;DR generation. Returns error string on non-RuntimeError failures."""
-    try:
-        prompt = _build_tldr_prompt(symbol_info, dependencies)
-        response = await call_groq_async(
-            prompt,
-            model=TLDR_MODEL,
-            system="You are a documentation assistant. Be concise and accurate.",
-        )
-        audit = AuditLog()
-        audit.log(
-            "tldr",
-            cost=response.cost_usd,
-            model=response.model,
-            input_t=response.input_tokens,
-            output_t=response.output_tokens,
-            symbol=symbol_info.get("name"),
-        )
-        return response.content
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.warning("TL;DR generation failed for %s: %s", symbol_info.get("name"), e)
-        return f"[TL;DR generation failed: {e}]"
-
-
-def generate_tldr_content(
-    symbol_info: Dict[str, Any], dependencies: List[str]
-) -> str:
+def _fallback_template_content(symbol: SymbolTree, kind: str) -> str:
     """
-    Generate a concise, high-level summary (TL;DR) of a single symbol using an LLM.
-
-    Synchronous wrapper that runs the async implementation via asyncio.run().
-    Use _generate_tldr_async directly when already in an async context (e.g.
-    within process_single_file_async) to avoid event loop conflicts.
-
-    Uses Groq's llama-3.1-8b-instant to produce a 1-3 sentence summary based on
-    the symbol's parsed information and dependencies. Cost is logged to the
-    Scout audit trail.
-
-    Args:
-        symbol_info: Dict with name, type, docstring, signature, logic_hints.
-        dependencies: List of dependency names/paths the symbol interacts with.
-
-    Returns:
-        The LLM-generated summary string, or an error message string on API failure.
-
-    Raises:
-        RuntimeError: If GROQ_API_KEY is not set.
+    Generate template doc content when LLM fails or budget exceeded.
+    Returns [FALLBACK] header + template. kind: tldr, deep, eliv.
     """
-    return asyncio.run(_generate_tldr_async(symbol_info, dependencies))
-
-
-def _build_deep_prompt(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """Build the LLM prompt for deep content generation."""
-    name = symbol_info.get("name", "unknown")
-    symbol_type = symbol_info.get("type", "symbol")
-    docstring = symbol_info.get("docstring") or "(no docstring)"
-    signature = symbol_info.get("signature")
-    logic_hints = symbol_info.get("logic_hints") or []
-
-    deps_str = ", ".join(dependencies) if dependencies else "None"
-    hints_str = ", ".join(logic_hints) if logic_hints else "None"
-
-    return f"""Analyze the following Python {symbol_type} '{name}'.
-
-Context:
-- Docstring: {docstring}
-- Signature: {signature or 'N/A'}
-
-Source Code:
-```
-{source_code_snippet}
-```
-
-Dependencies: {deps_str}
-Logic Hints: {hints_str}
-
-Provide a detailed breakdown using Markdown headings (##) for each section:
-
-1. ## Logic Overview — Explain the code's flow and main steps.
-2. ## Dependency Interactions — How does it use the listed dependencies?
-3. ## Potential Considerations — Edge cases, error handling, performance notes from the code.
-4. ## Signature — If applicable, include: `{signature or 'N/A'}`
-
-Format using Markdown headings ## for each section. Be structured, detailed, and code-relevant."""
-
-
-async def _generate_deep_content_async(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """Async implementation of deep content generation. Returns error string on non-RuntimeError failures."""
-    try:
-        prompt = _build_deep_prompt(symbol_info, dependencies, source_code_snippet)
-        response = await call_groq_async(
-            prompt,
-            model=DEEP_MODEL,
-            system="You are a documentation assistant. Provide structured, detailed analysis of Python code.",
-            max_tokens=1500,
-        )
-        audit = AuditLog()
-        audit.log(
-            "deep",
-            cost=response.cost_usd,
-            model=response.model,
-            input_t=response.input_tokens,
-            output_t=response.output_tokens,
-            symbol=symbol_info.get("name"),
-        )
-        return response.content
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.warning("Deep content generation failed for %s: %s", symbol_info.get("name"), e)
-        return f"[Deep content generation failed: {e}]"
-
-
-def generate_deep_content(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """
-    Generate a detailed breakdown of a single symbol using an LLM.
-
-    Synchronous wrapper that runs the async implementation via asyncio.run().
-    Use _generate_deep_content_async directly when already in an async context.
-
-    Uses Groq's llama-3.1-8b-instant to produce a structured analysis based on
-    the symbol's parsed information, dependencies, and source code snippet.
-    Cost is logged to the Scout audit trail.
-
-    Args:
-        symbol_info: Dict with name, type, docstring, signature, logic_hints.
-        dependencies: List of dependency names/paths the symbol interacts with.
-        source_code_snippet: Raw source code of the symbol.
-
-    Returns:
-        The LLM-generated Markdown content as a string, or an error message
-        string on API failure.
-
-    Raises:
-        RuntimeError: If GROQ_API_KEY is not set.
-    """
-    return asyncio.run(
-        _generate_deep_content_async(
-            symbol_info,
-            dependencies,
-            source_code_snippet,
-        )
-    )
-
-
-def _build_eliv_prompt(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """Build the LLM prompt for ELIV (Explain Like I'm Very Young) generation."""
-    name = symbol_info.get("name", "unknown")
-    symbol_type = symbol_info.get("type", "symbol")
-    docstring = symbol_info.get("docstring") or ""
-    signature = symbol_info.get("signature")
-    logic_hints = symbol_info.get("logic_hints") or []
-
-    purpose_parts: List[str] = []
-    if docstring:
-        purpose_parts.append(f"Docstring: {docstring}")
-    if signature:
-        purpose_parts.append(f"Signature: {signature}")
-    if logic_hints:
-        purpose_parts.append(f"Logic hints: {', '.join(logic_hints)}")
-
-    purpose_desc = (
-        ", ".join(purpose_parts)
-        if purpose_parts
-        else "(infer from the code below)"
-    )
-    deps_str = ", ".join(dependencies) if dependencies else "nothing special"
-
-    return f"""Explain the Python {symbol_type} '{name}' like I'm very young (around 5 years old).
-
-Its job is to: {purpose_desc}.
-
-It interacts with: {deps_str}.
-
-Here is the code (don't repeat it, just understand it):
-```
-{source_code_snippet}
-```
-
-Use very simple words. Avoid technical jargon. Use analogies if helpful (like "it's like a key that opens a door").
-Focus on what it *does*, not how it does it (unless the "how" is very simple).
-Keep it short and sweet. Output ONLY the explanation, no preamble."""
-
-
-async def _generate_eliv_async(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """Async implementation of ELIV generation. Returns error string on non-RuntimeError failures."""
-    try:
-        prompt = _build_eliv_prompt(symbol_info, dependencies, source_code_snippet)
-        response = await call_groq_async(
-            prompt,
-            model=ELIV_MODEL,
-            system="You are a friendly assistant that explains code in very simple terms for young children.",
-            max_tokens=450,
-        )
-        audit = AuditLog()
-        audit.log(
-            "eliv",
-            cost=response.cost_usd,
-            model=response.model,
-            input_t=response.input_tokens,
-            output_t=response.output_tokens,
-            symbol=symbol_info.get("name"),
-        )
-        return response.content
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.warning("ELIV generation failed for %s: %s", symbol_info.get("name"), e)
-        return f"[ELIV generation failed: {e}]"
-
-
-def generate_eliv_content(
-    symbol_info: Dict[str, Any],
-    dependencies: List[str],
-    source_code_snippet: str,
-) -> str:
-    """
-    Generate a simplified, "Explain Like I'm Very Young" (ELIV) explanation for a
-    code symbol, suitable for beginners or those unfamiliar with the codebase.
-
-    Synchronous wrapper that runs the async implementation via asyncio.run().
-    Use _generate_eliv_async directly when already in an async context.
-
-    Uses Groq's llama-3.1-8b-instant to produce a simple explanation based on
-    the symbol's parsed information, dependencies, and source code. Cost is
-    logged to the Scout audit trail.
-
-    Args:
-        symbol_info: Dict with name, type, docstring, signature, logic_hints.
-        dependencies: List of dependency names/paths the symbol interacts with.
-        source_code_snippet: Raw source code of the symbol.
-
-    Returns:
-        The LLM-generated ELIV content as a string, or an error message string
-        on API failure.
-
-    Raises:
-        RuntimeError: If GROQ_API_KEY is not set.
-    """
-    return asyncio.run(
-        _generate_eliv_async(
-            symbol_info,
-            dependencies,
-            source_code_snippet,
-        )
-    )
+    sig = getattr(symbol, "signature", None) or f"{symbol.name}(...)"
+    args = "?"
+    if "(" in sig:
+        try:
+            args = sig.split("(", 1)[1].rsplit(")", 1)[0] or "..."
+        except IndexError:
+            args = "..."
+    call_list = ", ".join((symbol.calls or [])[:10]) or "none"
+    type_list = ", ".join((symbol.uses_types or [])[:10]) or "none"
+    header = "[FALLBACK]\n\n"
+    if kind == "tldr":
+        return f"{header}[AUTO] {symbol.name}({args}) → ?\nCalls: {call_list}\nTypes: {type_list}"
+    if kind == "deep":
+        return f"{header}[AUTO] {symbol.name}({args})\nCalls: {call_list}\nTypes: {type_list}\n\n(Generated from template; LLM unavailable.)"
+    if kind == "eliv":
+        return f"{header}{symbol.name} does something with {call_list or 'nothing'}."
+    return f"{header}{symbol.name}"
 
 
 def validate_generated_docs(
-    symbol: Dict[str, Any],
+    symbol: SymbolTree | Dict[str, Any],
     tldr_content: str,
     deep_content: str,
 ) -> Tuple[bool, List[str]]:
@@ -594,7 +524,7 @@ def validate_generated_docs(
     Validate generated documentation content for a symbol.
 
     Args:
-        symbol: Symbol dict (for context in error messages).
+        symbol: SymbolTree or dict (for context in error messages).
         tldr_content: Generated TL;DR content.
         deep_content: Generated deep content.
 
@@ -602,7 +532,7 @@ def validate_generated_docs(
         (is_valid, list of error messages).
     """
     errors: List[str] = []
-    name = symbol.get("name", "?")
+    name = symbol.name if isinstance(symbol, SymbolTree) else symbol.get("name", "?")
 
     if not tldr_content or not tldr_content.strip():
         errors.append(f"TL;DR content is empty for symbol '{name}'")
@@ -627,22 +557,22 @@ def write_documentation_files(
     deep_content: str,
     eliv_content: str = "",
     output_dir: Optional[Path] = None,
+    generate_eliv: bool = True,
+    versioned_mirror_dir: Optional[Path] = None,
 ) -> Tuple[Path, Path, Path]:
     """
-    Write documentation files for a Python file.
+    Write documentation files for a source file.
 
     If output_dir is provided:
         Writes <stem>.tldr.md, <stem>.deep.md, and <name>.eliv.md inside output_dir.
     If output_dir is None (default):
-        Writes to local .docs/ next to source (e.g. vivarium/scout/.docs/ignore.py.tldr.md)
-        and mirrors to central docs/livingDoc/ (e.g. docs/livingDoc/vivarium/scout/ignore.py.tldr.md).
+        Writes to local .docs/ next to source and mirrors to central docs/livingDoc/.
 
-    ELIV path: file_path.with_suffix(file_path.suffix + ".eliv.md") (e.g. ignore.py.eliv.md).
-
-    Creates output directory if needed. Overwrites existing files.
+    If versioned_mirror_dir is set (e.g. docs/livingDoc/v0.1.0-dev/), also mirrors there.
 
     Returns:
         Tuple of (tldr_path, deep_path, eliv_path) for the primary (local) files.
+        When generate_eliv is False, eliv_path is still returned but not written.
     """
     file_path = Path(file_path).resolve()
     repo_root = Path.cwd().resolve()
@@ -650,7 +580,7 @@ def write_documentation_files(
     if output_dir is not None:
         out = Path(output_dir).resolve()
         out.mkdir(parents=True, exist_ok=True)
-        base_name = file_path.stem  # e.g. "ignore" for ignore.py
+        base_name = file_path.stem
         tldr_path = out / f"{base_name}.tldr.md"
         deep_path = out / f"{base_name}.deep.md"
         eliv_path = (out / file_path.name).with_suffix(file_path.suffix + ".eliv.md")
@@ -658,7 +588,7 @@ def write_documentation_files(
     else:
         local_dir = file_path.parent / ".docs"
         local_dir.mkdir(parents=True, exist_ok=True)
-        base_name = file_path.name  # e.g. "ignore.py" -> ignore.py.tldr.md
+        base_name = file_path.name
         tldr_path = local_dir / f"{base_name}.tldr.md"
         deep_path = local_dir / f"{base_name}.deep.md"
         eliv_path = local_dir / f"{base_name}.eliv.md"
@@ -666,7 +596,8 @@ def write_documentation_files(
 
     tldr_path.write_text(tldr_content, encoding="utf-8")
     deep_path.write_text(deep_content, encoding="utf-8")
-    eliv_path.write_text(eliv_content, encoding="utf-8")
+    if generate_eliv:
+        eliv_path.write_text(eliv_content, encoding="utf-8")
 
     if mirror_to_central:
         try:
@@ -678,7 +609,18 @@ def write_documentation_files(
             central_eliv = central_dir / f"{file_path.name}.eliv.md"
             central_tldr.write_text(tldr_content, encoding="utf-8")
             central_deep.write_text(deep_content, encoding="utf-8")
-            central_eliv.write_text(eliv_content, encoding="utf-8")
+            if generate_eliv:
+                central_eliv.write_text(eliv_content, encoding="utf-8")
+            if versioned_mirror_dir is not None:
+                try:
+                    vdir = versioned_mirror_dir / rel.parent
+                    vdir.mkdir(parents=True, exist_ok=True)
+                    (vdir / f"{file_path.name}.tldr.md").write_text(tldr_content, encoding="utf-8")
+                    (vdir / f"{file_path.name}.deep.md").write_text(deep_content, encoding="utf-8")
+                    if generate_eliv:
+                        (vdir / f"{file_path.name}.eliv.md").write_text(eliv_content, encoding="utf-8")
+                except (ValueError, OSError) as e:
+                    logger.warning("Could not mirror to versioned dir for %s: %s", file_path, e)
         except (ValueError, OSError) as e:
             logger.warning(
                 "Could not mirror docs to docs/livingDoc/ for %s: %s",
@@ -690,54 +632,456 @@ def write_documentation_files(
 
 
 async def _generate_single_symbol_docs(
-    symbol_info: Dict[str, Any],
+    adapter: Any,
+    symbol: SymbolTree,
     dependencies: List[str],
-    source_code_snippet: str,
+    source_snippet: str,
     semaphore: asyncio.Semaphore,
-) -> Tuple[str, bool, str, str, str]:
+    generate_eliv: bool = True,
+    fallback_template: bool = False,
+) -> Tuple[str, bool, str, str, str, float, str]:
     """
-    Generate TL;DR, deep, and ELIV content for a single symbol, respecting the
-    per-file semaphore. Uses sync wrappers (each with internal asyncio.run) to
-    avoid event loop conflicts when processing multiple files via process_directory.
+    Generate TL;DR, deep, and ELIV content for a single symbol using the adapter.
 
     Returns:
-        Tuple of (symbol_name, is_valid, tldr_content, deep_content, eliv_content).
+        Tuple of (symbol_name, is_valid, tldr_content, deep_content, eliv_content, cost_usd, model).
     """
-    async with semaphore:
-        tldr_content = await asyncio.to_thread(
-            generate_tldr_content, symbol_info, dependencies
-        )
-        deep_content = await asyncio.to_thread(
-            generate_deep_content,
-            symbol_info,
-            dependencies,
-            source_code_snippet,
-        )
-        eliv_content = await asyncio.to_thread(
-            generate_eliv_content,
-            symbol_info,
-            dependencies,
-            source_code_snippet,
-        )
+    cost_usd = 0.0
+    model_used = _resolve_doc_model("tldr")
 
-        is_valid, errors = validate_generated_docs(
-            symbol_info, tldr_content, deep_content
-        )
+    async with semaphore:
+        # TL;DR — try auto-generation for simple symbols (skip LLM)
+        tldr_content = None
+        if hasattr(adapter, "try_auto_tldr"):
+            tldr_content = adapter.try_auto_tldr(symbol, source_snippet)
+        if tldr_content is not None:
+            audit = AuditLog()
+            audit.log(
+                "tldr_auto_generated",
+                cost=0.0,
+                symbol=symbol.name,
+            )
+        else:
+            try:
+                tldr_prompt = adapter.get_tldr_prompt(symbol, dependencies)
+                tldr_response = await call_groq_async(
+                    tldr_prompt,
+                    model=_resolve_doc_model("tldr"),
+                    system="You are a documentation assistant. Be concise and accurate.",
+                )
+                tldr_content = tldr_response.content
+                cost_usd += tldr_response.cost_usd
+                model_used = tldr_response.model
+                audit = AuditLog()
+                audit.log(
+                    "tldr",
+                    cost=tldr_response.cost_usd,
+                    model=tldr_response.model,
+                    input_t=tldr_response.input_tokens,
+                    output_t=tldr_response.output_tokens,
+                    symbol=symbol.name,
+                )
+            except RuntimeError:
+                raise
+            except Exception as e:
+                logger.warning("TL;DR generation failed for %s: %s", symbol.name, e)
+                if fallback_template:
+                    tldr_content = _fallback_template_content(symbol, "tldr")
+                    AuditLog().log("tldr_fallback_template", cost=0.0, symbol=symbol.name)
+                else:
+                    tldr_content = f"[TL;DR generation failed: {e}]"
+
+        # Deep
+        try:
+            deep_prompt = adapter.get_deep_prompt(symbol, dependencies, source_snippet)
+            deep_response = await call_groq_async(
+                deep_prompt,
+                model=_resolve_doc_model("deep"),
+                system="You are a documentation assistant. Provide structured, detailed analysis of code.",
+                max_tokens=1500,
+            )
+            deep_content = deep_response.content
+            cost_usd += deep_response.cost_usd
+            model_used = deep_response.model
+            audit = AuditLog()
+            audit.log(
+                "deep",
+                cost=deep_response.cost_usd,
+                model=deep_response.model,
+                input_t=deep_response.input_tokens,
+                output_t=deep_response.output_tokens,
+                symbol=symbol.name,
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.warning("Deep content generation failed for %s: %s", symbol.name, e)
+            if fallback_template:
+                deep_content = _fallback_template_content(symbol, "deep")
+                AuditLog().log("deep_fallback_template", cost=0.0, symbol=symbol.name)
+            else:
+                deep_content = f"[Deep content generation failed: {e}]"
+
+        # ELIV (skip if generate_eliv disabled)
+        eliv_content = ""
+        if generate_eliv:
+            try:
+                eliv_prompt = adapter.get_eliv_prompt(symbol, dependencies, source_snippet)
+                eliv_response = await call_groq_async(
+                    eliv_prompt,
+                    model=_resolve_doc_model("eliv"),
+                    system="You are a friendly assistant that explains code in very simple terms for young children.",
+                    max_tokens=450,
+                )
+                eliv_content = eliv_response.content
+                cost_usd += eliv_response.cost_usd
+                model_used = eliv_response.model
+                audit = AuditLog()
+                audit.log(
+                    "eliv",
+                    cost=eliv_response.cost_usd,
+                    model=eliv_response.model,
+                    input_t=eliv_response.input_tokens,
+                    output_t=eliv_response.output_tokens,
+                    symbol=symbol.name,
+                )
+            except RuntimeError:
+                raise
+            except Exception as e:
+                logger.warning("ELIV generation failed for %s: %s", symbol.name, e)
+                if fallback_template:
+                    eliv_content = _fallback_template_content(symbol, "eliv")
+                    AuditLog().log("eliv_fallback_template", cost=0.0, symbol=symbol.name)
+                else:
+                    eliv_content = f"[ELIV generation failed: {e}]"
+
+        is_valid, errors = validate_generated_docs(symbol, tldr_content, deep_content)
         if not is_valid:
             for err in errors:
-                logger.warning(
-                    "Validation failed for %s: %s",
-                    symbol_info.get("name"),
-                    err,
-                )
+                logger.warning("Validation failed for %s: %s", symbol.name, err)
 
-        return (
-            symbol_info["name"],
-            is_valid,
-            tldr_content,
-            deep_content,
-            eliv_content,
+        return (symbol.name, is_valid, tldr_content, deep_content, eliv_content, cost_usd, model_used)
+
+
+def _merge_symbol_content(
+    symbols: List[SymbolTree],
+    cached: Dict[str, Dict[str, str]],
+    generated: Dict[str, Tuple[str, str, str]],
+) -> Tuple[str, str, str, Dict[str, Dict[str, str]]]:
+    """Merge cached + generated per-symbol content in symbol order. Return aggregated docs + symbols_for_meta."""
+    tldr_agg = ""
+    deep_agg = ""
+    eliv_agg = ""
+    symbols_for_meta: Dict[str, Dict[str, str]] = {}
+
+    for symbol in symbols:
+        name = symbol.name
+        if name in generated:
+            tldr_c, deep_c, eliv_c = generated[name]
+        elif name in cached:
+            tldr_c = cached[name].get("tldr", "")
+            deep_c = cached[name].get("deep", "")
+            eliv_c = cached[name].get("eliv", "")
+        else:
+            continue
+
+        header = f"# {name}\n\n"
+        if tldr_agg:
+            tldr_agg += "\n---\n\n"
+        tldr_agg += header + tldr_c
+        if deep_agg:
+            deep_agg += "\n---\n\n"
+        deep_agg += header + deep_c
+        if eliv_agg:
+            eliv_agg += "\n---\n\n"
+        eliv_agg += f"# {name} ELIV\n\n{eliv_c}"
+
+        symbols_for_meta[name] = {
+            "tldr": tldr_c,
+            "deep": deep_c,
+            "eliv": eliv_c,
+        }
+
+    return (tldr_agg, deep_agg, eliv_agg, symbols_for_meta)
+
+
+async def _generate_docs_for_symbols(
+    target_path: Path,
+    trace: TraceResult,
+    *,
+    output_dir: Optional[Path] = None,
+    generate_eliv: bool = True,
+    per_file_concurrency: int = 3,
+    slot_id: Optional[int] = None,
+    shared_display: Optional[Dict[str, Any]] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    fallback_template: bool = False,
+) -> Tuple[str, str, str, float, str, Dict[str, Dict[str, str]]]:
+    """
+    Generate docs via LLM for traced symbols. Diff-aware: only re-generate for symbols whose hash changed.
+
+    Returns (tldr_agg, deep_agg, eliv_agg, total_cost, model_used, symbols_for_meta).
+    symbols_for_meta: {name: {hash, tldr, deep, eliv}} for persistence.
+    """
+    symbols_to_doc = trace.symbols_to_doc
+    adapter = trace.adapter
+    dependencies = trace.dependencies
+
+    meta_path = _get_tldr_meta_path(target_path, output_dir)
+    meta = _read_freshness_meta(meta_path)
+    meta_symbols = (meta or {}).get("symbols") or {}
+
+    # Partition: unchanged (reuse from meta) vs changed (generate)
+    to_reuse: Dict[str, Dict[str, str]] = {}
+    to_generate: List[SymbolTree] = []
+
+    for symbol in symbols_to_doc:
+        current_hash = _compute_symbol_hash(symbol, target_path)
+        prev = meta_symbols.get(symbol.name)
+        if prev and prev.get("hash") == current_hash:
+            to_reuse[symbol.name] = {
+                "hash": current_hash,
+                "tldr": prev.get("tldr", ""),
+                "deep": prev.get("deep", ""),
+                "eliv": prev.get("eliv", ""),
+            }
+        else:
+            to_generate.append(symbol)
+
+    if to_reuse or to_generate:
+        logger.debug(
+            "Diff-aware: %d reused, %d to generate",
+            len(to_reuse),
+            len(to_generate),
         )
+
+    per_file_semaphore = asyncio.Semaphore(per_file_concurrency)
+    running_cost = [0.0]
+
+    def _on_symbol_done(sym_cost: float) -> None:
+        running_cost[0] += sym_cost
+        if progress_callback:
+            progress_callback(running_cost[0])
+        if slot_id is not None and shared_display is not None and slot_id in shared_display:
+            shared_display[slot_id]["cost"] = running_cost[0]
+
+    async def _wrapped(symbol: SymbolTree) -> Tuple[str, str, str, str, float, str]:
+        res = await _generate_single_symbol_docs(
+            adapter,
+            symbol,
+            symbol.dependencies if symbol.dependencies else dependencies,
+            extract_source_snippet(target_path, symbol.lineno, symbol.end_lineno),
+            per_file_semaphore,
+            generate_eliv,
+            fallback_template=fallback_template,
+        )
+        _on_symbol_done(res[5])
+        return (res[0], res[2], res[3], res[4], res[5], res[6])
+
+    generated: Dict[str, Tuple[str, str, str]] = {}
+    total_cost = 0.0
+    model_used = _resolve_doc_model("tldr")
+
+    if to_generate:
+        tasks = [asyncio.create_task(_wrapped(s)) for s in to_generate]
+        results = await asyncio.gather(*tasks)
+
+        for (symbol, res) in zip(to_generate, results):
+            sym_name, tldr_content, deep_content, eliv_content, sym_cost, sym_model = res
+            total_cost += sym_cost
+            if sym_model:
+                model_used = sym_model
+            generated[sym_name] = (tldr_content, deep_content, eliv_content)
+
+    # Merge cached (to_reuse) + generated, preserving symbol order
+    cached_for_merge: Dict[str, Dict[str, str]] = {}
+    for name, data in to_reuse.items():
+        cached_for_merge[name] = {
+            "tldr": data["tldr"],
+            "deep": data["deep"],
+            "eliv": data["eliv"],
+        }
+
+    tldr_agg, deep_agg, eliv_agg, symbols_for_meta = _merge_symbol_content(
+        symbols_to_doc, cached_for_merge, generated
+    )
+
+    # Add hashes to symbols_for_meta for persistence
+    for symbol in symbols_to_doc:
+        name = symbol.name
+        if name in symbols_for_meta:
+            symbols_for_meta[name]["hash"] = _compute_symbol_hash(symbol, target_path)
+
+    return (tldr_agg, deep_agg, eliv_agg, total_cost, model_used, symbols_for_meta)
+
+
+def _rel_path_for_display(path: Path) -> str:
+    """Return path relative to cwd for compact display."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _trace_file(
+    target_path: Path,
+    *,
+    language_override: Optional[str] = None,
+    dependencies_func: Optional[Callable[[Path], List[str]]] = None,
+    slot_id: Optional[int] = None,
+    shared_display: Optional[Dict[str, Any]] = None,
+) -> TraceResult:
+    """
+    Pure static analysis: AST + import map. No LLM calls.
+
+    Returns SymbolTree with calls, types, exports. Updates dashboard with
+    live call chain immediately (tracing is instant).
+    """
+    adapter = get_adapter_for_path(target_path, language_override)
+    root_tree = adapter.parse(target_path)
+
+    dependencies: List[str] = []
+    if dependencies_func:
+        dependencies = dependencies_func(target_path) or []
+
+    symbols_to_doc: List[SymbolTree] = []
+    for child in root_tree.children:
+        symbols_to_doc.extend(list(child.iter_symbols()))
+    if not symbols_to_doc:
+        symbols_to_doc = [root_tree]
+
+    all_calls: set = set()
+    all_types: set = set()
+    all_exports: set = set()
+    for s in symbols_to_doc:
+        all_calls.update(s.calls or [])
+        all_types.add(s.type)
+        all_exports.update(s.exports or [])
+    root_exports = getattr(root_tree, "exports", None) or []
+    all_exports.update(root_exports)
+
+    chain = _build_rolling_call_trace(symbols_to_doc)
+    if slot_id is not None and shared_display is not None:
+        rel = _rel_path_for_display(target_path)
+        shared_display[slot_id] = {
+            "file": rel,
+            "chain": chain or "…",
+            "cost": 0.0,
+            "status": "running",
+            "pulse_hop": None,
+        }
+
+    return TraceResult(
+        root_tree=root_tree,
+        symbols_to_doc=symbols_to_doc,
+        all_calls=all_calls,
+        all_types=all_types,
+        all_exports=all_exports,
+        adapter=adapter,
+        dependencies=dependencies,
+    )
+
+
+# ANSI colors for tagged hops in rolling trace (blue, magenta, cyan, green, yellow)
+_TRACE_COLORS = ("\033[34m", "\033[35m", "\033[36m", "\033[32m", "\033[33m")
+_MAX_CHAIN_LEN = 80
+_ARROW = "\u27F6"  # ⟶
+
+def _strip_ansi(s: str) -> str:
+    """Return string with ANSI codes removed, for length calculation."""
+    result = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\033" and i + 1 < len(s) and s[i + 1] == "[":
+            j = i + 2
+            while j < len(s) and s[j] != "m":
+                j += 1
+            i = j + 1
+            continue
+        result.append(s[i])
+        i += 1
+    return "".join(result)
+
+
+def _build_rolling_call_trace(symbols_to_doc: List[SymbolTree]) -> Optional[str]:
+    """
+    Build a colorized, tagged rolling call chain for display.
+
+    Collects all qualified calls from the file, tags each by module, colorizes,
+    and truncates from the left if over 80 chars to keep latest context visible.
+    """
+    def _skip_call(qname: str) -> bool:
+        parts = qname.split(".")
+        last = parts[-1] if parts else ""
+        return last == "__init__" or last.startswith("_")
+
+    # Collect all calls in file order (entrypoint first, then calls per symbol)
+    hops: List[str] = []
+    seen: set = set()
+
+    for symbol in symbols_to_doc:
+        if symbol.name.startswith("_") and not symbol.name.startswith("__"):
+            continue
+        if symbol.name == "__init__":
+            continue
+        # Add entrypoint on first symbol with calls
+        if not hops and (symbol.calls or []):
+            hops.append(symbol.name)
+        for qname in symbol.calls or []:
+            if _skip_call(qname) or qname in seen:
+                continue
+            seen.add(qname)
+            parts = qname.split(".")
+            if len(parts) >= 2:
+                module = parts[-2]
+                func = parts[-1]
+                tag = module[:3] if len(module) > 3 else module  # doc, llm, aud
+            else:
+                tag, func = "", qname
+
+            color_idx = hash(tag) % len(_TRACE_COLORS) if tag else 0
+            color = _TRACE_COLORS[color_idx]
+            hop_str = f"{color}[{tag}]{_RESET} {func}" if tag else func
+            hops.append(hop_str)
+
+    if not hops:
+        return None
+
+    chain = f" {_ARROW} ".join(hops)
+
+    # Truncate from left until it fits (keep latest context visible)
+    while len(_strip_ansi(chain)) > _MAX_CHAIN_LEN and len(hops) > 1:
+        hops = hops[1:]
+        chain = f" {_ARROW} ".join(hops)
+
+    return chain if chain else None
+
+
+def _format_single_hop(qname: str) -> Optional[Tuple[str, str]]:
+    """Format a qualified call to (tag, hop_str). Returns None if skip."""
+    parts = qname.split(".")
+    last = parts[-1] if parts else ""
+    if last == "__init__" or last.startswith("_"):
+        return None
+    if len(parts) >= 2:
+        module, func = parts[-2], parts[-1]
+        tag = module[:3] if len(module) > 3 else module
+        color_idx = hash(tag) % len(_TRACE_COLORS)
+        hop_str = f"{_TRACE_COLORS[color_idx]}[{tag}]{_RESET} {func}"
+        return (tag, hop_str)
+    return ("", qname)
+
+
+def _build_chain_from_hops(entrypoint: str, hop_strs: List[str]) -> str:
+    """Build chain from entrypoint + hop strings, truncate from left if > 80 chars."""
+    if not hop_strs:
+        return entrypoint
+    hops = [entrypoint] + hop_strs
+    chain = f" {_ARROW} ".join(hops)
+    while len(_strip_ansi(chain)) > _MAX_CHAIN_LEN and len(hops) > 1:
+        hops = hops[1:]
+        chain = f" {_ARROW} ".join(hops)
+    return chain
 
 
 async def process_single_file_async(
@@ -746,74 +1090,110 @@ async def process_single_file_async(
     output_dir: Optional[Path] = None,
     dependencies_func: Optional[Callable[[Path], List[str]]] = None,
     per_file_concurrency: int = 3,
-) -> bool:
+    language_override: Optional[str] = None,
+    generate_eliv: Optional[bool] = None,
+    quiet: bool = False,
+    force: bool = False,
+    slot_id: Optional[int] = None,
+    shared_display: Optional[Dict[str, Any]] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    fallback_template: bool = False,
+    versioned_mirror_dir: Optional[Path] = None,
+) -> FileProcessResult:
     """
-    Process a single Python file for documentation generation (async).
+    Process a single file for documentation generation (async).
 
-    Parses the file, generates TL;DR and deep content for each symbol via LLM
-    concurrently (limited by per_file_concurrency), validates, aggregates,
-    and writes .tldr.md and .deep.md files.
-
-    Args:
-        target_path: Path to the Python file to process.
-        output_dir: Optional directory to write generated docs. If None,
-            writes to local .docs/ and mirrors to docs/livingDoc/.
-        dependencies_func: Optional function to resolve dependencies for the
-            file. Called with the file path, returns list of dependency paths.
-        per_file_concurrency: Max concurrent symbol generations per file (default 3).
-
-    Returns:
-        True if parsing and writing succeeded, False otherwise.
+    Phase 0: freshness check — skip if up to date (unless --force).
+    Phase 1: _trace_file() — pure static analysis, instant chain in dashboard.
+    Phase 2: _generate_docs_for_symbols() — LLM only, updates cost in dashboard.
     """
     if not target_path.exists() or not target_path.is_file():
         raise FileNotFoundError(f"Target file not found: {target_path}")
 
-    if target_path.suffix != ".py":
-        raise ValueError(f"Target is not a Python file: {target_path}")
+    # Phase 0: skip if up to date (hash-based freshness)
+    if not force and _is_up_to_date(target_path, output_dir):
+        if slot_id is not None and shared_display is not None:
+            rel = _rel_path_for_display(target_path)
+            shared_display[slot_id] = {
+                "file": rel,
+                "chain": None,
+                "cost": 0.0,
+                "status": "done",
+                "success": True,
+                "skipped": True,
+            }
+        if not quiet:
+            rel = _rel_path_for_display(target_path)
+            print(f"✓ {rel} (up to date)", file=sys.stdout)
+        return FileProcessResult(
+            success=True,
+            cost_usd=0.0,
+            symbols_count=0,
+            calls_count=0,
+            types_count=0,
+            exports_count=0,
+            model="",
+            skipped=True,
+        )
 
-    parsed_data = parse_python_file(target_path)
-    if parsed_data.get("error") is not None:
-        logger.warning("Parse error for %s: %s", target_path, parsed_data["error"])
-        return False
+    if generate_eliv is None:
+        config = ScoutConfig()
+        doc_gen = config.get("doc_generation") or {}
+        generate_eliv = doc_gen.get("generate_eliv", True)
 
-    dependencies: List[str] = []
-    if dependencies_func:
-        dependencies = dependencies_func(target_path) or []
-
-    per_file_semaphore = asyncio.Semaphore(per_file_concurrency)
-
-    tasks: List[asyncio.Task[Tuple[str, bool, str, str, str]]] = []
-    for symbol in parsed_data.get("symbols", []):
-        source_snippet = extract_source_snippet(
+    # Phase 1: pure static analysis — instant, no LLM
+    try:
+        trace = _trace_file(
             target_path,
-            symbol["lineno"],
-            symbol["end_lineno"],
+            language_override=language_override,
+            dependencies_func=dependencies_func,
+            slot_id=slot_id,
+            shared_display=shared_display,
         )
-        task = asyncio.create_task(
-            _generate_single_symbol_docs(
-                symbol, dependencies, source_snippet, per_file_semaphore
-            )
+    except (ValueError, SyntaxError, UnicodeDecodeError, IOError) as e:
+        logger.warning("Parse error for %s: %s", target_path, e)
+        if slot_id is not None and shared_display is not None:
+            shared_display[slot_id] = {
+                "file": _rel_path_for_display(target_path),
+                "chain": None,
+                "cost": 0.0,
+                "status": "done",
+                "success": False,
+                "error": str(e),
+            }
+        if not quiet:
+            rel = _rel_path_for_display(target_path)
+            print(f"{_RED}✗ {rel}: {e}{_RESET}", file=sys.stderr)
+        return FileProcessResult(
+            success=False,
+            cost_usd=0.0,
+            symbols_count=0,
+            calls_count=0,
+            types_count=0,
+            exports_count=0,
+            model="",
+            error=str(e),
         )
-        tasks.append(task)
 
-    results = await asyncio.gather(*tasks)
+    symbols_to_doc = trace.symbols_to_doc
+    all_calls = trace.all_calls
+    all_types = trace.all_types
+    all_exports = trace.all_exports
 
-    tldr_agg_content = ""
-    deep_agg_content = ""
-    eliv_agg_content = ""
-
-    for symbol_name, is_valid, tldr_content, deep_content, eliv_content in results:
-        if is_valid:
-            header = f"# {symbol_name}\n\n"
-            if tldr_agg_content:
-                tldr_agg_content += "\n---\n\n"
-            tldr_agg_content += header + tldr_content
-            if deep_agg_content:
-                deep_agg_content += "\n---\n\n"
-            deep_agg_content += header + deep_content
-            if eliv_agg_content:
-                eliv_agg_content += "\n---\n\n"
-            eliv_agg_content += f"# {symbol_name} ELIV\n\n{eliv_content}"
+    # Phase 2: LLM doc generation — diff-aware, only changed symbols
+    tldr_agg_content, deep_agg_content, eliv_agg_content, total_cost, model_used, symbols_for_meta = (
+        await _generate_docs_for_symbols(
+            target_path,
+            trace,
+            output_dir=output_dir,
+            generate_eliv=generate_eliv,
+            per_file_concurrency=per_file_concurrency,
+            fallback_template=fallback_template,
+            slot_id=slot_id,
+            shared_display=shared_display,
+            progress_callback=progress_callback,
+        )
+    )
 
     if not tldr_agg_content.strip() and not deep_agg_content.strip():
         msg = (
@@ -821,24 +1201,76 @@ async def process_single_file_async(
             "all symbols failed validation (empty LLM response or generation error)."
         )
         logger.warning(msg)
-        print(f"Warning: {msg}", file=sys.stderr)
-        return False
+        if slot_id is not None and shared_display is not None and slot_id in shared_display:
+            shared_display[slot_id]["cost"] = total_cost
+            shared_display[slot_id]["status"] = "done"
+            shared_display[slot_id]["success"] = False
+            shared_display[slot_id]["error"] = msg
+        if not quiet:
+            rel = _rel_path_for_display(target_path)
+            print(f"{_RED}✗ {rel}: {msg}{_RESET}", file=sys.stderr)
+        return FileProcessResult(
+            success=False,
+            cost_usd=total_cost,
+            symbols_count=len(symbols_to_doc),
+            calls_count=len(all_calls),
+            types_count=len(all_types),
+            exports_count=len(all_exports),
+            model=model_used,
+            error=msg,
+        )
 
     tldr_path, deep_path, eliv_path = write_documentation_files(
-        target_path, tldr_agg_content, deep_agg_content, eliv_agg_content, output_dir
+        target_path,
+        tldr_agg_content,
+        deep_agg_content,
+        eliv_agg_content,
+        output_dir,
+        generate_eliv,
+        versioned_mirror_dir=versioned_mirror_dir,
     )
     logger.info("Wrote %s, %s, and %s", tldr_path, deep_path, eliv_path)
-    # Print to stdout so user sees where files were written (logger.info may be hidden)
-    msg = f"Wrote {tldr_path}, {deep_path}, and {eliv_path}"
-    if output_dir is None:
-        try:
-            rel = target_path.resolve().relative_to(Path.cwd().resolve())
-            central = Path.cwd() / "docs" / "livingDoc" / rel.parent
-            msg += f" (also mirrored to {central})"
-        except ValueError:
-            pass
-    print(msg, file=sys.stdout)
-    return True
+
+    # Write freshness meta with per-symbol hashes (not mirrored to docs/livingDoc/)
+    meta_path = _get_tldr_meta_path(target_path, output_dir)
+    _write_freshness_meta(
+        meta_path,
+        _compute_source_hash(target_path),
+        model_used,
+        symbols=symbols_for_meta,
+    )
+
+    call_chain = _build_rolling_call_trace(symbols_to_doc)
+    result = FileProcessResult(
+        success=True,
+        cost_usd=total_cost,
+        symbols_count=len(symbols_to_doc),
+        calls_count=len(all_calls),
+        types_count=len(all_types),
+        exports_count=len(all_exports),
+        model=model_used,
+        call_chain=call_chain,
+    )
+
+    if slot_id is not None and shared_display is not None and slot_id in shared_display:
+        shared_display[slot_id]["cost"] = total_cost
+        shared_display[slot_id]["status"] = "done"
+        shared_display[slot_id]["success"] = True
+        shared_display[slot_id]["chain"] = call_chain  # final chain (canonical order)
+        shared_display[slot_id]["pulse_hop"] = None  # clear pulse for done
+
+    if not quiet:
+        rel = _rel_path_for_display(target_path)
+        if call_chain:
+            line = f"✔ {rel} ━╸ {call_chain} | {model_used} | ${total_cost:.4f}"
+        else:
+            line = (
+                f"✔ {rel} — traced {len(all_calls)} calls, {len(all_types)} types, "
+                f"{len(all_exports)} exports | {model_used} | ${total_cost:.4f}"
+            )
+        print(line, file=sys.stdout)
+
+    return result
 
 
 def process_single_file(
@@ -846,45 +1278,63 @@ def process_single_file(
     *,
     output_dir: Optional[Path] = None,
     dependencies_func: Optional[Callable[[Path], List[str]]] = None,
+    language_override: Optional[str] = None,
+    quiet: bool = False,
 ) -> bool:
     """
-    Process a single Python file for documentation generation (sync wrapper).
-
-    Parses the file, generates TL;DR and deep content for each symbol via LLM,
-    validates, aggregates, and writes .tldr.md and .deep.md files.
-
-    Uses process_single_file_async internally for concurrent symbol processing.
+    Process a single file for documentation generation (sync wrapper).
 
     Args:
-        target_path: Path to the Python file to process.
-        output_dir: Optional directory to write generated docs. If None,
-            writes to local .docs/ and mirrors to docs/livingDoc/.
-        dependencies_func: Optional function to resolve dependencies for the
-            file. Called with the file path, returns list of dependency paths.
+        target_path: Path to the file to process.
+        output_dir: Optional directory to write generated docs.
+        dependencies_func: Optional function to resolve dependencies.
+        language_override: Optional explicit language (e.g., "python", "javascript").
+        quiet: If True, suppress completion line output.
 
     Returns:
         True if parsing and writing succeeded, False otherwise.
     """
-    return asyncio.run(
+    result = asyncio.run(
         process_single_file_async(
             target_path,
             output_dir=output_dir,
             dependencies_func=dependencies_func,
+            language_override=language_override,
+            quiet=quiet,
         )
     )
+    return result.success
+
+
+def _gather_package_component_roles(package_dir: Path, repo_root: Path) -> List[str]:
+    """Parse each .py file in package to extract exports and top-level calls for truth-based cascading."""
+    lines: List[str] = []
+    for py_path in sorted(package_dir.glob("*.py")):
+        if py_path.name.startswith("_"):
+            continue
+        try:
+            adapter = get_adapter_for_path(py_path, "python")
+            root = adapter.parse(py_path)
+            exports = getattr(root, "exports", None) or []
+            exports_str = ", ".join(exports) if exports else "(top-level defs/classes)"
+            all_calls: List[str] = []
+            for child in root.children:
+                calls = getattr(child, "calls", None) or []
+                all_calls.extend(calls)
+            seen: set = set()
+            unique_calls = [c for c in all_calls if c not in seen and not seen.add(c)]
+            calls_str = ", ".join(unique_calls[:12]) if unique_calls else "(none traced)"
+            lines.append(f"- {py_path.name}: Exports {exports_str}. Calls: {calls_str}")
+        except Exception as e:
+            logger.debug("Skip tracing %s: %s", py_path, e)
+    return lines
 
 
 def _update_module_brief(package_dir: Path, repo_root: Path) -> bool:
     """
-    Generate module-level brief (__init__.py.module.md) from package .docs/ content.
+    Generate module-level brief (__init__.py.module.md) from real component roles + child .tldr.md.
 
-    Reads all .tldr.md and .deep.md in package_dir/.docs/, sends to LLM for summary,
-    writes to docs/livingDoc/<rel>/__init__.py.module.md and package_dir/.docs/__init__.py.module.md.
-
-    Respects BUILT_IN_IGNORES (via IgnorePatterns) and drafts.enable_module_briefs config.
-    Logs as "module_brief" audit event.
-
-    Returns True if generated, False if skipped.
+    Truth-based cascading: uses traced exports/calls from each file, then synthesizes orchestration.
     """
     config = ScoutConfig()
     drafts = config.get("drafts") or {}
@@ -908,45 +1358,46 @@ def _update_module_brief(package_dir: Path, repo_root: Path) -> bool:
     if not docs_dir.exists():
         return False
 
+    component_roles = _gather_package_component_roles(package_dir, repo_root)
+    roles_block = "\n".join(component_roles) if component_roles else "(no traced components)"
+
     tldr_parts: List[str] = []
-    deep_parts: List[str] = []
     for md in sorted(docs_dir.glob("*.tldr.md")):
         try:
             tldr_parts.append(f"### {md.stem}\n\n{md.read_text(encoding='utf-8', errors='replace')}")
         except OSError:
             pass
-    for md in sorted(docs_dir.glob("*.deep.md")):
-        try:
-            deep_parts.append(f"### {md.stem}\n\n{md.read_text(encoding='utf-8', errors='replace')}")
-        except OSError:
-            pass
 
-    if not tldr_parts and not deep_parts:
+    if not tldr_parts:
         return False
 
-    combined = "\n\n".join(tldr_parts + deep_parts)
-    if len(combined) > 12000:
-        combined = combined[:12000] + "\n\n[... truncated ...]"
+    combined = "\n\n".join(tldr_parts)
+    if len(combined) > 8000:
+        combined = combined[:8000] + "\n\n[... truncated ...]"
 
     module_name = ".".join(rel.parts)
-    prompt = f"""You are a documentation assistant. Given the following documentation for a Python package module "{module_name}",
-write a concise module-level summary in Markdown that explains:
+    prompt = f"""Synthesize a package overview from REAL component roles. Do not guess.
 
-1. **Purpose** — What this module does and why it exists.
-2. **Key components** — Main classes, functions, or types and their roles.
-3. **Interaction flow** — How components work together.
+Package: {module_name}
+Path: {rel}
 
-Package: {rel}
-Documentation excerpts:
+Component roles (traced from call graph):
+{roles_block}
+
+Child summaries (.tldr.md) for context:
 {combined}
 
-Output ONLY the module summary in Markdown. Use ## headings for each section."""
+Output a concise Markdown overview with ## headings:
+1. ## Purpose — What this package does (one sentence).
+2. ## Components — Ingress/Processing/Egress: which file handles what (from traced roles).
+3. ## Key Invariants — Constraints from the code (e.g. plain-text Git workflow, no external deps).
+Use only facts from the traced roles and summaries. No speculation."""
 
     try:
         response = asyncio.run(
             call_groq_async(
                 prompt,
-                model=TLDR_MODEL,
+                model=_resolve_doc_model("tldr"),
                 system="You are a documentation assistant. Be concise and accurate.",
                 max_tokens=800,
             )
@@ -979,26 +1430,100 @@ Output ONLY the module summary in Markdown. Use ## headings for each section."""
     return True
 
 
-def process_directory(
+async def _process_file_with_semaphore(
+    semaphore: asyncio.Semaphore,
+    file_path: Path,
+    *,
+    output_dir: Optional[Path] = None,
+    dependencies_func: Optional[Callable[[Path], List[str]]] = None,
+    language_override: Optional[str] = None,
+    generate_eliv: Optional[bool] = None,
+    quiet: bool = False,
+    force: bool = False,
+    slot_queue: Optional[asyncio.Queue] = None,
+    shared_display: Optional[Dict[str, Any]] = None,
+    fallback_template: bool = False,
+    versioned_mirror_dir: Optional[Path] = None,
+) -> FileProcessResult:
+    """Process a single file with semaphore for concurrency control."""
+    async with semaphore:
+        slot_id = None
+        if slot_queue is not None:
+            slot_id = await slot_queue.get()
+        try:
+            def _progress_cb(cost: float) -> None:
+                if slot_id is not None and shared_display is not None and slot_id in shared_display:
+                    shared_display[slot_id]["cost"] = cost
+
+            return await process_single_file_async(
+                file_path,
+                output_dir=output_dir,
+                dependencies_func=dependencies_func,
+                language_override=language_override,
+                generate_eliv=generate_eliv,
+                quiet=quiet,
+                force=force,
+                slot_id=slot_id,
+                shared_display=shared_display,
+                progress_callback=_progress_cb,
+                fallback_template=fallback_template,
+                versioned_mirror_dir=versioned_mirror_dir,
+            )
+        finally:
+            if slot_queue is not None and slot_id is not None:
+                slot_queue.put_nowait(slot_id)
+
+
+def _format_status_bar(
+    completed: int,
+    total: int,
+    last_file: Optional[str],
+    last_calls: int,
+    last_cost: float,
+    total_cost: float,
+    processed: int = 0,
+) -> str:
+    """Build status bar: [✓ 24/114] file → traced N calls, $X.XXXX | Est. total: $X.XX"""
+    denom = processed if processed > 0 else completed
+    est_total = total_cost * total / denom if denom > 0 else 0.0
+    file_part = f" {last_file} →" if last_file else ""
+    stats = f"traced {last_calls} calls, ${last_cost:.4f}" if last_file else "…"
+    return f"[✓ {completed}/{total}]{file_part} {stats} | Est. total: ${est_total:.2f}"
+
+
+async def process_directory_async(
     target_path: Path,
     *,
     recursive: bool = False,
     output_dir: Optional[Path] = None,
     dependencies_func: Optional[Callable[[Path], List[str]]] = None,
+    language_override: Optional[str] = None,
+    workers: Optional[int] = None,
+    show_progress: bool = True,
+    generate_eliv: Optional[bool] = None,
+    quiet: bool = False,
+    budget: Optional[float] = None,
+    force: bool = False,
+    changed_files: Optional[List[Path]] = None,
+    fallback_template: bool = False,
+    versioned_mirror_dir: Optional[Path] = None,
 ) -> None:
     """
-    Process a directory of Python files for documentation generation.
+    Process a directory of files for documentation generation (async).
 
-    After processing all files in a package (directory with __init__.py),
-    auto-generates module brief (__init__.py.module.md) when enable_module_briefs is true.
+    Uses asyncio.Semaphore to limit concurrent LLM calls. Preserves idempotency:
+    same input produces same output regardless of execution order.
 
     Args:
         target_path: Path to the directory to process.
         recursive: If True, process subdirectories recursively.
-        output_dir: Optional directory to write generated docs. If None,
-            writes to local .docs/ and mirrors to docs/livingDoc/.
-        dependencies_func: Optional function to resolve dependencies for each
-            file. Called with each file path, returns list of dependency paths.
+        output_dir: Optional directory to write generated docs.
+        dependencies_func: Optional function to resolve dependencies per file.
+        language_override: Optional explicit language for all files.
+        workers: Max concurrent file processing (default: min(8, cpu_count)).
+        show_progress: If True and stdout is a TTY, show progress.
+        quiet: If True, suppress status bar and completion lines (CI mode).
+        budget: Optional hard USD limit. Stops all workers immediately when exceeded.
     """
     if not target_path.exists() or not target_path.is_dir():
         raise NotADirectoryError(f"Target directory not found: {target_path}")
@@ -1006,22 +1531,258 @@ def process_directory(
     if output_dir is not None:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    repo_root = Path.cwd().resolve()
-    pattern = "**/*.py" if recursive else "*.py"
-    processed_package_dirs: set[Path] = set()
+    # Auto-set workers and LLM concurrency from model RPM if not explicitly provided
+    specs = get_model_specs()
+    model_name = _resolve_doc_model("deep")
+    spec = specs.get(model_name, {})
+    rpm = spec.get("rpm_limit", 1000)
 
-    for py_file in target_path.glob(pattern):
-        if py_file.is_file() and "__pycache__" not in str(py_file):
-            try:
-                process_single_file(
-                    py_file,
-                    output_dir=output_dir,
-                    dependencies_func=dependencies_func,
-                )
-                if output_dir is None and (py_file.parent / "__init__.py").exists():
-                    processed_package_dirs.add(py_file.parent)
-            except (ValueError, OSError) as e:
-                logger.warning("Skip %s: %s", py_file, e)
+    if workers is None:
+        workers = _safe_workers_from_rpm(model_name, rpm)
+        logger.info(
+            "Auto-set workers to %d based on %s RPM limit (%d)",
+            workers,
+            model_name,
+            rpm,
+        )
+    workers = max(1, workers)
+    semaphore = asyncio.Semaphore(workers)
+
+    files: List[Path] = []
+    for pattern in _DIRECTORY_PATTERNS:
+        for f in target_path.glob(pattern):
+            if f.is_file() and "__pycache__" not in str(f):
+                files.append(f)
+
+    if changed_files is not None:
+        changed_set = {p.resolve() for p in changed_files}
+        files = [f for f in files if f.resolve() in changed_set]
+        if not files:
+            logger.info("No changed files to process (--changed-only)")
+            return
+
+    total = len(files)
+
+    # Doc-sync: set LLM concurrency just below rate limit for bulk runs.
+    if (
+        total > 1
+        and "SCOUT_MAX_CONCURRENT_CALLS" not in os.environ
+    ):
+        desired = _max_concurrent_from_rpm(rpm)
+        os.environ["SCOUT_MAX_CONCURRENT_CALLS"] = str(desired)
+        # Bump workers so file-level parallelism doesn't bottleneck LLM throughput
+        workers = min(16, max(workers, desired // 2))
+        semaphore = asyncio.Semaphore(workers)
+        logger.info(
+            "Doc-sync: set SCOUT_MAX_CONCURRENT_CALLS=%d, workers=%d (just below %d RPM limit)",
+            desired,
+            workers,
+            rpm,
+        )
+
+    if generate_eliv is None:
+        config = ScoutConfig()
+        doc_gen = config.get("doc_generation") or {}
+        generate_eliv = doc_gen.get("generate_eliv", True)
+    repo_root = Path.cwd().resolve()
+    use_progress = (
+        show_progress and not quiet and total > 1 and sys.stdout.isatty()
+    )
+    use_dashboard = use_progress  # full parallel trace dashboard
+    processed_package_dirs: set = set()
+    completed = [0]  # use list for closure
+    processed = [0]  # files that ran LLM (not skipped), for ETA
+    total_cost = [0.0]
+    last_result: List[Optional[FileProcessResult]] = [None]
+    last_file: List[Optional[str]] = [None]
+    lock = asyncio.Lock()
+
+    slot_queue: Optional[asyncio.Queue] = None
+    shared_display: Dict[int, Dict[str, Any]] = {}
+    dashboard_done = asyncio.Event()
+    if use_dashboard:
+        slot_queue = asyncio.Queue()
+        for i in range(workers):
+            slot_queue.put_nowait(i)
+
+    def _apply_pulse(chain: str, pulse_hop: Optional[str]) -> str:
+        """Wrap pulse_hop in inverse video for 1 frame, then clear."""
+        if not pulse_hop or pulse_hop not in chain:
+            return chain
+        plain = _strip_ansi(pulse_hop)
+        return chain.replace(
+            pulse_hop,
+            f"{_INVERSE}{plain}{_INVERSE_OFF}",
+            1,
+        )
+
+    async def _display_refresh_task() -> None:
+        """Refresh dashboard every 100ms (10 FPS): clear screen, slots, status bar."""
+        while not dashboard_done.is_set():
+            await asyncio.sleep(0.1)
+            if dashboard_done.is_set():
+                break
+            async with lock:
+                display_completed = completed[0]
+                display_processed = processed[0]
+                display_total_cost = total_cost[0]
+            sys.stdout.write(_CLEAR_SCREEN)
+            est_total = (
+                display_total_cost * total / display_processed
+                if display_processed > 0
+                else 0.0
+            )
+            for slot_id in range(workers):
+                entry = shared_display.get(slot_id)
+                if entry:
+                    status = entry.get("status", "running")
+                    file_str = entry.get("file", "…")
+                    chain = entry.get("chain")
+                    cost = entry.get("cost", 0.0)
+                    pulse_hop = entry.pop("pulse_hop", None)  # clear after 1 frame
+                    if chain and pulse_hop:
+                        chain = _apply_pulse(chain, pulse_hop)
+                    slot_prefix = f"[{slot_id}] "
+                    if status == "done":
+                        if entry.get("skipped"):
+                            line = f"{slot_prefix}✓ {file_str} (up to date)"
+                        else:
+                            success = entry.get("success", False)
+                            if success and chain:
+                                line = f"{slot_prefix}✔ {file_str} ━╸ {chain} | ${cost:.4f}"
+                            elif success:
+                                line = f"{slot_prefix}✔ {file_str} | ${cost:.4f}"
+                            else:
+                                err = entry.get("error", "failed")
+                                line = f"{slot_prefix}{_RED}✗ {file_str}: {err}{_RESET}"
+                        sys.stdout.write(line + "\n")
+                    else:
+                        if chain:
+                            line = f"{slot_prefix}{file_str} ━╸ {chain} | ${cost:.4f}"
+                        else:
+                            line = f"{slot_prefix}{file_str} | ${cost:.4f}"
+                        sys.stdout.write(line + "\n")
+            bar = f"[✓ {display_completed}/{total}] | ${display_total_cost:.4f} spent | Est. total: ${est_total:.2f}"
+            sys.stdout.write("\n" + bar)
+            sys.stdout.flush()
+
+    def _render_status() -> None:
+        if not use_progress or use_dashboard:
+            return
+        r = last_result[0]
+        bar = _format_status_bar(
+            completed[0],
+            total,
+            last_file[0],
+            r.calls_count if r else 0,
+            r.cost_usd if r else 0.0,
+            total_cost[0],
+            processed=processed[0],
+        )
+        sys.stdout.write("\r" + bar)
+        sys.stdout.flush()
+
+    async def _process_and_track(f: Path) -> None:
+        result: Optional[FileProcessResult] = None
+        try:
+            result = await _process_file_with_semaphore(
+                semaphore,
+                f,
+                output_dir=output_dir,
+                dependencies_func=dependencies_func,
+                language_override=language_override,
+                generate_eliv=generate_eliv,
+                quiet=True,  # we print our own completion/error lines
+                force=force,
+                slot_queue=slot_queue,
+                shared_display=shared_display,
+                fallback_template=fallback_template,
+                versioned_mirror_dir=versioned_mirror_dir,
+            )
+        except (ValueError, OSError) as e:
+            logger.warning("Skip %s: %s", f, e)
+            result = FileProcessResult(
+                success=False,
+                cost_usd=0.0,
+                symbols_count=0,
+                calls_count=0,
+                types_count=0,
+                exports_count=0,
+                model="",
+                error=str(e),
+            )
+        finally:
+            async with lock:
+                completed[0] += 1
+                if result:
+                    if not result.skipped:
+                        total_cost[0] += result.cost_usd
+                        processed[0] += 1
+                        if budget is not None and total_cost[0] > budget:
+                            raise BudgetExceededError(total_cost[0], budget)
+                    last_result[0] = result
+                    last_file[0] = _rel_path_for_display(f)
+                    if result.success and output_dir is None and (f.parent / "__init__.py").exists():
+                        processed_package_dirs.add(f.parent)
+
+            if quiet:
+                return
+            if use_dashboard:
+                return  # dashboard shows completion
+
+            # Completion line or error (replaces "Wrote..." messages)
+            if result:
+                rel = _rel_path_for_display(f)
+                if result.skipped:
+                    if use_progress:
+                        sys.stdout.write("\r" + " " * 100 + "\r")
+                    print(f"✓ {rel} (up to date)", file=sys.stdout)
+                elif result.success:
+                    if result.call_chain:
+                        line = f"✔ {rel} ━╸ {result.call_chain} | {result.model} | ${result.cost_usd:.4f}"
+                    else:
+                        line = (
+                            f"✔ {rel} — traced {result.calls_count} calls, "
+                            f"{result.types_count} types, {result.exports_count} exports | "
+                            f"{result.model} | ${result.cost_usd:.4f}"
+                        )
+                    if use_progress:
+                        sys.stdout.write("\r" + " " * 100 + "\r")
+                    print(line, file=sys.stdout)
+                else:
+                    err_msg = f"{_RED}✗ {rel}: {result.error}{_RESET}"
+                    if use_progress:
+                        sys.stdout.write("\r" + " " * 100 + "\r")
+                    print(err_msg, file=sys.stderr)
+
+            if use_progress and not use_dashboard:
+                _render_status()
+
+    if use_dashboard:
+        refresh_task = asyncio.create_task(_display_refresh_task())
+
+    task_objs = [asyncio.create_task(_process_and_track(f)) for f in files]
+    try:
+        await asyncio.gather(*task_objs)
+    except BudgetExceededError:
+        for t in task_objs:
+            t.cancel()
+        await asyncio.gather(*task_objs, return_exceptions=True)
+        raise
+
+    if use_dashboard:
+        dashboard_done.set()
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
+        sys.stdout.write(_CLEAR_SCREEN)
+        sys.stdout.flush()
+    elif use_progress:
+        sys.stdout.write("\r" + " " * 100 + "\r")
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
     if output_dir is None:
         for pkg_dir in sorted(processed_package_dirs):
@@ -1030,19 +1791,137 @@ def process_directory(
             except Exception as e:
                 logger.warning("Skip module brief for %s: %s", pkg_dir, e)
 
-# Smoke test change 1770939297
 
-# Smoke test change 1770939397
+def process_directory(
+    target_path: Path,
+    *,
+    recursive: bool = False,
+    output_dir: Optional[Path] = None,
+    dependencies_func: Optional[Callable[[Path], List[str]]] = None,
+    language_override: Optional[str] = None,
+    workers: Optional[int] = None,
+    show_progress: bool = True,
+    generate_eliv: Optional[bool] = None,
+    quiet: bool = False,
+    budget: Optional[float] = None,
+    force: bool = False,
+    changed_files: Optional[List[Path]] = None,
+    fallback_template: bool = False,
+    versioned_mirror_dir: Optional[Path] = None,
+) -> None:
+    """
+    Process a directory of files for documentation generation.
 
-# Smoke test change 1770939517
+    Supports Python, JavaScript, and plain-text fallback. When recursive and
+    processing Python packages (directories with __init__.py), auto-generates
+    module briefs when enable_module_briefs is true.
 
-# Smoke test change 1770939701
-# Smoke test 1770939786
+    Args:
+        target_path: Path to the directory to process.
+        recursive: If True, process subdirectories recursively.
+        output_dir: Optional directory to write generated docs.
+        dependencies_func: Optional function to resolve dependencies per file.
+        language_override: Optional explicit language for all files.
+        workers: Max concurrent file processing (default: min(8, cpu_count)).
+        show_progress: If True and stdout is a TTY, show progress.
+        quiet: If True, suppress status bar and completion lines (CI mode).
+    """
+    asyncio.run(
+        process_directory_async(
+            target_path,
+            recursive=recursive,
+            output_dir=output_dir,
+            dependencies_func=dependencies_func,
+            language_override=language_override,
+            workers=workers,
+            show_progress=show_progress,
+            generate_eliv=generate_eliv,
+            quiet=quiet,
+            budget=budget,
+            force=force,
+            changed_files=changed_files,
+            fallback_template=fallback_template,
+            versioned_mirror_dir=versioned_mirror_dir,
+        )
+    )
 
-# Smoke test change 1770939947
 
-# Smoke test change 1770940055
+def synthesize_pr_description(raw_summaries: str) -> str:
+    """
+    Synthesize a unified PR description from raw file/module summaries via LLM.
 
-# Smoke test change 1770940083
+    Uses the same model as doc generation (TLDR_MODEL). Logs to audit.jsonl as
+    "pr_synthesis". Falls back to raw concatenation if LLM fails (graceful degradation).
 
-# Smoke test change 1770940156
+    Args:
+        raw_summaries: Concatenated technical summaries from assemble_pr_description.
+
+    Returns:
+        Cohesive narrative PR description, or raw_summaries on LLM failure.
+    """
+    prompt = f"""You are a senior staff engineer writing a PR description for a code review.
+Summarize the following technical summaries into a single, cohesive narrative that explains:
+- The overall goal of the changes
+- Key architectural components introduced or modified
+- Cross-cutting concerns (e.g., cost tracking, auditability, language support)
+- Why this matters to the team
+
+Be concise, professional, and insightful. Do not list files—group by theme.
+
+Technical summaries:
+{raw_summaries}"""
+
+    try:
+        response = asyncio.run(
+            call_groq_async(
+                prompt,
+                model=_resolve_doc_model("pr_synthesis") or _resolve_doc_model("tldr"),
+                system="You are a senior staff engineer. Write concise, professional PR descriptions.",
+                max_tokens=1200,
+            )
+        )
+    except Exception as e:
+        logger.warning("PR synthesis LLM failed, falling back to raw: %s", e)
+        return raw_summaries
+
+    audit = AuditLog()
+    audit.log(
+        "pr_synthesis",
+        cost=response.cost_usd,
+        model=response.model,
+        input_t=response.input_tokens,
+        output_t=response.output_tokens,
+    )
+
+    content = response.content.strip()
+    return content if content else raw_summaries
+
+
+# Backward compatibility: parse_python_file delegates to PythonAdapter
+def parse_python_file(file_path: Path) -> Dict[str, Any]:
+    """
+    Parse a Python file using the AST and extract top-level symbols.
+
+    Legacy API; new code should use get_adapter_for_path().parse().
+    """
+    from vivarium.scout.adapters.python import PythonAdapter
+
+    adapter = PythonAdapter()
+    tree = adapter.parse(file_path)
+    symbols: List[Dict[str, Any]] = []
+    for child in tree.children:
+        for s in child.iter_symbols():
+            symbols.append({
+                "name": s.name,
+                "type": s.type,
+                "lineno": s.lineno,
+                "end_lineno": s.end_lineno,
+                "docstring": s.docstring,
+                "signature": s.signature,
+                "logic_hints": s.logic_hints or [],
+            })
+    return {
+        "path": str(file_path),
+        "symbols": symbols,
+        "error": None,
+    }

@@ -34,6 +34,11 @@ FSYNC_INTERVAL_SEC = 1.0
 # Event types per spec
 EVENT_TYPES = frozenset({
     "nav", "brief", "cascade", "validation_fail", "budget", "skip", "trigger",
+    "tldr", "tldr_auto_generated", "deep", "doc_sync",
+    "commit_draft", "pr_snippet", "impact_analysis",
+    "module_brief",
+    "pr_synthesis",
+    "roast_with_docs",
 })
 
 # Per-process session ID
@@ -149,8 +154,11 @@ class AuditLog:
         Log an event. Atomic line write, fsync cadence.
 
         Args:
-            event_type: One of nav|brief|cascade|validation_fail|budget|skip|trigger
-            cost: USD cost (optional)
+            event_type: One of nav|brief|cascade|validation_fail|budget|skip|trigger|tldr|deep|doc_sync
+            cost: USD cost (optional). Omit (None) when no API call was made. When
+                an API call was made, pass the calculated cost from usage; LLM clients
+                use a small epsilon (e.g. 1e-7) when cost rounds to 0 so the log
+                distinguishes "call made" from "no call".
             model: Model name (optional)
             input_t, output_t: Token counts (optional)
             files: Affected file paths (optional)
@@ -296,6 +304,16 @@ class AuditLog:
             "validation_fail_count": fail_count,
             "accuracy_pct": round(accuracy, 2),
         }
+
+    def flush(self) -> None:
+        """Force flush and fsync to ensure events are persisted (e.g. before process exit)."""
+        with self._lock:
+            if self._file is not None and not self._file.closed:
+                try:
+                    self._file.flush()
+                    os.fsync(self._file.fileno())
+                except OSError:
+                    pass
 
     def close(self) -> None:
         """Flush and close the log file."""

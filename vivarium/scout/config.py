@@ -7,6 +7,7 @@ Load order: ~/.scout/config.yaml < .scout/config.yaml < env vars < hard caps.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -82,11 +83,51 @@ DEFAULT_CONFIG = {
     "models": {
         "scout_nav": "llama-3.1-8b",
         "max_for_auto": "llama-3.1-8b",
+        "tldr": "llama-3.1-8b-instant",  # Fast + cheap for summaries
+        "deep": "llama-3.3-70b-versatile",  # High quality for deep analysis
+        "eliv": "llama-3.1-8b-instant",  # ELIV doesn't need 70B
+        "pr_synthesis": "llama-3.3-70b-versatile",
     },
     "notifications": {
         "on_validation_failure": "alert",
     },
+    "drafts": {
+        "enable_commit_drafts": True,
+        "enable_pr_snippets": True,
+        "enable_impact_analysis": False,
+        "enable_module_briefs": True,
+    },
+    "roast": {
+        "enable_roast": True,
+    },
+    "doc_generation": {
+        "generate_eliv": True,  # Set to False during large syncs to skip .eliv.md
+    },
 }
+
+def _max_concurrent_calls() -> int:
+    """Max concurrent LLM API calls. Read from SCOUT_MAX_CONCURRENT_CALLS env (default 5)."""
+    val = os.environ.get("SCOUT_MAX_CONCURRENT_CALLS", "5")
+    try:
+        n = int(val)
+        return max(1, min(n, 100))  # Clamp 1–100
+    except (ValueError, TypeError):
+        return 5
+
+
+# Lazy-initialized semaphore to avoid "attached to a different loop" errors.
+# Creating Semaphore at module import (before any event loop runs) can bind it
+# to the wrong loop. Created on first use when we're inside an async context.
+_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def get_global_semaphore() -> asyncio.Semaphore:
+    """Return the global semaphore, creating it lazily when first used in an async context."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(_max_concurrent_calls())
+    return _semaphore
+
 
 # Env var mapping: SCOUT_MAX_COST_PER_EVENT -> limits.max_cost_per_event
 ENV_TO_CONFIG = {

@@ -6,3 +6,7 @@ black
 flake8
 mypy
 types-requests
+
+# Groq specs scraper (devtools/update_groq_specs.py)
+requests
+beautifulsoup4

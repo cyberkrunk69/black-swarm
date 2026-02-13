@@ -2,11 +2,11 @@
 Scout Navigation CLI — Find code in 2 seconds.
 
 Usage:
-    ./devtools/scripts/scout-nav --task "fix auth timeout bug"
-    ./devtools/scripts/scout-nav --task "add OAuth provider" --entry vivarium/runtime/
-    ./devtools/scripts/scout-nav --file vivarium/runtime/auth.py --question "where is token refresh?"
-    ./devtools/scripts/scout-nav --task "fix race condition" --json
-    ./devtools/scripts/scout-nav --task "optimize query" --output briefing.md
+    ./devtools/scout-nav --task "fix auth timeout bug"
+    ./devtools/scout-nav --task "add OAuth provider" --entry vivarium/runtime/
+    ./devtools/scout-nav --file vivarium/runtime/auth.py --question "where is token refresh?"
+    ./devtools/scout-nav --task "fix race condition" --json
+    ./devtools/scout-nav --task "optimize query" --output briefing.md
 """
 
 from __future__ import annotations
@@ -208,16 +208,35 @@ async def _main_async(args: argparse.Namespace) -> int:
         try:
             from vivarium.scout.cli.index import query_for_nav
 
-            index_result = query_for_nav(repo_root, args.task)
-            if index_result and index_result.get("confidence", 0) >= 80:
-                if args.json:
-                    print(json.dumps(index_result, indent=2))
-                else:
-                    print_pretty(index_result)
-                if args.output:
-                    brief = await generate_brief(index_result, args.task)
-                    Path(args.output).write_text(brief)
-                return 0
+            suggestions_list = query_for_nav(repo_root, args.task)
+            if suggestions_list:
+                # Pick first result (index returns best-first list)
+                index_result = suggestions_list[0] if isinstance(suggestions_list[0], dict) else None
+                if index_result and index_result.get("confidence", 0) >= 80:
+                    # Normalize to router output format for print_pretty
+                    result = {
+                        "task": index_result.get("task", args.task),
+                        "target_file": index_result.get("target_file", ""),
+                        "target_function": index_result.get("target_function", ""),
+                        "line_estimate": index_result.get("line_estimate", 0),
+                        "confidence": index_result.get("confidence", 85),
+                        "model_used": index_result.get("model_used", "scout-index"),
+                        "cost_usd": index_result.get("cost_usd", 0.0),
+                        "duration_ms": index_result.get("duration_ms", 0),
+                        "retries": 0,
+                        "escalated": False,
+                        "related_files": index_result.get("related_files", []),
+                        "reasoning": index_result.get("reasoning", ""),
+                        "suggestion": index_result.get("suggestion", ""),
+                    }
+                    if args.json:
+                        print(json.dumps(result, indent=2))
+                    else:
+                        print_pretty(result)
+                    if args.output:
+                        brief = await generate_brief(result, args.task)
+                        Path(args.output).write_text(brief)
+                    return 0
         except Exception:
             pass  # Fall through to LLM
 

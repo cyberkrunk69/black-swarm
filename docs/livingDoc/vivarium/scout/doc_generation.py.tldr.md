@@ -1,178 +1,285 @@
 # logger
 
-The `logger` constant is not explicitly documented, but based on its interactions, it appears to be a logging utility used for outputting messages or errors in the vivarium/scout project. Its primary purpose is to handle logging functionality, and it likely interacts with the dependencies listed to configure or utilize logging features.
+This Python constant is part of the Vivarium Scout system, specifically importing various adapters and utilities. It does not export any values or make any calls.
+---
+
+# _RESET
+
+The _RESET constant is not explicitly described in the provided information. However, based on the imports and the lack of calls or types, it is likely a configuration or state variable used in the vivarium/scout system.
+---
+
+# _RED
+
+This constant is used in the vivarium/scout system and is imported from various modules, but it does not export any values or make any qualified calls.
+---
+
+# _CLEAR_SCREEN
+
+The _CLEAR_SCREEN constant is not explicitly described in the provided information. However, based on the imports and the lack of calls or types, it is likely a constant used for clearing the screen in a Python environment.
+---
+
+# _INVERSE
+
+This constant is not directly involved in any calls or operations within the system. It imports various modules from the vivarium/scout package, suggesting it may be a configuration or setup constant.
+---
+
+# _INVERSE_OFF
+
+This constant is not directly involved in any system operations as it does not export or call any functions.
+---
+
+# BudgetExceededError
+
+This class, BudgetExceededError, is likely a custom exception class that inherits from the built-in RuntimeError type. It is used to handle budget-related errors in the system, possibly in the context of a resource management or cost estimation framework.
+---
+
+# __init__
+
+Simple __init__ utility.
+---
+
+# FileProcessResult
+
+This class is part of the Vivarium Scout system and is responsible for processing file results. It imports various adapters and utilities from the Vivarium Scout package, but does not make any external calls or use any external types.
+---
+
+# TraceResult
+
+This class is part of the Vivarium Scout system and is responsible for handling trace results. It imports various adapters and utilities from the Vivarium Scout package, suggesting it is involved in processing or analyzing data from these adapters.
+---
+
+# _get_tldr_meta_path
+
+This function retrieves a path using the `pathlib.Path` class, likely for file system operations. It does not export any values and its purpose is internal to the vivarium/scout system.
+---
+
+# _compute_source_hash
+
+The function _compute_source_hash reads bytes from a file path and computes a SHA-256 hash of those bytes. It uses the `Path` type and returns a string.
+---
+
+# _compute_symbol_hash
+
+This function computes a SHA-256 hash of a symbol's source snippet. It appears to be part of a system that audits or analyzes code, as it uses a SymbolTree and calls extract_source_snippet.
+---
+
+# _read_freshness_meta
+
+This function reads and parses metadata from a file at a specified path. It appears to be part of a system that manages or audits metadata, possibly related to a Vivarium scout. The function likely returns the parsed metadata as a Python object.
+---
+
+# _is_up_to_date
+
+This function checks if a source is up-to-date by reading freshness metadata and comparing it to the source's hash. It uses the source's hash to determine its freshness.
+---
+
+# _module_to_file_path
+
+This function appears to be responsible for mapping a module name to a file path. It likely uses a registry or configuration to resolve the module name to a file path. The function may also handle cases where the module name is relative or absolute.
+---
+
+# export_call_graph
+
+This function appears to export or process a call graph by interacting with the file system and a registry of adapters. It uses the `Path` type to manipulate file paths and calls various functions to parse and write data.
+---
+
+# get_downstream_impact
+
+This function appears to analyze a call graph, specifically examining the downstream impact of changes. It reads a call graph from a file and processes its contents to identify affected elements.
+---
+
+# export_knowledge_graph
+
+This function appears to export knowledge graph data by iterating over symbols in a root directory, parsing each symbol, and writing the resulting data to a file. It utilizes a registry to determine the adapter for each symbol and recursively traverses the directory structure to gather data.
+---
+
+# find_stale_files
+
+This function finds stale files by computing source hashes, checking file freshness, and ignoring certain paths. It appears to be part of a file management or auditing system, possibly related to Vivarium Scout.
+---
+
+# _write_freshness_meta
+
+This function writes freshness metadata to a file. It appears to create a directory if it does not exist, and then writes a JSON string to a file using the current date and time.
 ---
 
 # TLDR_MODEL
 
-The `TLDR_MODEL` constant is not explicitly documented, but based on its interactions, it appears to be a model or configuration related to the TLDR (Too Long; Didn't Read) feature in the Vivarium Scout. 
-
-It likely depends on the LLM (Large Language Model) configuration from `vivarium/scout/llm.py` and possibly uses or is influenced by configurations from `vivarium/scout/config.py`.
+The TLDR_MODEL constant is not explicitly described in the provided information. However, based on the imports and the lack of calls or types, it is likely a configuration or registry constant used in the vivarium/scout system.
 ---
 
 # DEEP_MODEL
 
-The Python constant 'DEEP_MODEL' is not explicitly documented, but based on its interactions with other modules, it appears to be a configuration constant related to deep learning models. 
-
-It likely controls or references a specific deep learning model used in the vivarium/scout/llm.py module, possibly influencing the behavior of the scout.
+This Python constant (DEEP_MODEL) imports various modules from the vivarium/scout package, suggesting it is part of a larger system for model management or auditing. However, without any traced calls or used types, its specific role remains unclear.
 ---
 
 # ELIV_MODEL
 
-The Python constant 'ELIV_MODEL' is not explicitly defined in the provided information. However, based on the dependencies, it is likely related to the LLM (Large Language Model) functionality in the vivarium/scout/llm.py module. 
-
-It may be used to store or reference a specific LLM model, possibly for use in the vivarium/scout/audit.py, vivarium/scout/config.py, or vivarium/scout/ignore.py modules.
+The ELIV_MODEL constant is not explicitly used in the system, but it imports various modules from the vivarium/scout package, suggesting it is part of a larger scout model or framework.
 ---
 
-# _extract_logic_hints
+# _resolve_doc_model
 
-**Function Summary: `_extract_logic_hints`**
-
-The `_extract_logic_hints` function extracts logic hints from a function or method body by scanning Abstract Syntax Tree (AST) nodes. It identifies and returns hints related to loops, returns, function calls, and conditional statements. This function relies on dependencies from the vivarium/scout module, specifically `vivarium/scout/audit.py`, `vivarium/scout/config.py`, `vivarium/scout/ignore.py`, and `vivarium/scout/llm.py`.
+This function appears to resolve a document model by retrieving configuration, fallbacks, and model data. It likely uses this data to determine the document model.
 ---
 
-# _build_signature
+# _DIRECTORY_PATTERNS
 
-**_build_signature Function Summary**
-=====================================
-
-The `_build_signature` function builds a signature string for a function or async function, considering exception handling, loops, returns, conditionals, and calls. It takes an abstract syntax tree (AST) node as input and returns a string representation of the function's signature. The function interacts with dependencies from the `vivarium/scout` package, specifically `audit.py`, `config.py`, `ignore.py`, and `llm.py`.
+This constant is not directly involved in any system operations, as there are no traced calls or used types. It appears to be a placeholder or a marker, possibly indicating a directory pattern configuration.
 ---
 
-# _parse_assign_targets
+# _GROQ_SPECS_PATH
 
-**_parse_assign_targets Function Summary**
-
-The `_parse_assign_targets` function extracts names from an assignment target, handling tuple unpacking. It iterates over the assignment node, returning a list of extracted names. This function depends on the `vivarium/scout` package, specifically interacting with `audit.py`, `config.py`, `ignore.py`, and `llm.py`.
+The constant _GROQ_SPECS_PATH is used to import dependencies from various modules in the vivarium/scout package, specifically adapters and configuration modules. It does not make any calls or export any values.
 ---
 
-# parse_python_file
+# get_model_specs
 
-**parse_python_file Function Summary**
-=====================================
+This function reads model specifications from a file and logs warnings if the file does not exist. It appears to be part of a system that manages or audits models.
+---
 
-The `parse_python_file` function parses a Python file using the Abstract Syntax Tree (AST) to extract top-level symbols, including classes, functions, methods, and constants. It captures symbol metadata such as name, type, line range, docstring, and logic hints. The function relies on dependencies from the vivarium/scout package for configuration and logic hint analysis.
+# _safe_workers_from_rpm
+
+Returns safe.
+---
+
+# _max_concurrent_from_rpm
+
+Returns min(100, max(1, int(rpm * 0.85 / 30))).
+---
+
+# _default_workers
+
+This function appears to be part of a system that manages workers, as indicated by the file name "_default_workers". It likely retrieves or calculates a minimum value, possibly related to the number of CPU cores available, and returns it as an integer.
 ---
 
 # extract_source_snippet
 
-**extract_source_snippet Function Summary**
-=============================================
-
-The `extract_source_snippet` function reads a specific Python file and returns the raw source code lines between `start_line` and `end_line` inclusive. It relies on accurate line numbers from `parse_python_file` and handles exceptions for file existence, readability, and decoding.
+This function reads a file and returns its contents. It appears to handle file I/O operations, including error handling for file not found and I/O errors.
 ---
 
-# _build_tldr_prompt
+# _fallback_template_content
 
-**_build_tldr_prompt Function Summary**
-
-The `_build_tldr_prompt` function builds a Large Language Model (LLM) prompt for generating a TL;DR summary. It takes in `symbol_info` and `dependencies` as inputs and returns a string prompt. The function depends on various modules from the vivarium/scout package, including `audit.py`, `config.py`, `ignore.py`, and `llm.py`, to construct the prompt based on the provided information.
----
-
-# _generate_tldr_async
-
-Async implementation of TL;DR generation, returning an error string on non-RuntimeError failures. It calls other functions from dependencies to generate a TL;DR, handling exceptions and returning the result as a string. The function relies on the `vivarium/scout` package for configuration, audit, and ignore logic.
----
-
-# generate_tldr_content
-
-**TL;DR Summary**
-Generate a concise, high-level summary of a single symbol using a Large Language Model (LLM). The summary explains the primary purpose and key responsibilities of the symbol, and briefly describes its relationship with dependencies.
----
-
-# _build_deep_prompt
-
-**_build_deep_prompt Function Summary**
-=====================================
-
-The `_build_deep_prompt` function builds a Large Language Model (LLM) prompt for deep content generation. It takes in symbol information, dependencies, and a source code snippet, and returns a formatted string. The function relies on various dependencies, including `vivarium/scout/audit.py`, `vivarium/scout/config.py`, `vivarium/scout/ignore.py`, and `vivarium/scout/llm.py`, to construct the prompt.
----
-
-# _generate_deep_content_async
-
-Async implementation of deep content generation, responsible for generating content based on provided symbol information, dependencies, and source code snippet. It returns an error string on non-RuntimeError failures. It interacts with various scout modules for configuration, audit, and LLM (Large Language Model) functionality.
----
-
-# generate_deep_content
-
-**generate_deep_content Function Summary**
-
-The `generate_deep_content` function generates a detailed breakdown of a single symbol using a Large Language Model (LLM). It takes in symbol information, dependencies, and source code snippet, and returns the LLM-generated Markdown content as a string. This function relies on the `vivarium/scout/llm.py` module to interact with the LLM and logs the cost to the Scout audit trail.
----
-
-# _build_eliv_prompt
-
-**_build_eliv_prompt Function Summary**
-
-The `_build_eliv_prompt` function builds the LLM (Large Language Model) prompt for ELIV (Explain Like I'm Very Young) generation. It takes in symbol information, dependencies, and a source code snippet, and returns a formatted string. The function relies on various dependencies from the vivarium/scout module to construct the prompt.
----
-
-# _generate_eliv_async
-
-Async implementation of ELIV generation, responsible for generating ELIV asynchronously based on provided symbol information, dependencies, and source code snippet. It handles exceptions and returns an error string on non-RuntimeError failures. It interacts with various scout modules for configuration, audit, and LLM functionality.
----
-
-# generate_eliv_content
-
-**generate_eliv_content Function Summary**
-
-The `generate_eliv_content` function generates a simplified "Explain Like I'm Very Young" (ELIV) explanation for a code symbol, using Groq's LLM to produce a beginner-friendly explanation based on the symbol's information, dependencies, and source code. It logs the cost to the Scout audit trail and raises a `RuntimeError` if the GROQ_API_KEY is not set.
+This function appears to retrieve template content from a SymbolTree, possibly for use in a Large Language Model (LLM) or similar application. It utilizes the `getattr` function to access attributes and the `sig.split` function to split a string, suggesting it is involved in parsing or processing template information.
 ---
 
 # validate_generated_docs
 
-**validate_generated_docs Function Summary**
-=============================================
-
-The `validate_generated_docs` function validates generated documentation content for a symbol, returning a boolean indicating validity and a list of error messages. It relies on external dependencies for configuration and logic, such as `vivarium/scout/audit.py` and `vivarium/scout/llm.py`.
+This function validates generated documentation by stripping and checking the content of a SymbolTree. It appears to be part of a documentation validation or auditing process.
 ---
 
 # write_documentation_files
 
-**write_documentation_files Function Summary**
-
-The `write_documentation_files` function generates documentation files for a Python file. It writes three files: a brief summary (`<stem>.tldr.md`), a detailed description (`<stem>.deep.md`), and an ELIV file (`<name>.eliv.md`). The function depends on `vivarium/scout/audit.py`, `vivarium/scout/config.py`, `vivarium/scout/ignore.py`, and `vivarium/scout/llm.py` for configuration and functionality.
+This function writes documentation files to various paths, including 'central', 'deep', 'eliv', 'tldr', and 'out', using the `write_text` method. It also creates directories as needed using `mkdir`.
 ---
 
 # _generate_single_symbol_docs
 
-**Summary**
+This function generates single symbol documentation, utilizing adapters to retrieve prompts and calling asynchronous functions to fetch content. It appears to be part of a larger documentation system, possibly involving natural language processing and auditing.
+---
 
-The `_generate_single_symbol_docs` function generates documentation for a single symbol, including TL;DR, deep, and ELIV content, while respecting a per-file semaphore to avoid event loop conflicts. It uses sync wrappers to process multiple files concurrently. The function depends on various modules from the `vivarium/scout` package to retrieve symbol information and perform language model-based processing.
+# _merge_symbol_content
+
+The _merge_symbol_content function appears to be a utility function that operates on a SymbolTree data structure, likely used in a larger symbolic manipulation or analysis system. It does not make any external calls or exports any values, suggesting it is a private helper function.
+---
+
+# _generate_docs_for_symbols
+
+This function generates documentation for symbols in an asynchronous manner. It appears to be part of a documentation system that uses a semaphore to manage concurrency and relies on other functions to compute symbol hashes, generate single symbol documentation, and merge symbol content.
+---
+
+# _rel_path_for_display
+
+The function _rel_path_for_display returns a relative path. It uses the current working directory and resolves a path to calculate the relative path.
+---
+
+# _trace_file
+
+This function appears to be part of a system that analyzes and documents Python code. It likely processes a trace file to gather information about the code's execution, including function calls and dependencies. The function may be used to generate a report or documentation about the code's behavior.
+---
+
+# _TRACE_COLORS
+
+The _TRACE_COLORS constant is not explicitly used in the system, as there are no traced calls or type uses.
+---
+
+# _MAX_CHAIN_LEN
+
+The constant _MAX_CHAIN_LEN is used in the vivarium/scout system, but its specific role cannot be determined based on the provided information as there are no traced calls or used types.
+---
+
+# _ARROW
+
+The constant _ARROW is not explicitly used in the system, but it imports several modules from the vivarium/scout package, suggesting it may be a part of a larger configuration or setup for the scout system.
+---
+
+# _strip_ansi
+
+The _strip_ansi function appears to process a string, as it uses the str type. It calls len and result.append, suggesting it may be modifying or manipulating the string.
+---
+
+# _build_rolling_call_trace
+
+This function appears to be part of a call tracing mechanism, as it calls functions related to skipping calls, stripping ANSI escape codes, and tracking call history. It operates on SymbolTree objects and string data, suggesting it's involved in analyzing or processing symbolic information.
+---
+
+# _format_single_hop
+
+This function appears to be part of a system that processes or audits Python code. It likely operates on a single string input, possibly a qualified name (qname), and performs some operation based on its length and prefix.
+---
+
+# _build_chain_from_hops
+
+This function builds a chain from hops, stripping ANSI escape codes along the way. It appears to be part of a larger system for auditing or logging, possibly involving natural language processing or machine learning. The function takes strings as input and returns a string or strings.
 ---
 
 # process_single_file_async
 
-**process_single_file_async Summary**
-
-The `process_single_file_async` function processes a single Python file for documentation generation, parsing the file, generating TL;DR and deep content for each symbol via LLM, and writing `.tldr.md` and `.deep.md` files. It concurrently handles symbol generations and validates the output. The function depends on `vivarium/scout/*` modules for configuration, dependency resolution, and LLM interactions.
+This function processes a single file asynchronously, handling potential file not found errors and updating file metadata. It appears to be part of a documentation generation system, interacting with configuration, logging, and file system operations.
 ---
 
 # process_single_file
 
-**process_single_file Function Summary**
+This function, `process_single_file`, appears to be an asynchronous process that runs using `asyncio.run`. It processes a single file, likely using the `process_single_file_async` function, and does not export any values.
+---
 
-The `process_single_file` function processes a single Python file for documentation generation, parsing the file, generating TL;DR and deep content for each symbol via a Large Language Model (LLM), and writing `.tldr.md` and `.deep.md` files.
+# _gather_package_component_roles
 
-Its primary responsibilities include:
-
-* Parsing the file
-* Generating documentation content via LLM
-* Validating and aggregating content
-* Writing output files
-
-It depends on the `vivarium/scout` package, specifically `audit.py`, `config.py`, `ignore.py`, and `llm.py`, for functionality and configuration.
+This function gathers package component roles by iterating over a directory of Python files, parsing each file using an adapter, and logging the results. It appears to be part of a package analysis or auditing system.
 ---
 
 # _update_module_brief
 
-**Function Summary: `_update_module_brief`**
+This function appears to update a module's brief by gathering package component roles, resolving a doc model, and writing the result to a file. It interacts with the file system, a configuration, and a language model.
+---
 
-The `_update_module_brief` function generates a module-level brief from package content by summarizing `.tldr.md` and `.deep.md` files using a Large Language Model (LLM). It writes the brief to two locations and logs an audit event, respecting configuration settings and ignoring certain patterns.
+# _process_file_with_semaphore
+
+This function manages concurrent file processing using a semaphore, allowing multiple files to be processed simultaneously while maintaining a limit on the number of active processes. It retrieves files from a queue, processes them, and adds the results back to the queue.
+---
+
+# _format_status_bar
+
+This function formats a status bar, taking in various types of data including integers, floats, and strings. It does not make any external calls or modify any external state.
+---
+
+# process_directory_async
+
+This Python function, `process_directory_async`, appears to asynchronously process a directory, utilizing various async utilities and ScoutConfig to manage the process. It likely handles file processing, error handling, and status updates, interacting with the system's display and logging mechanisms.
 ---
 
 # process_directory
 
-**Summary**
+This function, `process_directory`, appears to be a synchronous wrapper around an asynchronous directory processing function, `process_directory_async`. It uses the `asyncio.run` function to execute `process_directory_async`. 
 
-The `process_directory` function processes a directory of Python files for documentation generation. It recursively traverses the directory, generates module briefs, and writes generated docs to a specified output directory. It relies on external dependencies from `vivarium/scout/*` for configuration, auditing, and language model interactions.
+It likely processes a directory path, as indicated by the `Path` type usage.
+---
+
+# synthesize_pr_description
+
+This function synthesizes a PR description, likely using a Large Language Model (LLM) to generate the description. It calls the LLM asynchronously and logs the result, possibly for auditing purposes. The function appears to be part of a software development workflow, specifically a pull request (PR) process.
+---
+
+# parse_python_file
+
+This function appears to parse a Python file, utilizing the PythonAdapter to extract symbols. It iterates over the symbols in the file and appends them to a list.

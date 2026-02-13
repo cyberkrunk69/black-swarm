@@ -1,32 +1,30 @@
+# _MODULE_MD_NAME
+
+This constant is not used in the system as there are no traced calls or type uses.
+---
+
 # _stem_for_file
 
-**Summary**
+This function appears to work with file paths, specifically using the `pathlib` library to manipulate them. It takes a file path as input and returns a new path relative to another path.
+---
 
-The `_stem_for_file` function returns the stem (filename without extension) for a given file path relative to a specified repository root. It takes two parameters: `file_path` and `root`, both of which are file paths. The function is responsible for handling exceptions and returning the stem.
+# _find_package_root
+
+This function finds the root directory of a package using the `pathlib.Path` class. It likely traverses the directory tree to find the root. The function returns a `Path` object representing the root directory.
+---
+
+# _read_module_summary
+
+This function reads module summaries from local and central locations, comparing their existence and contents. It appears to be part of a package management or dependency resolution system. 
+
+It uses the `Path` type to represent file paths and calls functions to check file existence and read text content.
 ---
 
 # assemble_pr_description
 
-**assemble_pr_description Function Summary**
-
-Assembles a PR description from draft files for each staged Python file in a repository. It reads draft files from `docs/drafts/{stem}.pr.md` or `docs/drafts/{stem}.pr.txt` for each staged `.py` file, and returns an aggregated Markdown string. The function iterates over staged files, handles conditional file existence, and falls back to a default message if no draft is found.
+This function assembles a PR description by reading a draft file, extracting package information, and organizing it into sections. It appears to be part of a package management or dependency resolution system. It uses file paths and package metadata to construct the PR description.
 ---
 
 # assemble_commit_message
 
-**assemble_commit_message Function Summary**
-=============================================
-
-Assembles a single commit message from draft files for each staged Python file.
-
-**Primary Purpose:** 
-The function aggregates commit messages from draft files for staged Python files.
-
-**Key Responsibilities:**
-
-* Reads draft files for each staged Python file
-* Falls back to a default message if a draft file is missing
-* Combines messages into a single aggregated string
-
-**Relationship with Dependencies:**
-The function depends on the `repo_root` and `staged_files` inputs, and returns a string output.
+This function assembles a commit message by reading a draft from a file and appending sections to it. It appears to be part of a commit message generation or editing process.

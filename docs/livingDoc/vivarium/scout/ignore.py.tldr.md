@@ -1,51 +1,40 @@
 # BUILT_IN_IGNORES
 
-**BUILT_IN_IGNORES**
-================
-
-The `BUILT_IN_IGNORES` constant is used to store a set of names that are ignored by the `inspect` module when searching for built-in modules. It is primarily used to exclude built-in modules from inspection.
+This constant is not used in the system as there are no traced calls or type usage.
 ---
 
 # _glob_to_regex
 
-Converts a glob pattern to a regex pattern, supporting '*' and '**' wildcards.
-The function iterates over the pattern, replacing '*' with '.*' and '**' with '.*' recursively, to create a regex pattern that can be used for matching. 
-It depends on the provided glob pattern string.
+This function takes a string as input, processes it, and appends the result to a list. It uses string manipulation and regular expression functionality. 
+
+It appears to be a utility function that converts a glob pattern to a regular expression, possibly for use in a larger pattern matching system.
 ---
 
 # _normalize_path
 
-**Summary**
-
-The `_normalize_path` function normalizes a given path for matching purposes. It resolves the `~` symbol and ensures the path uses forward slashes. The function takes a `path` and an optional `repo_root` as input, returning a normalized string representation of the path.
+This function normalizes a path by expanding user directories and converting it to an absolute path. It uses the `pathlib` library to manipulate paths.
 ---
 
 # IgnorePatterns
 
-**IgnorePatterns Class Summary**
-================================
-
-The `IgnorePatterns` class is responsible for matching paths against built-in and user-defined ignore patterns. It supports globstar patterns (**), negation (!), and standard fnmatch patterns, allowing for flexible path matching. This class depends on user-defined patterns from a `.livingDocIgnore` file, similar to a gitignore file.
+This class, IgnorePatterns, appears to manage ignore patterns for a file system. It loads patterns from a file, compiles them into regular expressions, and stores them in separate lists for positive and negative matches. It also provides methods to clear and append to these lists.
 ---
 
 # __init__
 
-The `__init__` method is a special Python method that initializes an object when it's created. Its primary purpose is to set up the object's attributes and perform any necessary setup or initialization. It takes two optional parameters, `repo_root` and `ignore_file`, which are used to configure the object's behavior.
+This method initializes the object and loads patterns from the current working directory. It uses the `pathlib` library to interact with file paths. The method does not export any values or modify external state.
 ---
 
 # _load_patterns
 
-The `_load_patterns` method loads built-in and user-defined patterns, iterating through them as needed, and handling any potential exceptions that may arise during the process. It is responsible for populating patterns for use in the application. This method depends on the presence of patterns to load.
+This method loads patterns from a file, likely a configuration file in the user's home directory, and populates lists of positive and negative patterns. It appears to handle built-in patterns and ignore files.
 ---
 
 # matches
 
-**matches method summary**
-==========================
-
-The `matches` method determines whether a given path should be ignored during processing. It checks for built-in ignore rules, positive user-defined rules, and negative user-defined rules, with negation overriding other rules. The method returns `True` if the path should be ignored.
+This method appears to normalize a file path and search for a pattern within it. It utilizes the `_normalize_path` function and the `pat.search` method to achieve this. The method operates on file paths and returns a boolean value.
 ---
 
 # reload
 
-The `reload` method reloads patterns from disk, typically after editing `.livingDocIgnore` files. Its primary responsibility is to update the patterns in memory. It depends on the existence of `.livingDocIgnore` files and calls an unspecified function to achieve this.
+The `reload` method appears to be responsible for reloading patterns, as it calls `self._load_patterns`. Its primary function is to update or refresh the patterns in the system.

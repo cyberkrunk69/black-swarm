@@ -1,11 +1,8 @@
 # _render_header
 
-The `_render_header` function returns the header text for the Terminal User Interface (TUI) based on the configuration in `vivarium/scout/config.py`. It is responsible for exception handling and returning the header text. The function calls upon the configuration to determine the header text.
+The _render_header function appears to render a header, likely for a console or panel, and captures or prints output. It utilizes a string type and interacts with the vivarium/scout/config.py module.
 ---
 
 # run_config_tui
 
-**run_config_tui Function Summary**
-=====================================
-
-The `run_config_tui` function runs an interactive configuration user interface (TUI) and returns `True` if the configuration was saved. It is responsible for handling exceptions, looping through user input, and making conditional decisions based on user interactions. The function depends on the `vivarium/scout/config.py` module for its functionality.
+This function appears to be a command-line interface (CLI) for configuring a Vivarium Scout project. It uses the `questionary` library to prompt the user for input and stores the configuration in a YAML file. The function likely handles project and user configuration paths, pattern and trigger settings, and other project-specific options.

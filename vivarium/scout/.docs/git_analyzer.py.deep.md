@@ -1,160 +1,116 @@
 # logger
 
 ## Logic Overview
-### Explanation of the Code's Flow and Main Steps
-
-The provided Python code snippet is used to create a logger instance. Here's a step-by-step breakdown of the code's flow:
-
-1. The `logging` module is imported implicitly, as it is a built-in Python module.
-2. The `getLogger` function is called on the `logging` module, passing `__name__` as an argument.
-3. The `getLogger` function returns a logger instance, which is assigned to the `logger` variable.
-
-### Key Points
-
-- The `__name__` variable is a built-in Python variable that holds the name of the current module.
-- The `getLogger` function creates a logger instance with the specified name, which is used to identify the logger in the logging hierarchy.
-- The logger instance is then assigned to the `logger` variable, making it available for use throughout the code.
+The code defines a constant named `logger` and assigns it the result of `logging.getLogger(__name__)`. This line of code is the only step in the logic flow. The `__name__` variable is a built-in Python variable that holds the name of the current module.
 
 ## Dependency Interactions
-### Explanation of How the Code Uses the Listed Dependencies
-
-The code snippet uses the following dependencies:
-
-- `logging`: The built-in Python logging module is used to create a logger instance.
-
-### Key Points
-
-- The `logging` module is used to create a logger instance, which is a fundamental component of the Python logging system.
-- The `getLogger` function is a part of the `logging` module, and it is used to create a logger instance with the specified name.
+The code does not make any explicit calls to other functions or methods based on the provided traced facts. However, it does use the `logging` module, which is not imported in the given source code snippet. The `getLogger` method is called on the `logging` module, but since there are no traced calls, we cannot provide further information on how this method is used.
 
 ## Potential Considerations
-### Edge Cases, Error Handling, and Performance Notes
-
-Here are some potential considerations for the code snippet:
-
-- **Error Handling**: The code snippet does not include any error handling mechanisms. In a production environment, it's essential to handle potential errors that may occur when creating a logger instance.
-- **Performance**: The code snippet is lightweight and does not have any significant performance implications.
-- **Edge Cases**: The code snippet assumes that the `__name__` variable is set correctly. However, in some edge cases, such as when running the code from an interactive shell or a script without a `__name__` attribute, the code may not work as expected.
+There are no explicit error handling mechanisms or edge cases handled in the given code snippet. The performance implications of this line of code are also not immediately apparent, as it is a simple assignment. However, the use of `__name__` suggests that this code may be part of a larger logging setup, where the logger name is used to identify the source of log messages.
 
 ## Signature
-### N/A
-
-Since the code snippet is a simple assignment statement, it does not have a signature in the classical sense. However, the `getLogger` function has the following signature:
-
-```python
-getLogger(name: str) -> Logger
-```
-
-This signature indicates that the `getLogger` function takes a string argument `name` and returns a `Logger` instance.
+N/A
 ---
 
 # _run_git
 
 ## Logic Overview
-The `_run_git` function is designed to run a git command with the provided arguments and optional working directory. It logs the command being executed and raises exceptions for failure cases.
-
-Here's a step-by-step breakdown of the code's flow:
-
-1. **Command Construction**: The function takes in a list of arguments (`args`) and an optional working directory (`cwd`). It constructs the full command by prepending the `git` executable to the provided arguments.
-2. **Logging**: The function logs the constructed command using the `logger.debug` method.
-3. **Command Execution**: The function attempts to execute the constructed command using the `subprocess.run` function. It captures the output and error streams, sets the `check` parameter to `True` to raise an exception on non-zero exit code, and sets the `cwd` parameter to the provided working directory.
-4. **Error Handling**: The function catches two types of exceptions:
-	* `FileNotFoundError`: If the `git` executable is not found, the function logs an error message and raises the exception.
-	* `subprocess.CalledProcessError`: If the git command returns a non-zero exit code, the function logs a warning message and raises the exception.
-5. **Return**: If the command executes successfully, the function returns the result of the `subprocess.run` function.
+The `_run_git` function is designed to execute a Git command with specified arguments. The main steps involved in this function are:
+1. Constructing the Git command by combining the `git` executable with the provided `args`.
+2. Logging the command at the debug level using `logger.debug`.
+3. Attempting to run the constructed command using `subprocess.run`.
+4. Handling potential exceptions that may occur during command execution, including `FileNotFoundError` and `subprocess.CalledProcessError`.
+5. Returning the result of the command execution if successful.
 
 ## Dependency Interactions
-The `_run_git` function interacts with the following dependencies:
-
-* `subprocess`: The function uses the `subprocess.run` function to execute the git command.
-* `logger`: The function uses the `logger` object to log messages at different levels (debug, error, warning).
+The function interacts with the following traced calls:
+- `logger.debug`: Used to log the command being executed at the debug level.
+- `logger.error`: Used to log an error message when the Git executable is not found.
+- `logger.warning`: Used to log a warning message when the Git command fails.
+- `subprocess.run`: Used to execute the constructed Git command.
 
 ## Potential Considerations
-Here are some potential considerations for the `_run_git` function:
-
-* **Error Handling**: The function only catches two types of exceptions. Consider adding more exception types to handle other potential failure cases.
-* **Command Validation**: The function does not validate the provided arguments. Consider adding input validation to ensure that the arguments are valid git commands.
-* **Performance**: The function captures the output and error streams, which may impact performance for large commands. Consider using a more efficient approach, such as piping the output to a file.
-* **Working Directory**: The function sets the working directory using the `cwd` parameter. Consider adding a check to ensure that the provided working directory exists and is accessible.
+The function includes error handling for the following edge cases:
+- `FileNotFoundError`: Raised when the Git executable is not found. This exception is caught, logged, and then re-raised.
+- `subprocess.CalledProcessError`: Raised when the Git command returns a non-zero exit code. This exception is caught, logged, and then re-raised.
+Performance considerations:
+- The function uses `capture_output=True` when running the command, which may impact performance for large output.
+- The function uses `text=True` when running the command, which may impact performance for large output.
 
 ## Signature
+The function signature is defined as:
 ```python
-def _run_git(args: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess[str]:
+def _run_git(args: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess[str]
 ```
-The function signature indicates that:
-
-* The function takes two parameters: `args` (a list of strings) and `cwd` (an optional `Path` object).
-* The function returns a `subprocess.CompletedProcess` object with a string output.
+This indicates that the function:
+- Accepts a list of strings `args` as the first argument.
+- Accepts an optional `Path` object `cwd` as the second argument, defaulting to `None`.
+- Returns a `subprocess.CompletedProcess` object containing the result of the command execution.
 ---
 
 # get_changed_files
 
 ## Logic Overview
-The `get_changed_files` function is designed to retrieve a list of changed file paths based on the provided parameters. The main steps involved in this function are:
-
-1. **Parameter Validation**: The function checks the values of `staged_only`, `repo_root`, and `base_branch` to determine the type of changes to retrieve.
-2. **Git Command Execution**: The function uses the `_run_git` function to execute a Git command based on the validated parameters. The command is executed in the specified `repo_root` directory.
-3. **Output Processing**: The function processes the output of the Git command to extract the list of changed file paths.
-4. **Error Handling**: The function catches any `subprocess.CalledProcessError` exceptions that may occur during the execution of the Git command and returns an empty list if an error occurs.
+The `get_changed_files` function is designed to retrieve a list of changed file paths based on the provided parameters. The main steps in the function's logic are:
+1. Determine the type of Git command to run based on the `staged_only` and `base_branch` parameters.
+2. Run the Git command using the `_run_git` function and capture the result.
+3. Handle any potential errors that may occur during the Git command execution.
+4. Process the output of the Git command to extract the list of changed file paths.
+5. Return the list of changed file paths as `pathlib.Path` objects.
 
 ## Dependency Interactions
-The `get_changed_files` function interacts with the following dependencies:
-
-* `_run_git`: This function is used to execute a Git command and capture its output. The implementation of `_run_git` is not provided in the given code snippet, but it is assumed to be a function that takes a list of Git command arguments and an optional `cwd` parameter.
-* `subprocess`: This module is used to execute the Git command and capture its output. The `subprocess.CalledProcessError` exception is used to handle any errors that may occur during the execution of the Git command.
-* `pathlib`: This module is used to create `Path` objects representing the changed file paths.
+The `get_changed_files` function interacts with the following traced calls:
+* `_run_git`: This function is called to execute the Git command. The `get_changed_files` function passes a list of command arguments and the working directory (`cwd`) to `_run_git`.
+* `line.strip`: This method is called to remove leading and trailing whitespace from each line in the output of the Git command.
+* `output.splitlines`: This method is called to split the output of the Git command into individual lines.
+* `pathlib.Path`: This class is used to create `Path` objects representing the changed file paths.
+* `result.stdout.strip`: This method is called to remove leading and trailing whitespace from the output of the Git command.
 
 ## Potential Considerations
-The following considerations may be relevant when using the `get_changed_files` function:
-
-* **Edge Cases**: The function assumes that the `repo_root` directory exists and is a valid Git repository. If the `repo_root` directory does not exist or is not a valid Git repository, the function may raise an exception or return incorrect results.
-* **Error Handling**: The function catches `subprocess.CalledProcessError` exceptions, but it may be beneficial to catch other types of exceptions that may occur during the execution of the Git command.
-* **Performance**: The function executes a Git command for each call, which may be inefficient if the function is called frequently. Consider caching the results of previous calls or using a more efficient approach to retrieve the changed file paths.
+The `get_changed_files` function handles the following edge cases and potential considerations:
+* Error handling: The function catches `subprocess.CalledProcessError` exceptions that may occur during the execution of the Git command. If an error occurs, the function returns an empty list.
+* Empty output: The function checks if the output of the Git command is empty. If it is, the function returns an empty list.
+* Performance: The function uses a list comprehension to create the list of changed file paths, which can be efficient for small to medium-sized lists. However, for very large lists, this approach may consume significant memory.
 
 ## Signature
+The `get_changed_files` function has the following signature:
 ```python
 def get_changed_files(
-    staged_only: bool = False,
-    repo_root: Optional[Path] = None,
-    base_branch: Optional[str] = None,
+    staged_only: bool = False, 
+    repo_root: Optional[Path] = None, 
+    base_branch: Optional[str] = None
 ) -> List[Path]:
 ```
-This function takes three parameters:
-
-* `staged_only`: A boolean indicating whether to return only staged files.
-* `repo_root`: An optional `Path` object representing the root directory of the Git repository.
-* `base_branch`: An optional string representing the base branch to compare with the current branch.
-
-The function returns a list of `Path` objects representing the changed file paths.
+This signature indicates that the function:
+* Takes three optional parameters: `staged_only`, `repo_root`, and `base_branch`.
+* Returns a list of `pathlib.Path` objects representing the changed file paths.
+* Has default values for the `staged_only` and `repo_root` parameters, which are `False` and `None`, respectively. The `base_branch` parameter also has a default value of `None`.
 ---
 
 # get_diff_for_file
 
 ## Logic Overview
-The `get_diff_for_file` function is designed to retrieve the raw diff string for a specified file. It takes three parameters: `file_path`, `staged_only`, and `repo_root`. The function's main steps are as follows:
-
-1. **Path Conversion**: The `file_path` parameter is converted to a string using the `str()` function.
-2. **Git Command Execution**: The function attempts to execute a Git command using the `_run_git` function (not shown in the provided code). The command is constructed based on the `staged_only` parameter:
-	* If `staged_only` is `True`, the command is `git diff --cached <file_path>`.
-	* If `staged_only` is `False`, the command is `git diff HEAD <file_path>`.
-3. **Error Handling**: The function catches any `subprocess.CalledProcessError` exceptions that may occur during the Git command execution. If an exception is caught, the function returns an empty string.
-4. **Result Retrieval**: If the Git command execution is successful, the function retrieves the raw diff string from the `result.stdout` attribute.
+The `get_diff_for_file` function is designed to retrieve the raw diff string for a specified file. The main steps involved in this process are:
+1. Converting the `file_path` to a string using the `str()` function.
+2. Determining whether to diff staged changes or the working directory vs HEAD based on the `staged_only` parameter.
+3. Running the corresponding Git command using the `_run_git` function, passing in the necessary arguments and the `repo_root` as the working directory.
+4. Handling any potential errors that may occur during the Git command execution.
+5. Returning the raw diff string or an empty string if an error occurs.
 
 ## Dependency Interactions
-The `get_diff_for_file` function interacts with the following dependencies:
-
-* `subprocess`: The function uses the `subprocess` module to execute the Git command. Specifically, it uses the `subprocess.CalledProcessError` exception to handle errors.
-* `_run_git`: The function calls the `_run_git` function (not shown in the provided code) to execute the Git command. The implementation of `_run_git` is not provided, but it is assumed to be responsible for running the Git command and returning the result.
+The `get_diff_for_file` function interacts with the following traced calls:
+- `_run_git`: This function is called to execute the Git commands for diffing the file. The arguments passed to `_run_git` include the Git command and its options, as well as the `cwd` parameter set to `repo_root`.
+- `str`: This function is used to convert the `file_path` to a string, which is then passed as an argument to the Git command.
 
 ## Potential Considerations
-The following edge cases, error handling, and performance notes are worth considering:
-
-* **Error Handling**: The function catches `subprocess.CalledProcessError` exceptions, but it may be beneficial to catch other types of exceptions as well, such as `OSError` or `IOError`.
-* **File Path Handling**: The function assumes that the `file_path` parameter is a valid file path. However, it does not perform any validation on the path. It may be beneficial to add validation to ensure that the path is valid and exists.
-* **Git Command Options**: The function uses the `--cached` option to specify staged changes. However, it does not handle other Git command options, such as `--ignore-space-at-eol` or `--ignore-space-change`. It may be beneficial to add support for these options to provide more flexibility.
-* **Performance**: The function executes a Git command for each file path. If the function is called repeatedly with the same file path, it may be beneficial to cache the result to improve performance.
+Some potential considerations and edge cases in the `get_diff_for_file` function include:
+- Error handling: The function catches `subprocess.CalledProcessError` exceptions, which may occur if the Git command fails. In such cases, an empty string is returned.
+- Performance: The function relies on the `_run_git` function to execute the Git commands, which may have performance implications depending on the size of the repository and the number of files being diffed.
+- Edge cases: The function assumes that the `file_path` is a valid path to a file in the repository. If the file does not exist or is not a valid path, the Git command may fail, and an empty string will be returned.
 
 ## Signature
+The `get_diff_for_file` function has the following signature:
 ```python
 def get_diff_for_file(
     file_path: Path,
@@ -162,86 +118,250 @@ def get_diff_for_file(
     repo_root: Optional[Path] = None,
 ) -> str:
 ```
+This signature indicates that the function:
+- Takes three parameters: `file_path`, `staged_only`, and `repo_root`.
+- Returns a string value, which is the raw diff string for the specified file.
+- Uses type hints to specify the expected types of the parameters and return value. The `Path` type is used for `file_path` and `repo_root`, while `bool` is used for `staged_only`. The `Optional[Path]` type is used for `repo_root` to indicate that it is an optional parameter.
 ---
 
 # get_current_branch
 
 ## Logic Overview
-The `get_current_branch` function is designed to retrieve the name of the current branch in a Git repository. It takes an optional `repo_root` parameter, which specifies the working directory for the Git command. If not provided, it defaults to the current working directory (cwd).
+The `get_current_branch` function is designed to retrieve the name of the current branch in a Git repository. The main steps involved in this process are:
+1. Running a Git command to show the current branch.
+2. Capturing the output of the command.
+3. Stripping any leading or trailing whitespace from the output.
+4. Returning the branch name as a string.
 
-Here's a step-by-step breakdown of the function's flow:
-
-1. The function attempts to execute a Git command using the `_run_git` function, passing the arguments `["branch", "--show-current"]` and setting the working directory to `repo_root` using the `cwd` parameter.
-2. If the Git command is successful, the function returns the output of the command, stripped of any leading or trailing whitespace.
-3. If the Git command fails (i.e., raises a `subprocess.CalledProcessError` exception), the function catches the exception and returns an empty string.
+If any error occurs during this process, the function will catch the exception and return an empty string.
 
 ## Dependency Interactions
-The `get_current_branch` function relies on the following dependencies:
-
-* `_run_git` function: This function is not shown in the provided code snippet, but it's assumed to be a custom function that runs a Git command and returns the result. The function takes a list of Git command arguments and an optional working directory as input.
-* `subprocess` module: This module is used to execute the Git command and handle any errors that may occur.
-
-The function does not import any external libraries or modules beyond what's required for the `subprocess` module.
+The `get_current_branch` function interacts with the following traced calls:
+- `_run_git`: This function is called with a list of arguments `["branch", "--show-current"]` and an optional `cwd` parameter set to `repo_root`. The return value of `_run_git` is stored in the `result` variable.
+- `result.stdout.strip`: This method is called on the `stdout` attribute of the `result` object, which is the output of the Git command. The `strip` method removes any leading or trailing whitespace from the output.
 
 ## Potential Considerations
-Here are some potential considerations for the `get_current_branch` function:
-
-* **Error handling:** The function catches the `subprocess.CalledProcessError` exception and returns an empty string. However, it may be more informative to raise a custom exception or log the error message to provide more context.
-* **Performance:** The function executes a Git command, which may have performance implications, especially for large repositories. Consider caching the result or using a more efficient approach if performance becomes a concern.
-* **Repository type:** The function assumes that the repository is a Git repository. If the function is intended to work with other version control systems, additional logic may be required to handle different repository types.
-* **repo_root parameter:** The function defaults to the current working directory if `repo_root` is not provided. However, this may lead to unexpected behavior if the function is called from a different directory. Consider raising an error or providing a more explicit default value.
+The code handles the following edge cases and considerations:
+- **Error Handling**: The function catches `subprocess.CalledProcessError` exceptions, which are raised when the Git command returns a non-zero exit code. In such cases, the function returns an empty string.
+- **Detached HEAD**: The function returns an empty string if the repository is in a detached HEAD state, as indicated by the docstring.
+- **Performance**: The function uses a try-except block to handle errors, which may have a performance impact if exceptions are frequent. However, this is a common and acceptable practice in Python.
 
 ## Signature
+The `get_current_branch` function has the following signature:
 ```python
-def get_current_branch(repo_root: Optional[Path] = None) -> str:
+def get_current_branch(repo_root: Optional[Path] = None) -> str
 ```
-The function signature indicates that:
+This signature indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, which defaults to `None`.
+- The function returns a string value, which represents the name of the current branch.
+---
 
-* `repo_root` is an optional parameter with a default value of `None`.
-* The parameter type is `Optional[Path]`, which means it can be either a `Path` object or `None`.
-* The return type is `str`, indicating that the function returns a string value.
+# has_remote_origin
+
+## Logic Overview
+The `has_remote_origin` function checks if a remote 'origin' is configured in a Git repository. The main steps are:
+1. It attempts to run a Git command to get the URL of the remote 'origin'.
+2. If the command runs successfully, it returns `True`.
+3. If the command fails (i.e., raises a `subprocess.CalledProcessError`), it returns `False`.
+
+## Dependency Interactions
+The function interacts with the `_run_git` call, which is used to execute a Git command. Specifically, it calls `_run_git` with the following arguments:
+- A list of strings representing the Git command: `["remote", "get-url", "origin"]`.
+- The `cwd` parameter is set to `repo_root`, which specifies the working directory for the Git command.
+
+## Potential Considerations
+The function handles the following edge cases and considerations:
+- It catches `subprocess.CalledProcessError` exceptions, which are raised when the Git command fails.
+- The function uses a try-except block to handle the potential error, ensuring that it returns a boolean value (`True` or `False`) regardless of the outcome.
+- The performance of the function depends on the execution time of the Git command, which is run using the `_run_git` call.
+
+## Signature
+The function signature is:
+```python
+def has_remote_origin(repo_root: Optional[Path] = None) -> bool
+```
+This indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, which defaults to `None` if not provided.
+- The function returns a boolean value (`bool`) indicating whether the remote 'origin' is configured.
+---
+
+# is_remote_empty
+
+## Logic Overview
+The `is_remote_empty` function checks if a remote Git repository has any branches. It does this by running a Git command and checking the output. The main steps are:
+1. Run the Git command `ls-remote --heads origin` using the `_run_git` function.
+2. Check the output of the command.
+3. If the output is empty, return `True`, indicating the remote repository has no branches.
+4. If an error occurs while running the command, catch the exception and return `False`.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `_run_git`: This function is called with a list of arguments (`["ls-remote", "--heads", "origin"]`) and a `cwd` parameter set to `repo_root`. The return value is stored in the `result` variable.
+- `result.stdout.strip`: This method is called on the `result` object to remove any leading or trailing whitespace from the output of the Git command.
+
+## Potential Considerations
+The function handles the following edge cases and considerations:
+- **Error handling**: The function catches `subprocess.CalledProcessError` exceptions, which are raised when the Git command returns a non-zero exit code. In this case, the function returns `False`.
+- **Performance**: The function runs a Git command, which may take some time to complete, especially if the repository is large or the network connection is slow.
+- **Edge cases**: The function assumes that an empty output from the Git command indicates that the remote repository has no branches. If the command returns an empty output for other reasons, the function may return incorrect results.
+
+## Signature
+The function signature is:
+```python
+def is_remote_empty(repo_root: Optional[Path] = None) -> bool
+```
+This indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, which defaults to `None` if not provided.
+- The function returns a boolean value (`bool`) indicating whether the remote repository is empty.
+---
+
+# get_default_base_ref
+
+## Logic Overview
+The `get_default_base_ref` function attempts to find a default base reference in a Git repository. The main steps are:
+1. Iterate over two possible references: "origin/main" and "origin/master".
+2. For each reference, try to run a Git command using `_run_git` to verify its existence.
+3. If the Git command succeeds, return the current reference.
+4. If the Git command fails for both references, return `None`.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `_run_git`: This function is called with a list of Git command arguments and an optional `cwd` parameter set to `repo_root`. The purpose is to execute a Git command and verify the existence of a reference.
+
+## Potential Considerations
+The code handles the following edge cases and considerations:
+- **Error handling**: The function catches `subprocess.CalledProcessError` exceptions raised by `_run_git` when the Git command fails. If an exception occurs, it continues to the next reference.
+- **Reference existence**: The function checks the existence of "origin/main" and "origin/master" references in sequence, returning the first one that exists.
+- **Repository root**: The function accepts an optional `repo_root` parameter, which is used as the working directory for the Git command. If not provided, the default value is `None`.
+
+## Signature
+The function signature is:
+```python
+def get_default_base_ref(repo_root: Optional[Path] = None) -> Optional[str]
+```
+This indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, defaulting to `None`.
+- The function returns a value of type `Optional[str]`, which can be either a string or `None`.
+---
+
+# get_git_version
+
+## Logic Overview
+The `get_git_version` function attempts to retrieve the version from a Git repository using the `git describe --tags` command. The main steps are:
+1. Run the `git describe --tags` command using `subprocess.run`.
+2. Capture and process the output.
+3. If the output is valid, return it; otherwise, return a default version (`v0.1.0-dev`).
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `out.startswith`: checks if the output string starts with a specific prefix (`"v"`).
+- `pathlib.Path.cwd`: gets the current working directory, used as a fallback if `repo_root` is not provided.
+- `subprocess.run`: runs the `git describe --tags` command and captures its output.
+
+## Potential Considerations
+The function handles the following edge cases and considerations:
+- **Error handling**: catches `FileNotFoundError` and `subprocess.TimeoutExpired` exceptions, returning the default version (`v0.1.0-dev`) in such cases.
+- **Output validation**: checks if the output is not empty and starts with `"v"`; if not, it prepends `"v"` to the output.
+- **Default behavior**: returns the default version (`v0.1.0-dev`) if the output is empty or invalid.
+- **Performance**: the function uses `capture_output=True` and `text=True` when running the subprocess, which may impact performance for large outputs.
+
+## Signature
+The function signature is:
+```python
+def get_git_version(repo_root: Optional[Path] = None) -> str
+```
+This indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, defaulting to `None`.
+- The function returns a string (`str`) value.
+---
+
+# get_git_commit_hash
+
+## Logic Overview
+The `get_git_commit_hash` function is designed to retrieve the current commit hash (short) from a Git repository. The main steps involved in this process are:
+1. Running a Git command using `subprocess.run` to execute `git rev-parse --short HEAD`.
+2. Capturing the output of the command.
+3. Returning the commit hash if the command is successful, or "unknown" if it fails.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `pathlib.Path.cwd`: This is used to get the current working directory when `repo_root` is not provided. It is referenced as `Path.cwd()` in the code.
+- `subprocess.run`: This is used to execute the Git command. The qualified name is `subprocess.run`, and it is called with a list of arguments, including the Git command and options.
+
+## Potential Considerations
+The code handles the following edge cases and considerations:
+- **Error Handling**: The function catches `FileNotFoundError` and `subprocess.TimeoutExpired` exceptions, returning "unknown" in such cases.
+- **Default Repository Root**: If `repo_root` is not provided, the function defaults to the current working directory using `Path.cwd()`.
+- **Command Output**: The function captures the output of the Git command and returns the commit hash if it is successful. If the output is empty, it returns "unknown".
+- **Performance**: The function uses `capture_output=True` and `text=True` when running the subprocess, which may impact performance for large outputs. However, since the expected output is a short commit hash, this is unlikely to be a significant concern.
+
+## Signature
+The function signature is `def get_git_commit_hash(repo_root: Optional[Path]=None) -> str`. This indicates that:
+- The function takes an optional `repo_root` parameter of type `Path`.
+- If `repo_root` is not provided, it defaults to `None`.
+- The function returns a string value, which is the short commit hash or "unknown" if the command fails.
+---
+
+# get_upstream_ref
+
+## Logic Overview
+The `get_upstream_ref` function is designed to retrieve the upstream tracking reference for the current branch in a Git repository. The main steps involved in this process are:
+1. Running a Git command using `_run_git` to execute `git rev-parse --abbrev-ref --symbolic-full-name @{u}`.
+2. Capturing the output of the Git command and stripping any leading or trailing whitespace from the result.
+3. Returning the stripped output as a string if it is not empty; otherwise, returning `None`.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `_run_git`: This function is called with a list of arguments (`["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]`) and a `cwd` parameter set to `repo_root`. The return value of `_run_git` is stored in the `result` variable.
+- `result.stdout.strip`: This method is called on the `result` object returned by `_run_git` to remove any leading or trailing whitespace from the output of the Git command.
+
+## Potential Considerations
+The code handles the following edge cases and considerations:
+- **Error Handling**: The function catches `subprocess.CalledProcessError` exceptions, which may be raised if the Git command fails. In such cases, the function returns `None`.
+- **Empty Output**: If the output of the Git command is empty, the function returns `None`.
+- **Repository Root**: The function accepts an optional `repo_root` parameter, which specifies the working directory for the Git command. If `repo_root` is not provided, it defaults to `None`.
+- **Performance**: The function's performance is dependent on the execution time of the Git command and the `_run_git` function.
+
+## Signature
+The function signature is `def get_upstream_ref(repo_root: Optional[Path] = None) -> Optional[str]`. This indicates that:
+- The function takes an optional `repo_root` parameter of type `Optional[Path]`, which defaults to `None` if not provided.
+- The function returns a value of type `Optional[str]`, which means it can return either a string or `None`.
 ---
 
 # get_base_branch
 
 ## Logic Overview
-The `get_base_branch` function attempts to determine the base branch for the current branch by following a series of steps:
-
-1. **Remote tracking branch**: It tries to find the remote tracking branch upstream using `git rev-parse --abbrev-ref --symbolic-full-name @{u}`. If the upstream branch is found and it's different from the current branch, it returns the base branch name.
-2. **Common conventions**: If the remote tracking branch is not found or is the same as the current branch, it falls back to common conventions by checking if 'main', 'master', or 'develop' exist as branches. If any of these exist, it returns the corresponding base branch name.
-3. **Default behavior**: If none of the above steps succeed, it logs a debug message indicating that the base branch could not be determined and returns `None`.
+The `get_base_branch` function attempts to determine the base branch for a given `current_branch`. The function follows these main steps:
+1. Check if the `current_branch` is empty. If so, return `None`.
+2. Try to find the base branch using the remote tracking branch (`@{u}`).
+3. If the remote tracking branch is not available, fall back to common conventions by checking if `main`, `master`, or `develop` exist.
+4. If none of the above steps are successful, return `None`.
 
 ## Dependency Interactions
-The function uses the following dependencies:
-
-* `_run_git`: A function that runs a Git command and returns the result.
-* `logger`: A logging object used for debug messages.
-* `Path`: A type from the `pathlib` module used to represent the repository root directory.
-
-The function interacts with these dependencies as follows:
-
-* `_run_git` is used to run Git commands to determine the remote tracking branch and to check if common convention branches exist.
-* `logger` is used to log debug messages indicating the base branch found or the failure to determine the base branch.
-* `Path` is used to represent the repository root directory, which is used as the working directory for the Git commands.
+The function interacts with the following traced calls:
+* `_run_git`: This function is called to execute Git commands. It is used to:
+	+ Retrieve the remote tracking branch (`@{u}`) using `result = _run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=repo_root)`.
+	+ Check if a branch exists using `try: _run_git(["rev-parse", "--verify", candidate], cwd=repo_root)`.
+* `logger.debug`: This function is called to log debug messages. It is used to:
+	+ Log the base branch found using the remote tracking branch (`logger.debug("Base branch from upstream: %s", base)`).
+	+ Log the base branch found using common conventions (`logger.debug("Base branch from convention: %s", candidate)`).
+	+ Log a message when the base branch cannot be determined (`logger.debug("Could not determine base branch for %s", current_branch)`).
+* `result.stdout.strip`: This is used to strip the output of the `_run_git` command to retrieve the remote tracking branch.
+* `upstream.split`: This is used to split the remote tracking branch into its components (e.g., `origin/main` becomes `origin` and `main`).
 
 ## Potential Considerations
-Some potential considerations for this code include:
-
-* **Error handling**: The function catches `subprocess.CalledProcessError` exceptions, which may not cover all possible error cases. Consider adding additional error handling to handle other potential errors.
-* **Performance**: The function uses multiple Git commands to determine the base branch. Consider optimizing the Git commands or using a more efficient approach to improve performance.
-* **Ambiguous cases**: The function returns `None` if the base branch could not be determined. Consider adding additional logic to handle ambiguous cases, such as returning a default base branch or raising an exception.
-* **Repository structure**: The function assumes a specific repository structure, where the base branch is a direct child of the remote tracking branch. Consider adding additional logic to handle more complex repository structures.
+The function handles the following edge cases and errors:
+* If the `current_branch` is empty, the function returns `None`.
+* If the remote tracking branch is not available, the function falls back to common conventions.
+* If a Git command fails, the function catches the `subprocess.CalledProcessError` exception and continues to the next step.
+* The function logs debug messages to provide information about the base branch determination process.
+In terms of performance, the function executes multiple Git commands, which may impact performance if the Git repository is large or if the commands are slow.
 
 ## Signature
+The function signature is:
 ```python
-def get_base_branch(
-    current_branch: str,
-    repo_root: Optional[Path] = None,
-) -> Optional[str]:
+def get_base_branch(current_branch: str, repo_root: Optional[Path] = None) -> Optional[str]
 ```
-The function takes two arguments:
-
-* `current_branch`: The name of the current branch.
-* `repo_root`: The optional working directory for the Git command. Defaults to the current working directory.
-
-The function returns an `Optional[str]`, which is either the base branch name or `None` if the base branch could not be determined.
+This indicates that the function:
+* Takes two parameters: `current_branch` (a string) and `repo_root` (an optional `Path` object that defaults to `None`).
+* Returns an optional string (`Optional[str]`) representing the base branch name.

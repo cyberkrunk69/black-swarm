@@ -1,54 +1,55 @@
 # HALLUCINATED_PATH ELIV
 
-Imagine you have a special box where you keep your favorite toys. You want to remember what's inside the box, so you write a special name on a piece of paper, like "TOYS". 
+Imagine you have a special box where you keep all your favorite toys. You want to remember what's inside the box, so you write a special name on a piece of paper, like "TOYS". 
 
-The "HALLUCINATED_PATH" is like that piece of paper with the name "TOYS" on it. It's a special name that helps you remember something, but it doesn't do anything by itself. It just sits there and reminds you of what it's for.
+The "HALLUCINATED_PATH" is like that piece of paper with the name "TOYS" on it. It's a reminder of something, but it doesn't do anything by itself. It just helps you remember what it's for.
 ---
 
 # HALLUCINATED_SYMBOL ELIV
 
-Imagine you have a special box where you keep your favorite toy. You want to remember what the name of that toy is, so you write it down on a piece of paper and put it on the box. Now, whenever you look at the box, you can see the name of your toy and remember what it is.
+Imagine you have a special box where you keep a secret name. This name is like a label that says what's inside the box. 
 
-In this code, "HALLUCINATED_SYMBOL" is like the name on the box. It's a special name that helps us remember what it is, but it doesn't do anything special by itself.
+The "HALLUCINATED_SYMBOL" is like that label. It's a special name that we use to remember something. It's not doing anything special, it's just sitting there, reminding us of something.
 ---
 
 # WRONG_LINE ELIV
 
-Imagine you have a special box where you keep your favorite toy. You want to remember what's inside the box, so you write a note that says "TOY". 
+Imagine you have a special box where you keep a secret word. This word is like a password that only you know. 
 
-The "WRONG_LINE" is like that note. It's a reminder that says "WRONG_LINE". It helps us remember something, but it doesn't do anything special by itself.
+The 'WRONG_LINE' is like a label on that box. It tells you what's inside the box, which is the secret word "WRONG_LINE".
 ---
 
 # LOW_CONFIDENCE ELIV
 
-Imagine you have a special box that says "I'm not sure". This box is like a label that we can use to say "I don't know for sure". It's like a flag that says "be careful, I'm not sure about this".
+Imagine you have a special box that says "I'm not sure". This box is like a label that we can put on things when we're not really sure about them. The "LOW_CONFIDENCE" is like a special word that we use to put on that box, so we can remember that it's not sure. It's like a flag that says "Hey, I'm not sure about this!"
 ---
 
 # VALID ELIV
 
-Imagine you have a special box with a label on it that says "VALID". This label is like a key that helps you know what's inside the box. When you see the label, you know the box has something good in it. The "VALID" constant is like that label, it helps you know something is good or okay.
+Imagine you have a special box where you keep your toys. You want to make sure that only your favorite toy, "VALID", can go inside. 
+
+The "VALID" constant is like a special name tag that says "this is my favorite toy". It helps us remember what our favorite toy is called, so we can use it when we need it.
 ---
 
 # ValidationResult ELIV
 
-Imagine you're trying to find a toy in a big box. You look in the box, but you're not sure if it's really there. That's kind of like what the computer is doing when it uses the "ValidationResult" class.
+Imagine you have a special box that helps you figure out if something is correct or not. This box is called ValidationResult.
 
-This class is like a special report that says:
+It's like a report card that tells you:
 
-- Did I find the toy? (is_valid)
-- How sure am I that I found it? (adjusted_confidence)
-- If I didn't find it, where did I look? (actual_file and actual_line)
-- What did I see when I looked? (symbol_snippet)
-- If I didn't find it, what else could it be? (alternatives)
-- How long did it take me to look? (validation_time_ms)
-- What happened if I couldn't find it? (error_code)
+- If something is correct (yes or no)
+- How sure you are about it (like a percentage)
+- What the real answer is (if it's not what you thought)
+- Some suggestions on how to fix it if it's wrong
+- How long it took to check it
+- A special code that says what went wrong
 
-It's like a key that helps the computer understand what happened when it was looking for something.
+This box helps you understand what's going on and what you can do to make it better.
 ---
 
 # _levenshtein_distance ELIV
 
-Imagine you have two words, like "cat" and "bat". The Levenshtein distance is like a special tool that helps us figure out how different these two words are.
+Imagine you have two words, like "cat" and "dog". The Levenshtein distance is like a special tool that helps us figure out how different these two words are.
 
 It's like a game where we try to change one word into the other by changing one letter at a time. If we change a letter, it's like turning a key to open a door. If we don't change a letter, it's like not turning the key.
 
@@ -57,33 +58,29 @@ The tool counts how many times we need to turn the key to change one word into t
 
 # _similarity ELIV
 
-Imagine you have two words, like "cat" and "bat". This special helper function is like a key that helps us see how much they are alike.
+Imagine you have two words, like "cat" and "bat". This special helper function wants to know how much they are alike. 
 
-It looks at the two words and says: "Are they the same?" If they are, it says "They are exactly the same!" and gives a score of 1.
+It's like a key that opens a door. If the words are exactly the same, like "cat" and "cat", the key fits perfectly and it's a 1. If one of the words is missing, like "cat" and nothing, the key doesn't fit and it's a 0.
 
-If one of the words is empty, it says "One of them is missing!" and gives a score of 0.
-
-If they are not the same, it counts how many letters are in each word and how many letters are different. Then it says "This is how much they are different!" and gives a score of how much they are alike, from 0 to 1.
+For words that are a little different, like "cat" and "bat", the function looks at how many letters are different and how many letters are the same. It's like counting how many blocks are the same color and how many are different colors. Then it gives you a number between 0 and 1 that shows how much the words are alike.
 ---
 
 # _resolve_path ELIV
 
-Imagine you have a special folder where you keep all your toys. This folder is like a big box that holds everything.
+Imagine you have a special folder with lots of pictures and toys inside. This folder is like a big box that holds everything.
 
-The function `_resolve_path` is like a helper that finds the right path to a toy inside the box. 
+The function `_resolve_path` is like a helper that finds the right path to a specific toy inside the box. 
 
-If you give it a path that starts with a special sign (/) that means "start from the beginning", it will just give you that path back. It's like saying "oh, you want the toy from the very beginning? Okay, here it is!"
+If you give it a path that starts with a special sign (/) that means "start from the very beginning", it will just give you that path back. It's like saying "oh, you already know where the toy is, so I'll just give it to you".
 
-But if you give it a path that doesn't start with that special sign, it will look inside the box and find the right toy for you. It's like saying "oh, you want the toy that's inside the box? Let me find it for you!"
+But if you give it a path that doesn't start with that special sign, it will look inside the box to find the right path to the toy. It's like saying "let me check inside the box to see where the toy is".
 ---
 
 # _path_exists_safe ELIV
 
-Imagine you have a big house with many rooms, and each room has a special key that opens the door to the next room. But sometimes, the key might be a fake key that just points to another room, and sometimes it might be a key that goes back to a room you already visited.
+Imagine you have a big box of toys, and inside the box, there are smaller boxes with toys too. Sometimes, those smaller boxes are just like keys that open other boxes. This function helps us find out if we can open a box (or a path) safely.
 
-This special helper function checks if a key (called a "path") is real and can open a door. It also checks if the key is a fake key that points to another room, or if it's a key that goes back to a room you already visited.
-
-If the key is real and can open a door, it tells you that the door is open (the path exists). If the key is a fake key or a loop, it tells you that the door is not open.
+It checks if the box exists, and if it does, it finds the box that's really inside (not just a key). If we try to open a box and it says "no", it might be because we're stuck in a loop, like a never-ending staircase. The function will tell us if we can open the box, what's really inside, and if we're stuck in a loop.
 ---
 
 # _find_sibling_files ELIV
@@ -99,44 +96,42 @@ Finally, it gives you a list of the names of the toys that have names similar to
 
 # _grep_symbol ELIV
 
-Imagine you have a big box of toys, and inside the box, there are lots of different toys with names on them. This special tool, called `_grep_symbol`, helps you find a specific toy by its name.
+Imagine you have a big box of toys, and inside the box, there are lots of different toys with names on them. This special tool, called `_grep_symbol`, helps you find a specific toy in the box.
 
-It looks at each toy in the box, one by one, and checks if the name on the toy matches what you're looking for. If it finds a match, it shows you the toy and its name. If it doesn't find a match, it keeps looking until it checks all the toys.
+It looks for two kinds of toys: ones with a name that starts with "def" and ones with a name that starts with "class". When it finds one, it shows you the toy's name and a little bit of the surrounding toys.
 
-But here's the cool part: if it finds a toy that's not exactly what you're looking for, but it's very similar, it will still show you that toy. It's like having a special key that can open a door, even if it's not the exact right key, but it's close enough to work!
+If it can't find the toy you're looking for, it says "I couldn't find it!" But if it finds a toy that's similar to the one you're looking for, it shows you that one instead. It's like having a special key that opens the door to the toy you want!
 ---
 
 # _get_symbol_snippet ELIV
 
 Imagine you have a big book with lots of pages. Each page has some words on it. This special helper looks at a specific page in the book and shows you the first three lines of words on that page. 
 
-If the page doesn't exist or you can't read the book, it says "I don't know".
+If the page doesn't exist or you can't read the book, it says "I don't know". If you ask for a page that doesn't have any words, it also says "I don't know". But if you ask for a page with words, it shows you the first three lines!
 ---
 
 # Validator ELIV
 
-Imagine you have a special box where you keep all your toys. But sometimes, you want to make sure that the toy you want to put in the box is the right size and shape.
+Imagine you have a special box where you keep all your toys. But sometimes, you want to make sure that the toy you're about to put in the box is the right one. That's where the Validator comes in.
 
-The Validator is like a helper who checks if the toy is the right size and shape before you put it in the box. It looks at the toy and the box, and says "yes" or "no" if it fits.
+The Validator is like a helper who checks if the toy is the right one. It looks at the toy and the box, and then says "yes" or "no" if it's a good fit.
 
-When you want to put a toy in the box, you ask the Validator to check it for you. If it says "yes", you can put the toy in the box. If it says "no", you need to find a different toy that fits.
+When you give the Validator a toy and the box, it checks if the toy is okay to put in the box. If it is, the Validator says "yes" and you can put the toy in the box. If not, the Validator says "no" and you can't put the toy in the box.
 ---
 
 # validate ELIV
 
-Imagine you have a toy box and you want to put a new toy in it. But before you put it in, you need to make sure it's the right toy for that box. 
-
-The "validate" method is like a helper who checks if the toy (called a "suggestion") is the right one for the box (called the "repo_root"). It looks at the toy and the box, and then says "yes" or "no" if it's a good fit.
+Imagine you have a toy box and you want to put a new toy in it. But first, you need to make sure the toy fits in the box. That's kind of like what the "validate" method does. It checks if something (like a new toy) is okay to use or put in a special place. If it's okay, it says yes, if not, it says no.
 ---
 
 # validate_location ELIV
 
-Imagine you have a friend who wants to find a specific book in a huge library. They give you a hint about the book's title, author, and where it might be on the shelf.
+Imagine you have a friend who wants to find a specific book in your library. They give you a hint about the book, like the title or the author. But, you need to make sure the book is real and that you can find it.
 
-This special function, called "validate_location", helps figure out if the book is really in the library and where it is. It checks three things:
+This function, "validate_location", is like a helper who checks if the book is real and if it's in the right place. It looks at the hint your friend gave you and checks a few things:
 
-1. Is the friend's hint good enough? If not, it says "no" and gives some other book suggestions.
-2. Is the book actually on the shelf? If not, it says "no" and gives some other book suggestions.
-3. Is the book's title and author correct? If not, it says "no" and gives some other book suggestions.
+1. Is the hint good enough? If it's not, it says "no" and gives you some other options.
+2. Is the book in the library? If it's not, it says "no" and gives you some other options.
+3. If the book is in the library, is the hint about the book correct? If it's not, it says "no" and gives you some other options.
 
-If all three things are true, it says "yes" and tells you where the book is on the shelf!
+If everything checks out, it says "yes" and gives you the book's details. It's like finding the right key that opens the door to the book!

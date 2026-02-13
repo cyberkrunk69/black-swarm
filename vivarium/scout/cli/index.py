@@ -434,11 +434,11 @@ def cmd_watch(args: argparse.Namespace, repo_root: Path) -> int:
 
 
 def query_for_nav(
-    repo_root: Path, task: str, limit: int = 3
-) -> Optional[dict]:
+    repo_root: Path, task: str, limit: int = 5
+) -> Optional[List[dict]]:
     """
-    Query index for nav-style result. Used by scout-nav as free fallback.
-    Returns nav result dict if we have a confident match (score > 0.8), else None.
+    Query index for nav-style results. Used by scout-nav and scout-brief as free fallback.
+    Returns a list of nav result dicts (best first), or None if no matches.
     """
     db_path = _db_path(repo_root)
     if not db_path.exists():
@@ -476,27 +476,29 @@ def query_for_nav(
     if not rows:
         return None
 
-    # Use first result; confidence 85 when we have matches
-    name, file_path, line_str, kind = rows[0]
-    line_num = int(line_str) if line_str and line_str.isdigit() else 0
-    target_fn = name if kind in ("function", "method", "class") else ""
-
-    return {
-        "task": task,
-        "target_file": file_path,
-        "target_function": target_fn,
-        "line_estimate": line_num,
-        "confidence": 85,
-        "model_used": "scout-index",
-        "cost_usd": 0.0,
-        "duration_ms": 0,
-        "retries": 0,
-        "escalated": False,
-        "related_files": [r[1] for r in rows[1:limit]],
-        "reasoning": f"Index match: {name} in {file_path}",
-        "suggestion": "Verify location with IDE or tests.",
-        "session_id": "",
-    }
+    results: List[dict] = []
+    all_files = [r[1] for r in rows]
+    for name, file_path, line_str, kind in rows:
+        line_num = int(line_str) if line_str and line_str.isdigit() else 0
+        target_fn = name if kind in ("function", "method", "class") else ""
+        related = [f for f in all_files if f != file_path]
+        results.append({
+            "task": task,
+            "target_file": file_path,
+            "target_function": target_fn,
+            "line_estimate": line_num,
+            "confidence": 85,
+            "model_used": "scout-index",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "retries": 0,
+            "escalated": False,
+            "related_files": related,
+            "reasoning": f"Index match: {name} in {file_path}",
+            "suggestion": "Verify location with IDE or tests.",
+            "session_id": "",
+        })
+    return results
 
 
 def cmd_stats(args: argparse.Namespace, repo_root: Path) -> int:

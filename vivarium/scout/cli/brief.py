@@ -6,10 +6,10 @@ Creates comprehensive briefings with git context, dependencies, and
 Vendor-agnostic: prepares the briefing; user chooses who consumes it.
 
 Usage:
-    ./devtools/scripts/scout-brief --task "fix race condition in token refresh"
-    ./devtools/scripts/scout-brief --task "add OAuth provider" --entry vivarium/runtime/auth/
-    ./devtools/scripts/scout-brief --pr 42 --output pr-briefing.md
-    ./devtools/scripts/scout-brief --task "optimize query" --output brief.md
+    ./devtools/scout-brief --task "fix race condition in token refresh"
+    ./devtools/scout-brief --task "add OAuth provider" --entry vivarium/runtime/auth/
+    ./devtools/scout-brief --pr 42 --output pr-briefing.md
+    ./devtools/scout-brief --task "optimize query" --output brief.md
 """
 
 from __future__ import annotations
@@ -31,11 +31,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from vivarium.scout.audit import AuditLog
 from vivarium.scout.config import ScoutConfig
 from vivarium.scout.validator import Validator
+from vivarium.utils.llm_cost import estimate_cost
 
-# Cost estimates (Groq: 8B $0.20/million, 70B ~$0.90/million)
-COST_8B_PER_1M = 0.20
-COST_70B_PER_1M = 0.90
-ESTIMATED_EXPENSIVE_MODEL_COST = 0.85  # Naive deep model exploration
+# Naive estimate for "expensive model exploration" sans Scout (used in savings calc)
+ESTIMATED_EXPENSIVE_MODEL_COST = 0.85
 COMPLEXITY_THRESHOLD = 0.7
 
 
@@ -258,10 +257,41 @@ def _find_callers(repo_root: Path, target_file: str, limit: int = 10) -> List[st
     return callers
 
 
-def build_dependencies(repo_root: Path, target_file: str) -> DepGraph:
-    """Build dependency graph: direct, transitive, callers."""
+def _resolve_target_to_file(repo_root: Path, target_file: str) -> Optional[str]:
+    """
+    Resolve target to a valid Python file path. Handles directories and non-file targets.
+    Returns repo-relative path to a file, or None if no suitable file found.
+    """
+    if not target_file:
+        return None
     fp = repo_root / target_file
     if not fp.exists():
+        return None
+    if fp.is_file() and fp.suffix == ".py":
+        try:
+            return str(fp.relative_to(repo_root))
+        except ValueError:
+            return target_file
+    if fp.is_dir():
+        init_py = fp / "__init__.py"
+        if init_py.exists():
+            try:
+                return str(init_py.relative_to(repo_root))
+            except ValueError:
+                pass
+        # No __init__.py — can't analyze directory as file
+        return None
+    return None
+
+
+def build_dependencies(repo_root: Path, target_file: str) -> DepGraph:
+    """Build dependency graph: direct, transitive, callers."""
+    resolved = _resolve_target_to_file(repo_root, target_file)
+    if resolved is None:
+        return DepGraph(direct=[], transitive=[], callers=[])
+    target_file = resolved
+    fp = repo_root / target_file
+    if not fp.exists() or not fp.is_file():
         return DepGraph(direct=[], transitive=[], callers=[])
 
     content = fp.read_text(encoding="utf-8", errors="replace")
@@ -359,13 +389,22 @@ async def _call_groq(
     content = msg.get("content", "").strip()
 
     usage = data.get("usage", {})
-    input_t = int(usage.get("input_tokens", 0))
-    output_t = int(usage.get("output_tokens", 0))
+    # Groq Chat Completions uses prompt_tokens/completion_tokens (OpenAI format).
+    # Responses API uses input_tokens/output_tokens. Support both.
+    input_t = int(
+        usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or 0
+    )
+    output_t = int(
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or 0
+    )
 
-    if "8b" in model or "8B" in model:
-        cost = (input_t + output_t) / 1_000_000 * COST_8B_PER_1M
-    else:
-        cost = (input_t + output_t) / 1_000_000 * COST_70B_PER_1M
+    cost = estimate_cost(model, input_t, output_t)
+    if cost == 0.0 and content:
+        cost = 1e-7  # Call was made, cost below precision or not reported
 
     return content, cost
 
@@ -582,8 +621,14 @@ async def get_navigation(
     if result is None:
         return None
 
+    target_file = result.get("target_file", "")
+    # Resolve directory/test targets to a suitable file for brief analysis
+    resolved = _resolve_target_to_file(repo_root, target_file)
+    if resolved is not None:
+        target_file = resolved
+
     return NavResult(
-        target_file=result.get("target_file", ""),
+        target_file=target_file,
         target_function=result.get("target_function", ""),
         line_estimate=result.get("line_estimate", 0) or 0,
         signature=result.get("signature", ""),

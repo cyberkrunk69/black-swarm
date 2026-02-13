@@ -1,13 +1,14 @@
 """
-Scout Roast CLI — Efficiency reports from audit logs.
+Scout Roast CLI — Efficiency reports and impact-aware critique.
 
-"Big AI hates this one simple trick." Generate savings reports that make
-expensive tool usage tangible and shame-heavy.
+"Big AI hates this one simple trick." Generate savings reports and/or
+LLM critique using living docs for risks, anti-patterns, improvements.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import gzip
 import json
 import re
@@ -200,6 +201,104 @@ def generate_report(
     }
 
 
+def _load_docs_for_file(file_path: Path, repo_root: Path) -> str:
+    """Load .tldr.md and .deep.md for file. Tries .docs/ then docs/livingDoc/."""
+    parts: List[str] = []
+    docs_dir = file_path.parent / ".docs"
+    for suffix in (".tldr.md", ".deep.md"):
+        doc_path = docs_dir / f"{file_path.name}{suffix}"
+        if doc_path.exists():
+            try:
+                parts.append(doc_path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+    if not parts:
+        try:
+            rel = file_path.relative_to(repo_root)
+            central = repo_root / "docs" / "livingDoc" / rel.parent
+            for suffix in (".tldr.md", ".deep.md"):
+                doc_path = central / f"{file_path.name}{suffix}"
+                if doc_path.exists():
+                    try:
+                        parts.append(doc_path.read_text(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        pass
+        except ValueError:
+            pass
+    return "\n\n---\n\n".join(parts) if parts else ""
+
+
+def _run_roast(
+    target_files: List[Path],
+    use_docs: bool,
+    repo_root: Path,
+) -> str:
+    """
+    Run LLM critique on target files. If use_docs, inject .tldr.md and .deep.md.
+    Respects enable_roast config. Logs as roast_with_docs audit event.
+    """
+    from vivarium.scout.config import ScoutConfig
+    from vivarium.scout.llm import call_groq_async
+
+    config = ScoutConfig()
+    roast_cfg = config.get("roast") or {}
+    if not roast_cfg.get("enable_roast", True):
+        return "Roast disabled (roast.enable_roast=false in config)."
+
+    combined_docs: List[str] = []
+    for f in target_files:
+        if not f.exists() or not f.suffix == ".py":
+            continue
+        doc_content = _load_docs_for_file(f, repo_root) if use_docs else ""
+        try:
+            rel = f.relative_to(repo_root)
+        except ValueError:
+            rel = f
+        try:
+            code = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            code = "(could not read)"
+        block = f"## {rel}\n\n"
+        if doc_content:
+            block += f"Documented purpose & logic:\n{doc_content}\n\n"
+        block += f"Source:\n```python\n{code[:8000]}\n```"
+        combined_docs.append(block)
+
+    if not combined_docs:
+        return "No valid Python files to critique."
+
+    prompt = f"""Given this code's documented purpose and logic (from .tldr.md and .deep.md), identify:
+1. Risks — What could go wrong? Edge cases?
+2. Anti-patterns — Code smells, brittle design.
+3. Improvements — Refactors, clarity, performance.
+
+Be concise. Use bullet points. Output only the analysis, no preamble.
+
+{chr(10).join(combined_docs)}"""
+
+    try:
+        response = asyncio.run(
+            call_groq_async(
+                prompt,
+                model="llama-3.1-8b-instant",
+                system="You are a senior engineer doing code review. Be direct and actionable.",
+                max_tokens=1500,
+            )
+        )
+    except Exception as e:
+        return f"Roast LLM failed: {e}"
+
+    audit = AuditLog()
+    audit.log(
+        "roast_with_docs",
+        cost=response.cost_usd,
+        model=response.model,
+        files=[str(p) for p in target_files],
+        use_docs=use_docs,
+    )
+    return response.content.strip()
+
+
 def format_report(data: Dict[str, Any]) -> str:
     """Format roast report as ASCII box."""
     width = 62
@@ -235,12 +334,33 @@ def main() -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="scout-roast",
-        description="Scout Roast — efficiency reports from audit logs. Show the money you didn't spend.",
+        description="Scout Roast — efficiency reports and impact-aware code critique.",
     )
-    period_group = parser.add_mutually_exclusive_group(required=True)
+    period_group = parser.add_mutually_exclusive_group()
     period_group.add_argument("--today", action="store_const", dest="period", const=PERIOD_TODAY)
     period_group.add_argument("--week", action="store_const", dest="period", const=PERIOD_WEEK)
     period_group.add_argument("--month", action="store_const", dest="period", const=PERIOD_MONTH)
+    parser.add_argument(
+        "--target",
+        "-t",
+        type=Path,
+        action="append",
+        metavar="FILE",
+        help="File(s) to critique using living docs (LLM)",
+    )
+    parser.add_argument(
+        "--use-docs",
+        action="store_true",
+        default=True,
+        dest="use_docs",
+        help="Include .tldr.md and .deep.md in critique (default: True)",
+    )
+    parser.add_argument(
+        "--no-use-docs",
+        action="store_false",
+        dest="use_docs",
+        help="Run critique without living docs",
+    )
     parser.add_argument(
         "--compare",
         metavar="MODEL",
@@ -254,8 +374,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.target:
+        repo_root = Path.cwd().resolve()
+        result = _run_roast(
+            target_files=args.target,
+            use_docs=args.use_docs,
+            repo_root=repo_root,
+        )
+        print(result)
+        return 0
+
     if args.period is None:
-        parser.error("One of --today, --week, --month is required")
+        parser.error("One of --today, --week, --month is required, or use --target for critique")
 
     report = generate_report(
         period=args.period,

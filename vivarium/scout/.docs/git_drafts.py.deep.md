@@ -1,155 +1,199 @@
+# _MODULE_MD_NAME
+
+## Logic Overview
+The code defines a Python constant named `_MODULE_MD_NAME` and assigns it a string value `"__init__.py.module.md"`. This constant does not appear to be used in any conditional statements, loops, or functions within the provided source code. The assignment is a straightforward, one-step process.
+
+## Dependency Interactions
+There are no traced calls, types, or imports used in the definition or assignment of the `_MODULE_MD_NAME` constant. As a result, there are no dependency interactions to analyze.
+
+## Potential Considerations
+Since the constant is not used in any conditional statements or functions, there are no apparent edge cases or error handling mechanisms to consider. The performance impact of this constant is negligible, as it is simply a string assignment. However, without more context or surrounding code, it is unclear how this constant will be used or if it will have any significant effects on the overall program.
+
+## Signature
+N/A
+---
+
 # _stem_for_file
 
 ## Logic Overview
-### Step-by-Step Breakdown
-
-The `_stem_for_file` function takes two parameters: `file_path` and `root`, both of which are instances of the `Path` class from the `pathlib` module. The function's primary goal is to return the stem of the file path relative to the repository root.
-
-Here's a step-by-step explanation of the code's flow:
-
-1. **Resolve the file path**: The function first resolves the `file_path` to its absolute path using the `resolve()` method. This ensures that the path is in its canonical form, regardless of any symbolic links or relative paths.
-
-    ```python
-path = Path(file_path).resolve()
-```
-
-2. **Calculate the relative path**: The function then attempts to calculate the relative path of the resolved `file_path` with respect to the `root` using the `relative_to()` method. This method returns a new `Path` object representing the relative path.
-
-    ```python
-try:
-    return path.relative_to(root).stem
-```
-
-3. **Handle the ValueError exception**: If the `relative_to()` method raises a `ValueError` exception, it means that the `file_path` is not a descendant of the `root`. In this case, the function falls back to returning the stem of the original `file_path` using the `stem` attribute.
-
-    ```python
-except ValueError:
-    return path.stem
-```
+The `_stem_for_file` function takes two parameters, `file_path` and `root`, both of type `Path`. The main steps in the function are:
+1. Resolving the `file_path` to its absolute path using `Path(file_path).resolve()`.
+2. Attempting to return the stem of the `file_path` relative to the `root` using `path.relative_to(root).stem`.
+3. If the above step fails with a `ValueError`, returning the stem of the absolute `file_path` using `path.stem`.
 
 ## Dependency Interactions
-### Pathlib Module
-
-The `_stem_for_file` function relies on the `pathlib` module for its functionality. Specifically, it uses the following classes and methods from the `pathlib` module:
-
-*   `Path`: A class representing a file system path.
-*   `resolve()`: A method that returns the absolute path of a `Path` object.
-*   `relative_to()`: A method that returns the relative path of a `Path` object with respect to another `Path` object.
-*   `stem`: An attribute that returns the stem of a `Path` object (i.e., the file name without its extension).
+The function interacts with the following traced calls:
+- `pathlib.Path`: Used to create `Path` objects for `file_path` and `root`.
+- `path.relative_to`: Called on the resolved `file_path` to get the path relative to the `root`.
+- `path.stem`: Called on the relative path (if successful) or the absolute path (if `relative_to` fails) to get the stem of the file.
 
 ## Potential Considerations
-### Edge Cases and Error Handling
-
-The `_stem_for_file` function handles the following edge cases:
-
-*   **Invalid file path**: If the `file_path` is not a valid file system path, the `Path` constructor will raise a `FileNotFoundError`. This error is not explicitly handled in the function, but it can be caught and handled using a `try`-`except` block.
-*   **Root path not found**: If the `root` path does not exist, the `relative_to()` method will raise a `ValueError`. This error is handled by the function, which falls back to returning the stem of the original `file_path`.
-*   **Performance**: The function has a time complexity of O(n), where n is the length of the file path. This is because the `relative_to()` method needs to traverse the file system hierarchy to calculate the relative path.
+- The function handles the case where `file_path` is not relative to `root` by catching the `ValueError` exception raised by `path.relative_to(root)`. In this case, it returns the stem of the absolute `file_path`.
+- The use of `resolve()` ensures that the function works with absolute paths, which can help prevent issues with relative paths.
+- The function does not perform any explicit error checking on the inputs `file_path` and `root`, relying on the `Path` constructor and `relative_to` method to raise exceptions if necessary.
 
 ## Signature
-### Function Signature
+The function signature is `def _stem_for_file(file_path: Path, root: Path) -> str`, indicating that:
+- It takes two parameters: `file_path` and `root`, both of type `Path`.
+- It returns a string (`str`) representing the stem of the file path relative to the root, or the stem of the absolute file path if the relative path cannot be determined.
+---
 
-```python
-def _stem_for_file(file_path: Path, root: Path) -> str:
-    """Return stem for file path relative to repo root."""
-```
+# _find_package_root
+
+## Logic Overview
+The `_find_package_root` function takes a file path and a root directory as input and attempts to find the nearest package directory containing the file. The main steps are:
+1. Resolve the input file path to an absolute path using `Path(file_path).resolve()`.
+2. Initialize a `parent` variable to the parent directory of the resolved file path.
+3. Enter a loop that continues until the `parent` directory is either the `root` directory or its parent.
+4. Inside the loop, check if the `parent` directory contains an `__init__.py` file. If it does, return the `parent` directory.
+5. If the loop exits without finding an `__init__.py` file, perform one final check on the `parent` directory.
+6. If no package directory is found, return `None`.
+
+## Dependency Interactions
+The function uses the following traced calls:
+- `pathlib.Path`: This is used to create `Path` objects for the file path, root directory, and parent directories.
+- `Path` instances are used for the following operations:
+  - `path.parent`: to get the parent directory of a path.
+  - `path.resolve()`: to resolve a path to its absolute form.
+  - `path / "__init__.py"`: to construct a path to the `__init__.py` file in a directory.
+  - `(parent / "__init__.py").exists()`: to check if the `__init__.py` file exists in a directory.
+
+## Potential Considerations
+- **Error Handling**: The function catches `ValueError` and `OSError` exceptions that may occur during path resolution or file existence checks. If an exception occurs, the function simply returns `None`.
+- **Edge Cases**: The function may not handle cases where the input file path or root directory is not a valid path. It also assumes that the `root` directory is a parent of the input file path.
+- **Performance**: The function uses a loop to traverse the directory hierarchy, which could potentially be slow for very deep directory structures.
+
+## Signature
+The function signature is `def _find_package_root(file_path: Path, root: Path) -> Path | None`. This indicates that:
+- The function takes two parameters: `file_path` and `root`, both of type `Path`.
+- The function returns either a `Path` object (representing the package directory) or `None` (if no package directory is found).
+---
+
+# _read_module_summary
+
+## Logic Overview
+The `_read_module_summary` function reads a module summary from a specific file location. The main steps are:
+1. Calculate the relative path of `package_dir` with respect to `repo_root`.
+2. Check if a central documentation file exists at the calculated relative path.
+3. If the central file exists, attempt to read its contents.
+4. If the central file does not exist or reading it fails, check for a local documentation file in the `package_dir`.
+5. If the local file exists, attempt to read its contents.
+6. If all attempts fail, return `None`.
+
+## Dependency Interactions
+The function uses the following traced calls:
+- `central.exists()`: Checks if the central documentation file exists.
+- `central.read_text()`: Reads the contents of the central documentation file.
+- `local.exists()`: Checks if the local documentation file exists.
+- `local.read_text()`: Reads the contents of the local documentation file.
+- `package_dir.relative_to(repo_root)`: Calculates the relative path of `package_dir` with respect to `repo_root`.
+- `repo_root` and `package_dir` are of type `Path`, indicating they are file system paths.
+
+## Potential Considerations
+- **Error Handling**: The function catches `ValueError` when calculating the relative path and `OSError` when reading files. If these exceptions occur, the function will either return `None` or continue to the next step.
+- **File Encoding**: The function uses `utf-8` encoding with `errors="replace"` when reading files. This means that any invalid UTF-8 sequences will be replaced with a replacement marker.
+- **Performance**: The function performs multiple file existence checks and reads. This could potentially impact performance if the function is called frequently or with large files.
+- **Edge Cases**: The function returns `None` if the relative path calculation fails or if neither the central nor local files exist. It also returns `None` if reading either file fails due to an `OSError`.
+
+## Signature
+The function signature is `def _read_module_summary(repo_root: Path, package_dir: Path) -> str | None`. This indicates that:
+- The function takes two parameters: `repo_root` and `package_dir`, both of type `Path`.
+- The function returns either a string (`str`) or `None`. The string is expected to be the contents of the module summary file, and `None` is returned if the file cannot be read or does not exist.
 ---
 
 # assemble_pr_description
 
 ## Logic Overview
-The `assemble_pr_description` function is designed to assemble a PR description from Markdown files in the `docs/drafts` directory for each staged `.py` file. Here's a step-by-step breakdown of the code's flow:
-
-1. **Initialization**: The function takes two arguments: `repo_root` (the repository root path) and `staged_files` (a list of staged file paths). It initializes an empty list `sections` to store the assembled PR description sections.
-2. **Filtering staged files**: The function filters the `staged_files` list to only include files with a `.py` suffix. If no `.py` files are found, it returns a message indicating that no staged Python files are available.
-3. **Iterating over staged files**: The function iterates over the filtered list of `.py` files. For each file, it:
-	* Resolves the file path to an absolute path using `Path.resolve()`.
-	* Extracts the file stem using the `_stem_for_file` function (not shown in the provided code).
-	* Tries to get the relative path of the file with respect to the repository root. If this fails (e.g., because the file is outside the repository root), it falls back to using the file name.
-4. **Loading draft file**: The function attempts to load a Markdown file from the `docs/drafts` directory with the file stem and a `.pr.md` extension. If this file does not exist, it tries to load a file with a `.pr.txt` extension instead.
-5. **Assembling PR description section**: If a draft file is found, the function reads its contents and appends a section to the `sections` list with a header containing the file's relative path and the draft file's contents. If the draft file is missing, it appends a default section with a header containing the file's relative path and a message indicating that no PR draft is available.
-6. **Returning the assembled PR description**: Finally, the function joins the `sections` list with a separator (`\n\n---\n\n`) and returns the assembled PR description.
+The `assemble_pr_description` function assembles a PR description from draft files for each staged Python file. The main steps are:
+1. Resolve the repository root path and create a draft directory path.
+2. Filter the staged files to only include files with specific extensions (`.py`, `.js`, `.mjs`, `.cjs`).
+3. Group the filtered files by their package root; files without a package are grouped under the root.
+4. Gather package summaries for the Architectural Impact section.
+5. Create sections for the PR description, including a top-level Architectural Impact section and per-package sections with changed files.
+6. Join the sections with a separator to form the final PR description.
 
 ## Dependency Interactions
-The `assemble_pr_description` function relies on the following dependencies:
-
-* `Path`: a class from the `pathlib` module for working with file paths.
-* `List`: a built-in Python type for representing lists of values.
-* `_stem_for_file`: a function (not shown in the provided code) for extracting the file stem from a file path.
-
-The function does not use any external libraries or dependencies beyond the standard library.
+The function uses the following traced calls:
+- `_find_package_root`: to find the package root of a file.
+- `_read_module_summary`: to read the module summary of a package.
+- `_stem_for_file`: to get the stem of a file.
+- `block.append`: to append content to a block.
+- `draft_path.exists`: to check if a draft file exists.
+- `draft_path.read_text`: to read the content of a draft file.
+- `impact_parts.append`: to append content to the Architectural Impact section.
+- `package_summaries.append`: to append a package summary.
+- `path.relative_to`: to get the relative path of a file or package.
+- `pkg.relative_to`: to get the relative path of a package.
+- `pkg_to_files.keys`: to get the keys of the `pkg_to_files` dictionary.
+- `sections.append`: to append a section to the PR description.
+- `sorted`: to sort the packages.
+- `str`: to convert a path or package to a string.
 
 ## Potential Considerations
-Here are some potential considerations and edge cases to keep in mind:
-
-* **File existence and permissions**: The function assumes that the `docs/drafts` directory exists and is writable. If this directory does not exist or is not writable, the function may raise an `OSError`.
-* **Draft file format**: The function assumes that the draft files are in Markdown format. If the draft files are in a different format, the function may not be able to read them correctly.
-* **File stem extraction**: The function relies on the `_stem_for_file` function to extract the file stem from a file path. If this function is not implemented correctly, the function may not be able to assemble the PR description correctly.
-* **Performance**: The function iterates over the list of staged files, which may be expensive if the list is large. Consider using a more efficient data structure or algorithm if performance is a concern.
+The function handles the following edge cases and errors:
+- If no staged doc files are found, it returns a message indicating this.
+- If a draft file does not exist, it uses a default message.
+- If a draft file cannot be read, it uses a default message.
+- If a package summary cannot be read, it is skipped.
+- The function sorts packages by their path, with `None` packages (i.e., files without a package) sorted last.
+- The function uses a try-except block to handle `ValueError` exceptions when getting the relative path of a file or package.
 
 ## Signature
+The function signature is:
 ```python
-def assemble_pr_description(repo_root: Path, staged_files: List[Path]) -> str:
-    """
-    Assemble a PR description from docs/drafts/{stem}.pr.md for each staged .py file.
-
-    For each staged .py file, reads docs/drafts/{stem}.pr.md (or .pr.txt fallback) if it exists.
-    Falls back to "No PR draft available" if missing.
-    Joins all with clear section headers (## {filename}).
-
-    Args:
-        repo_root: Repository root path.
-        staged_files: List of staged file paths (absolute or relative to repo_root).
-
-    Returns:
-        Aggregated PR description as Markdown.
-    """
+def assemble_pr_description(repo_root: Path, staged_files: List[Path]) -> str
 ```
+This indicates that the function takes two parameters:
+- `repo_root`: the repository root path, of type `Path`.
+- `staged_files`: a list of staged file paths, of type `List[Path]`.
+The function returns a string, which is the assembled PR description.
 ---
 
 # assemble_commit_message
 
 ## Logic Overview
-The `assemble_commit_message` function is designed to aggregate commit messages from draft files for each staged Python file in a repository. Here's a step-by-step breakdown of its logic:
-
-1. **Initialization**: The function takes two parameters: `repo_root` (the repository root path) and `staged_files` (a list of staged file paths). It resolves the `repo_root` path to an absolute path using `Path.resolve()`.
-2. **Filtering Python files**: The function filters the `staged_files` list to include only files with the `.py` suffix using a list comprehension.
-3. **Checking for draft files**: For each Python file, the function constructs the path to the corresponding draft file (`docs/drafts/{stem}.commit.txt`) using the `_stem_for_file` function (not shown in the provided code). If the draft file exists, it reads its content using `read_text()`.
-4. **Handling missing draft files**: If the draft file is missing, the function appends a default message to the `sections` list.
-5. **Aggregating commit messages**: The function aggregates the commit messages from each draft file into a single string using `join()`.
+The `assemble_commit_message` function assembles a single commit message from draft files for each staged `.py`, `.js`, `.mjs`, or `.cjs` file. The main steps are:
+1. Resolve the repository root path and create a path to the draft directory.
+2. Filter the staged files to only include those with `.py`, `.js`, `.mjs`, or `.cjs` extensions.
+3. If no such files are found, return a message indicating no staged doc files.
+4. For each filtered file:
+   - Calculate the stem of the file using the `_stem_for_file` function.
+   - Construct the path to the corresponding draft file.
+   - If the draft file exists, read its content and append it to the sections list.
+   - If the draft file does not exist or an error occurs while reading it, append a message indicating no draft available for the file.
+5. Join the sections with a separator and return the resulting commit message.
 
 ## Dependency Interactions
-The code uses the following dependencies:
+The function uses the following traced calls:
+- `_stem_for_file`: to calculate the stem of a file.
+- `draft_path.exists`: to check if a draft file exists.
+- `draft_path.read_text`: to read the content of a draft file.
+- `pathlib.Path`: to create and manipulate paths.
+- `sections.append`: to add content to the sections list.
 
-* `Path`: A class from the `pathlib` module for working with file paths.
-* `List`: A built-in Python type for representing lists of values.
-* `_stem_for_file`: A function (not shown in the provided code) that extracts the stem from a file path.
-
-The code does not use any external libraries or dependencies beyond the standard library.
+These calls are used in the following ways:
+- `_stem_for_file(path, root)` is called with the resolved file path and the repository root path to calculate the stem of the file.
+- `draft_path.exists` is called to check if the draft file exists before attempting to read it.
+- `draft_path.read_text(encoding="utf-8", errors="replace")` is called to read the content of the draft file, using UTF-8 encoding and replacing any invalid characters.
+- `pathlib.Path` is used to create and manipulate paths, such as resolving the repository root path and constructing the path to the draft directory.
+- `sections.append` is called to add the content of each draft file (or a message indicating no draft available) to the sections list.
 
 ## Potential Considerations
-Here are some potential considerations for the code:
+The function handles the following edge cases and errors:
+- If no staged doc files are found, it returns a message indicating this.
+- If a draft file does not exist, it appends a message indicating no draft available for the file.
+- If an error occurs while reading a draft file, it catches the `OSError` exception and appends a message indicating no draft available for the file.
+- The function uses a try-except block to handle any errors that may occur while reading the draft files, ensuring that the function does not crash if an error occurs.
 
-* **Error handling**: The code catches `OSError` exceptions when reading draft files, but it might be more robust to catch specific exceptions related to file I/O (e.g., `FileNotFoundError`, `PermissionError`).
-* **Performance**: The code uses `read_text()` to read draft files, which can be slow for large files. Consider using a more efficient method, such as `read_bytes()` or `read_text()` with a larger buffer size.
-* **Draft file format**: The code assumes that draft files have a specific format (`.commit.txt`). Consider adding validation or error handling for invalid draft file formats.
-* **Repository structure**: The code assumes that the repository has a specific structure (`docs/drafts/{stem}.commit.txt`). Consider adding checks or error handling for repositories with different structures.
+The function's performance may be affected by:
+- The number of staged files, as it needs to iterate over each file and read the corresponding draft file.
+- The size of the draft files, as it needs to read the entire content of each file.
 
 ## Signature
+The function signature is:
 ```python
-def assemble_commit_message(repo_root: Path, staged_files: List[Path]) -> str:
-    """
-    Assemble a single commit message from docs/drafts/{stem}.commit.txt for each staged .py file.
-
-    For each staged .py file, reads docs/drafts/{stem}.commit.txt if it exists.
-    Falls back to "No draft available" if missing.
-    Aggregates all into a single message (one section per file).
-
-    Args:
-        repo_root: Repository root path.
-        staged_files: List of staged file paths (absolute or relative to repo_root).
-
-    Returns:
-        Aggregated commit message string.
-    """
+def assemble_commit_message(repo_root: Path, staged_files: List[Path]) -> str
 ```
+This indicates that the function:
+- Takes two parameters: `repo_root` of type `Path` and `staged_files` of type `List[Path]`.
+- Returns a string value, which is the assembled commit message.

@@ -99,6 +99,16 @@ def _cmd_on_commit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prepare_commit_msg(args: argparse.Namespace) -> int:
+    """Handle scout prepare-commit-msg (git hook). Populates commit message from drafts."""
+    message_file = Path(args.message_file).resolve()
+    if not message_file.exists():
+        return 0
+    router = TriggerRouter()
+    router.prepare_commit_msg(message_file)
+    return 0
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -142,10 +152,22 @@ def main() -> int:
         help="Changed files from git diff-tree",
     )
 
+    prepare_parser = subparsers.add_parser(
+        "prepare-commit-msg",
+        help="Git prepare-commit-msg hook (populate message from drafts)",
+    )
+    prepare_parser.add_argument(
+        "message_file",
+        metavar="FILE",
+        help="Path to commit message file (from git)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "on-commit":
         return _cmd_on_commit(args)
+    if args.command == "prepare-commit-msg":
+        return _cmd_prepare_commit_msg(args)
     if args.command == "config":
         return _cmd_config(args)
     parser.print_help()

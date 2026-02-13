@@ -1,16 +1,15 @@
 # _cmd_config
 
-Handles the scout config subcommand, responsible for conditional configuration and exception handling. It interacts with `vivarium/scout/config.py` to manage scout configurations and returns an integer value. The function also calls `vivarium/scout/router.py` and `vivarium/scout/tui.py` for routing and terminal user interface purposes.
+This function appears to be a command-line interface (CLI) configuration handler. It interacts with the Vivarium Scout configuration system, validating and setting configuration values, and potentially running a TUI (Text User Interface) based on the configuration. It also handles project and user configuration paths.
 ---
 
 # _cmd_on_commit
 
-Handles the on-commit Git hook for Scout, a component of Vivarium. It is responsible for conditional actions based on the provided arguments. The function interacts with `vivarium/scout/config.py` for configuration, `vivarium/scout/router.py` for routing, and `vivarium/scout/tui.py` for user interface.
+This function reads input from the standard input, strips and splits it into lines, and then calls the `router.on_git_commit` function with the result. It also checks if the standard input is a terminal and reads from it if so. The function appears to be part of a system that handles Git commits and uses a router to trigger actions.
+
+It uses the `argparse.Namespace` type and an `int` type, and imports modules from `vivarium/scout/config.py`, `vivarium/scout/router.py`, and `vivarium/scout/tui.py`.
 ---
 
 # main
 
-**Main Function Summary**
-==========================
-
-The `main` function serves as the primary entry point, responsible for executing the program's main logic. It appears to conditionally execute certain actions, returning an integer value upon completion. The function interacts with external dependencies, including configuration settings from `vivarium/scout/config.py`, routing logic from `vivarium/scout/router.py`, and text-based user interface functionality from `vivarium/scout/tui.py`.
+This function is part of the main file and appears to handle command-line arguments for a scout system. It uses the argparse library to define and parse arguments, with two subparsers for configuration and on-commit actions.
