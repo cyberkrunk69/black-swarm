@@ -1,0 +1,80 @@
+{
+  "gpt-oss-120bopenai/gpt-oss-120b": {
+    "context_window": 120,
+    "input_price_per_1m": 0.15,
+    "output_price_per_1m": 0.6,
+    "rpm_limit": 1000
+  },
+  "gpt-oss-20bopenai/gpt-oss-20b": {
+    "context_window": 20,
+    "input_price_per_1m": 0.075,
+    "output_price_per_1m": 0.3,
+    "rpm_limit": 1000
+  },
+  "kimi-k2-0905moonshotai/kimi-k2-instruct-0905": {
+    "context_window": 2,
+    "input_price_per_1m": 1.0,
+    "output_price_per_1m": 3.0,
+    "rpm_limit": 1000
+  },
+  "llama-3.1-8b-instant": {
+    "context_window": 3,
+    "input_price_per_1m": 0.05,
+    "output_price_per_1m": 1.0,
+    "rpm_limit": 1000
+  },
+  "llama-3.1-8bllama-3.1-8b-instant": {
+    "context_window": 3,
+    "input_price_per_1m": 0.05,
+    "output_price_per_1m": 0.08,
+    "rpm_limit": 1000
+  },
+  "llama-3.3-70b-versatile": {
+    "context_window": 3,
+    "input_price_per_1m": 0.05,
+    "output_price_per_1m": 1.0,
+    "rpm_limit": 1000
+  },
+  "llama-3.3-70bllama-3.3-70b-versatile": {
+    "context_window": 3,
+    "input_price_per_1m": 0.59,
+    "output_price_per_1m": 0.79,
+    "rpm_limit": 1000
+  },
+  "llama-4-maverick-17b-128emeta-llama/llama-4-maverick-17b-128e-instruct": {
+    "context_window": 4,
+    "input_price_per_1m": 0.2,
+    "output_price_per_1m": 0.6,
+    "rpm_limit": 1000
+  },
+  "llama-4-scout-17b-16emeta-llama/llama-4-scout-17b-16e-instruct": {
+    "context_window": 4,
+    "input_price_per_1m": 0.11,
+    "output_price_per_1m": 0.34,
+    "rpm_limit": 1000
+  },
+  "llama-prompt-guard-2-22mmeta-llama/llama-prompt-guard-2-22m": {
+    "context_window": 2,
+    "input_price_per_1m": 0.03,
+    "output_price_per_1m": 0.03,
+    "rpm_limit": 100
+  },
+  "prompt-guard-2-86mmeta-llama/llama-prompt-guard-2-86m": {
+    "context_window": 2,
+    "input_price_per_1m": 0.04,
+    "output_price_per_1m": 0.04,
+    "rpm_limit": 100
+  },
+  "qwen3-32bqwen/qwen3-32b": {
+    "context_window": 3,
+    "input_price_per_1m": 0.29,
+    "output_price_per_1m": 0.59,
+    "rpm_limit": 1000
+  },
+  "safety-gpt-oss-20bopenai/gpt-oss-safeguard-20b": {
+    "context_window": 20,
+    "input_price_per_1m": 0.075,
+    "output_price_per_1m": 0.3,
+    "rpm_limit": 1000
+  }
+}

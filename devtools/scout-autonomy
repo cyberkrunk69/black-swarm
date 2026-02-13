@@ -1,0 +1,95 @@
+#!/bin/bash
+# devtools/scout-autonomy — Enable autonomous living documentation via git hooks
+# Installs pre-commit and pre-push hooks for doc-sync, validate, and PR drafts.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/_internal/common/utils.sh"
+load_dotenv "$REPO_ROOT"
+
+cd "$REPO_ROOT"
+
+# Require vivarium/ for scout tooling
+if [[ ! -d "$REPO_ROOT/vivarium" ]]; then
+  echo "Error: vivarium/ not found. Scout autonomy requires a Vivarium repo." >&2
+  exit 1
+fi
+
+HOOKS_DIR=".git/hooks"
+PRE_COMMIT="$HOOKS_DIR/pre-commit"
+PRE_PUSH="$HOOKS_DIR/pre-push"
+
+if [[ ! -d "$HOOKS_DIR" ]]; then
+  echo "Error: .git/hooks not found. Run from repo root." >&2
+  exit 1
+fi
+
+enable_hook() {
+  local hook_path="$1"
+  local content="$2"
+  local name="$3"
+
+  if [[ -f "$hook_path" ]] && ! grep -q "scout-autonomy" "$hook_path" 2>/dev/null; then
+    echo "Hook $hook_path already exists (not from scout-autonomy). Overwrite? [y/N]"
+    read -r reply
+    if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+      echo "Skipping $name."
+      return 0
+    fi
+  fi
+
+  if [[ -f "$hook_path" ]] && grep -q "scout-autonomy" "$hook_path" 2>/dev/null; then
+    echo "✓ $name already installed."
+    return 0
+  fi
+
+  echo "$content" > "$hook_path"
+  chmod +x "$hook_path"
+  echo "Installed $name."
+}
+
+# Pre-commit: doc-sync for changed files
+PRE_COMMIT_CONTENT='#!/bin/bash
+# Installed by scout-autonomy enable
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if [[ -d vivarium ]]; then
+  ./devtools/scout-doc-sync generate --target vivarium --recursive --changed-only --staged --budget 0.10 -q || true
+fi
+'
+
+# Pre-push: validate stale + PR draft
+PRE_PUSH_CONTENT='#!/bin/bash
+# Installed by scout-autonomy enable
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if [[ -d vivarium ]]; then
+  ./devtools/scout-doc-sync validate --stale && ./devtools/scout-pr --auto-draft
+fi
+'
+
+case "${1:-}" in
+  enable)
+    enable_hook "$PRE_COMMIT" "$PRE_COMMIT_CONTENT" "pre-commit (doc-sync changed)"
+    enable_hook "$PRE_PUSH" "$PRE_PUSH_CONTENT" "pre-push (validate + PR draft)"
+    echo ""
+    echo "Scout autonomy enabled. Hooks will:"
+    echo "  pre-commit: sync docs for changed files (budget \$0.10)"
+    echo "  pre-push:   validate no stale docs, then write PR draft"
+    ;;
+  disable)
+    for h in "$PRE_COMMIT" "$PRE_PUSH"; do
+      if [[ -f "$h" ]] && grep -q "scout-autonomy" "$h" 2>/dev/null; then
+        rm -f "$h"
+        echo "Removed $h"
+      fi
+    done
+    ;;
+  *)
+    echo "Usage: $0 enable|disable"
+    echo "  enable  - Install pre-commit and pre-push hooks"
+    echo "  disable - Remove scout-autonomy hooks"
+    exit 1
+    ;;
+esac
