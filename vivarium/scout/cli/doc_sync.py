@@ -13,6 +13,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import asyncio
 import sys
 from pathlib import Path

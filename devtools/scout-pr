@@ -1,0 +1,19 @@
+#!/bin/bash
+# devtools/scout-pr — Scout PR description CLI with draft assembly
+# Assembles PR description from docs/drafts/*.pr.md for staged .py files.
+# No LLM calls — reads existing drafts only.
+set -e
+# Load .env if present
+if [ -f "$PWD/.env" ]; then
+  export $(grep -v '^#' "$PWD/.env" | xargs)
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=_internal/common/utils.sh
+source "$SCRIPT_DIR/_internal/common/utils.sh"
+load_dotenv "$REPO_ROOT"
+
+cd "$REPO_ROOT"
+PYTHON=$(find_python "$REPO_ROOT")
+exec "$PYTHON" -m vivarium.scout.cli.root pr "$@"

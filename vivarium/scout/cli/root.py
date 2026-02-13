@@ -10,6 +10,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import subprocess
 import sys
 import tempfile
@@ -28,7 +33,11 @@ from vivarium.scout.git_analyzer import (
     has_remote_origin,
     is_remote_empty,
 )
-from vivarium.scout.git_drafts import assemble_commit_message, assemble_pr_description
+from vivarium.scout.git_drafts import (
+    assemble_commit_message,
+    assemble_pr_description,
+    assemble_pr_description_from_docs,
+)
 
 # File extensions supported for PR drafts (matches git_drafts.assemble_pr_description)
 _DOC_EXTENSIONS = {".py", ".js", ".mjs", ".cjs"}
@@ -165,6 +174,7 @@ def _cmd_pr_auto_draft(
     repo_root: Path,
     py_files: list[Path],
     mode: str,
+    args: argparse.Namespace,
 ) -> int:
     """
     Generate PR description and write to .github/pr-draft.md.
@@ -178,7 +188,9 @@ def _cmd_pr_auto_draft(
     # Build description from drafts or raw summaries
     if py_files:
         raw = assemble_pr_description(repo_root, py_files)
-        description = synthesize_pr_description(raw)
+        description = synthesize_pr_description(
+            raw, fallback_template=getattr(args, "fallback_template", False)
+        )
     else:
         description = "# PR Draft\n\nNo changed files in scope.\n"
 
@@ -250,6 +262,7 @@ def _cmd_pr(args: argparse.Namespace) -> int:
     Handle scout pr subcommand.
 
     File resolution (in order):
+    - --from-docs PATH: ignore Git; read .tldr.md under PATH/.docs/ (no changed files needed)
     - --files / -f: use explicit file list (bypasses Git diff)
     - --base-branch: use git diff --name-only base...HEAD
     - upstream: use git diff --name-only @{upstream}..HEAD (if on branch with upstream)
@@ -259,10 +272,26 @@ def _cmd_pr(args: argparse.Namespace) -> int:
     If --preview: prints to stdout. If --create: runs gh pr create. If --auto-draft: writes .github/pr-draft.md.
     """
     repo_root = Path.cwd().resolve()
+
+    if args.from_docs:
+        raw = assemble_pr_description_from_docs(repo_root, args.from_docs)
+        description = synthesize_pr_description(
+            raw, fallback_template=getattr(args, "fallback_template", False)
+        )
+        # Always print to stdout (even when GROQ_API_KEY missing / LLM fallback)
+        print(description)
+        # Only write to file when --auto-draft is explicitly used
+        if args.auto_draft:
+            out_path = repo_root / ".github" / "pr-draft.md"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(description, encoding="utf-8")
+            print(f"Wrote {out_path}", file=sys.stderr)
+        return 0
+
     py_files, mode = _resolve_pr_files(args, repo_root)
 
     if args.auto_draft:
-        return _cmd_pr_auto_draft(repo_root, py_files, mode)
+        return _cmd_pr_auto_draft(repo_root, py_files, mode, args)
 
     if not py_files:
         print(f"No Python/JS files found in {mode}.", file=sys.stderr)
@@ -273,7 +302,9 @@ def _cmd_pr(args: argparse.Namespace) -> int:
         return 0
 
     raw_description = assemble_pr_description(repo_root, py_files)
-    description = synthesize_pr_description(raw_description)
+    description = synthesize_pr_description(
+        raw_description, fallback_template=getattr(args, "fallback_template", False)
+    )
 
     if args.create:
         if not _find_gh():
@@ -429,7 +460,29 @@ def main() -> int:
     pr_parser.add_argument(
         "--auto-draft",
         action="store_true",
-        help="Generate PR description and write to .github/pr-draft.md (idempotent)",
+        default=False,
+        dest="auto_draft",
+        help="Write PR description to .github/pr-draft.md (idempotent)",
+    )
+    pr_parser.add_argument(
+        "--no-auto-draft",
+        action="store_false",
+        dest="auto_draft",
+        help="Do not write to .github/pr-draft.md; only print to stdout (default)",
+    )
+    pr_parser.add_argument(
+        "--from-docs",
+        dest="from_docs",
+        default=None,
+        metavar="PATH",
+        help="Ignore Git; read all .tldr.md under PATH/.docs/ and synthesize PR description",
+    )
+    pr_parser.add_argument(
+        "--fallback-template",
+        action="store_true",
+        dest="fallback_template",
+        default=False,
+        help="On LLM failure, use raw summaries instead of raising",
     )
 
     subparsers.add_parser("status", help="Workflow dashboard (doc-sync, drafts, spend, accuracy, hooks)")

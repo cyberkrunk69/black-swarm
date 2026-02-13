@@ -76,8 +76,8 @@ async def call_groq_async(
 
     api_key = _get_groq_api_key()
     if not api_key:
-        raise RuntimeError(
-            "GROQ_API_KEY not set. Set it in environment or configure via runtime."
+        raise EnvironmentError(
+            "GROQ_API_KEY missing. Set it in .env or environment."
         )
 
     try:

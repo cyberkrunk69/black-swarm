@@ -858,12 +858,20 @@ async def _generate_docs_for_symbols(
     per_file_semaphore = asyncio.Semaphore(per_file_concurrency)
     running_cost = [0.0]
 
+    # Show symbol-level progress for large files so users know it's not frozen
+    if slot_id is not None and shared_display is not None and slot_id in shared_display:
+        shared_display[slot_id]["symbols_total"] = len(to_generate)
+        shared_display[slot_id]["symbols_done"] = 0
+
     def _on_symbol_done(sym_cost: float) -> None:
         running_cost[0] += sym_cost
         if progress_callback:
             progress_callback(running_cost[0])
         if slot_id is not None and shared_display is not None and slot_id in shared_display:
             shared_display[slot_id]["cost"] = running_cost[0]
+            shared_display[slot_id]["symbols_done"] = (
+                shared_display[slot_id].get("symbols_done", 0) + 1
+            )
 
     async def _wrapped(symbol: SymbolTree) -> Tuple[str, str, str, str, float, str]:
         res = await _generate_single_symbol_docs(
@@ -1330,11 +1338,12 @@ def _gather_package_component_roles(package_dir: Path, repo_root: Path) -> List[
     return lines
 
 
-def _update_module_brief(package_dir: Path, repo_root: Path) -> bool:
+async def _update_module_brief_async(package_dir: Path, repo_root: Path) -> bool:
     """
     Generate module-level brief (__init__.py.module.md) from real component roles + child .tldr.md.
 
     Truth-based cascading: uses traced exports/calls from each file, then synthesizes orchestration.
+    Async: uses await call_groq_async (no asyncio.run nesting).
     """
     config = ScoutConfig()
     drafts = config.get("drafts") or {}
@@ -1394,13 +1403,11 @@ Output a concise Markdown overview with ## headings:
 Use only facts from the traced roles and summaries. No speculation."""
 
     try:
-        response = asyncio.run(
-            call_groq_async(
-                prompt,
-                model=_resolve_doc_model("tldr"),
-                system="You are a documentation assistant. Be concise and accurate.",
-                max_tokens=800,
-            )
+        response = await call_groq_async(
+            prompt,
+            model=_resolve_doc_model("tldr"),
+            system="You are a documentation assistant. Be concise and accurate.",
+            max_tokens=800,
         )
     except Exception as e:
         logger.warning("Module brief LLM failed for %s: %s", package_dir, e)
@@ -1428,6 +1435,17 @@ Use only facts from the traced roles and summaries. No speculation."""
         logger.warning("Could not write module brief for %s: %s", package_dir, e)
         return False
     return True
+
+
+def _update_module_brief(package_dir: Path, repo_root: Path, *, is_async: bool = False):
+    """
+    Sync wrapper for _update_module_brief_async.
+    is_async=False (default): uses asyncio.run for CLI/sync callers.
+    is_async=True: returns coroutine for caller to await (use _update_module_brief_async directly instead).
+    """
+    if is_async:
+        return _update_module_brief_async(package_dir, repo_root)
+    return asyncio.run(_update_module_brief_async(package_dir, repo_root))
 
 
 async def _process_file_with_semaphore(
@@ -1657,10 +1675,15 @@ async def process_directory_async(
                                 line = f"{slot_prefix}{_RED}✗ {file_str}: {err}{_RESET}"
                         sys.stdout.write(line + "\n")
                     else:
+                        sym_done = entry.get("symbols_done", 0)
+                        sym_total = entry.get("symbols_total", 0)
+                        sym_progress = (
+                            f" [{sym_done}/{sym_total}]" if sym_total > 1 else ""
+                        )
                         if chain:
-                            line = f"{slot_prefix}{file_str} ━╸ {chain} | ${cost:.4f}"
+                            line = f"{slot_prefix}{file_str}{sym_progress} ━╸ {chain} | ${cost:.4f}"
                         else:
-                            line = f"{slot_prefix}{file_str} | ${cost:.4f}"
+                            line = f"{slot_prefix}{file_str}{sym_progress} | ${cost:.4f}"
                         sys.stdout.write(line + "\n")
             bar = f"[✓ {display_completed}/{total}] | ${display_total_cost:.4f} spent | Est. total: ${est_total:.2f}"
             sys.stdout.write("\n" + bar)
@@ -1777,7 +1800,9 @@ async def process_directory_async(
             await refresh_task
         except asyncio.CancelledError:
             pass
-        sys.stdout.write(_CLEAR_SCREEN)
+        # Do not clear screen—preserves last dashboard frame so output doesn't "disappear"
+        # when chained with another command (e.g. scout-doc-sync; scout-pr > file)
+        sys.stdout.write("\n")
         sys.stdout.flush()
     elif use_progress:
         sys.stdout.write("\r" + " " * 100 + "\r")
@@ -1787,7 +1812,7 @@ async def process_directory_async(
     if output_dir is None:
         for pkg_dir in sorted(processed_package_dirs):
             try:
-                _update_module_brief(pkg_dir, repo_root)
+                await _update_module_brief_async(pkg_dir, repo_root)
             except Exception as e:
                 logger.warning("Skip module brief for %s: %s", pkg_dir, e)
 
@@ -1846,18 +1871,15 @@ def process_directory(
     )
 
 
-def synthesize_pr_description(raw_summaries: str) -> str:
+async def _synthesize_pr_description_async(
+    raw_summaries: str,
+    *,
+    fallback_template: bool = False,
+) -> str:
     """
-    Synthesize a unified PR description from raw file/module summaries via LLM.
-
-    Uses the same model as doc generation (TLDR_MODEL). Logs to audit.jsonl as
-    "pr_synthesis". Falls back to raw concatenation if LLM fails (graceful degradation).
-
-    Args:
-        raw_summaries: Concatenated technical summaries from assemble_pr_description.
-
-    Returns:
-        Cohesive narrative PR description, or raw_summaries on LLM failure.
+    Async implementation: uses await call_groq_async (no asyncio.run nesting).
+    When fallback_template=False (default), raises on LLM failure.
+    When fallback_template=True, returns raw_summaries on LLM failure.
     """
     prompt = f"""You are a senior staff engineer writing a PR description for a code review.
 Summarize the following technical summaries into a single, cohesive narrative that explains:
@@ -1872,17 +1894,17 @@ Technical summaries:
 {raw_summaries}"""
 
     try:
-        response = asyncio.run(
-            call_groq_async(
-                prompt,
-                model=_resolve_doc_model("pr_synthesis") or _resolve_doc_model("tldr"),
-                system="You are a senior staff engineer. Write concise, professional PR descriptions.",
-                max_tokens=1200,
-            )
+        response = await call_groq_async(
+            prompt,
+            model=_resolve_doc_model("pr_synthesis") or _resolve_doc_model("tldr"),
+            system="You are a senior staff engineer. Write concise, professional PR descriptions.",
+            max_tokens=1200,
         )
     except Exception as e:
-        logger.warning("PR synthesis LLM failed, falling back to raw: %s", e)
-        return raw_summaries
+        if fallback_template:
+            logger.warning("PR synthesis LLM failed, falling back to raw: %s", e)
+            return raw_summaries
+        raise
 
     audit = AuditLog()
     audit.log(
@@ -1895,6 +1917,35 @@ Technical summaries:
 
     content = response.content.strip()
     return content if content else raw_summaries
+
+
+def synthesize_pr_description(
+    raw_summaries: str,
+    *,
+    is_async: bool = False,
+    fallback_template: bool = False,
+):
+    """
+    Synthesize a unified PR description from raw file/module summaries via LLM.
+
+    Uses the same model as doc generation (TLDR_MODEL). Logs to audit.jsonl as
+    "pr_synthesis". Raises on LLM failure unless fallback_template=True.
+
+    Args:
+        raw_summaries: Concatenated technical summaries from assemble_pr_description.
+        is_async: If True, returns coroutine for caller to await (avoids asyncio.run nesting).
+                  If False (default), uses asyncio.run for CLI/sync callers.
+        fallback_template: If True, returns raw_summaries on LLM failure. If False (default), raises.
+
+    Returns:
+        Cohesive narrative PR description.
+        When is_async=True, returns Awaitable[str] for caller to await.
+    """
+    if is_async:
+        return _synthesize_pr_description_async(raw_summaries, fallback_template=fallback_template)
+    return asyncio.run(
+        _synthesize_pr_description_async(raw_summaries, fallback_template=fallback_template)
+    )
 
 
 # Backward compatibility: parse_python_file delegates to PythonAdapter

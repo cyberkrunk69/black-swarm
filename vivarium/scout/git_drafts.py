@@ -7,6 +7,7 @@ No LLM calls. Agnostic: no IDE, no network, no state.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -162,6 +163,118 @@ def assemble_pr_description(repo_root: Path, staged_files: List[Path]) -> str:
             sections.append("\n".join(block))
 
     return "\n\n---\n\n".join(sections)
+
+
+def _call_graph_summary_for_scope(
+    repo_root: Path,
+    scope_prefix: str,
+    call_graph_path: Path,
+) -> str:
+    """
+    Extract a brief call-graph summary for modules under scope_prefix.
+    Returns markdown listing caller -> callee edges within the scope.
+    """
+    if not call_graph_path.exists():
+        return ""
+    try:
+        data = json.loads(call_graph_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    edges = data.get("edges", [])
+    # Normalize scope: ensure trailing slash for prefix match
+    scope = scope_prefix.strip("/")
+    if scope and not scope.endswith("/"):
+        scope = scope + "/"
+    if not scope:
+        scope = ""
+
+    # Collect edges where both from and to are in scope (or to external)
+    lines: List[str] = []
+    seen: set[tuple[str, str]] = set()
+    for e in edges:
+        fr = e.get("from", "")
+        to = e.get("to", "")
+        if "::" not in fr or "::" not in to:
+            continue
+        file_from = fr.split("::", 1)[0]
+        file_to = to.split("::", 1)[0]
+        # Include if caller is in scope
+        in_scope = not scope or file_from.startswith(scope) or file_from == scope.rstrip("/")
+        if not in_scope:
+            continue
+        key = (file_from, file_to)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"- {file_from} → {file_to}")
+    if not lines:
+        return ""
+    return "## Call graph (scope)\n\n" + "\n".join(sorted(lines)[:50])
+
+
+def assemble_pr_description_from_docs(
+    repo_root: Path,
+    target_path: str,
+    *,
+    include_call_graph: bool = True,
+) -> str:
+    """
+    Assemble a PR description from all .tldr.md files under target_path/.docs/.
+
+    Ignores Git entirely. Uses tldr content + optional call graph summary.
+    Works even when no files are "changed" — ideal for documenting a whole package.
+
+    Args:
+        repo_root: Repository root path.
+        target_path: Path to package/module (e.g. vivarium/scout). .docs/ is
+            resolved as (repo_root / target_path) / ".docs".
+        include_call_graph: If True, appends call graph summary when available.
+
+    Returns:
+        Raw markdown suitable for synthesize_pr_description.
+    """
+    root = Path(repo_root).resolve()
+    target = Path(target_path).resolve()
+    if not target.is_absolute():
+        target = (root / target_path).resolve()
+    docs_dir = target / ".docs"
+    if not docs_dir.exists() or not docs_dir.is_dir():
+        return f"No .docs directory found at {docs_dir}."
+
+    tldr_files = sorted(docs_dir.glob("*.tldr.md"))
+    if not tldr_files:
+        return f"No .tldr.md files found under {docs_dir}."
+
+    try:
+        scope_rel = str(target.relative_to(root))
+    except ValueError:
+        scope_rel = target_path
+
+    sections: List[str] = []
+    for tldr_path in tldr_files:
+        stem = tldr_path.stem.removesuffix(".tldr")  # e.g. doc_generation.py from doc_generation.py.tldr
+        try:
+            content = tldr_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            content = "(unable to read)"
+        module_path = f"{scope_rel}/{stem}" if scope_rel else stem
+        sections.append(f"## {module_path}\n\n{content}")
+
+    raw = "\n\n---\n\n".join(sections)
+
+    if include_call_graph:
+        # Prefer call graph at vivarium/.docs; fallback to target/.docs
+        for cg_candidate in [
+            root / "vivarium" / ".docs" / "call_graph.json",
+            docs_dir / "call_graph.json",
+        ]:
+            if cg_candidate.exists():
+                summary = _call_graph_summary_for_scope(root, scope_rel, cg_candidate)
+                if summary:
+                    raw += "\n\n---\n\n" + summary
+                break
+
+    return raw
 
 
 def assemble_commit_message(repo_root: Path, staged_files: List[Path]) -> str:
