@@ -10,15 +10,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
+import asyncio
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from vivarium.scout.config import EnvLoader
+
+# TICKET-17: Auto-load .env for commit/pr/ship (no manual source required)
+EnvLoader.load(Path.cwd() / ".env")
 
 from vivarium.scout.doc_generation import (
     find_stale_files,
@@ -113,6 +115,168 @@ def _resolve_pr_files(
     staged = get_changed_files(staged_only=True, repo_root=repo_root)
     files = [f for f in staged if f.suffix in _DOC_EXTENSIONS]
     return files, "staged files"
+
+
+def _cmd_ship_dry_run_full(
+    repo_root: Path, py_files: list, budget: float, create_pr: bool
+) -> int:
+    """
+    TICKET-33: Run full pipeline (doc-sync, drafts, PR) except commit/push.
+    Used for validation — gate whimsy, outcome hype, [GAP] markers.
+    """
+    # 1. Doc-sync
+    result = subprocess.run(
+        [sys.executable, "-m", "vivarium.scout.cli.doc_sync", "generate",
+         "--target", "vivarium", "--recursive", "--changed-only", "--staged",
+         "--budget", str(budget), "-q"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 and result.stderr:
+        print(result.stderr, file=sys.stderr)
+
+    # 2. Generate drafts (prepare_commit_msg — now uses gate for PR snippets)
+    from vivarium.scout.router import TriggerRouter
+
+    router = TriggerRouter()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        msg_path = Path(f.name)
+    try:
+        router.prepare_commit_msg(msg_path)
+        message = msg_path.read_text(encoding="utf-8").strip()
+    finally:
+        msg_path.unlink(missing_ok=True)
+
+    # 3. PR draft (writes .github/pr-draft.md)
+    pr_args = [sys.executable, "-m", "vivarium.scout.cli.root", "pr", "--auto-draft"]
+    if create_pr:
+        pr_args.append("--create")
+    result = subprocess.run(pr_args, cwd=repo_root)
+
+    # 4. Outcome hype when SCOUT_WHIMSY=1
+    if result.returncode == 0 and os.environ.get("SCOUT_WHIMSY", "0") == "1":
+        try:
+            from vivarium.scout.ui.hype import generate_outcome_hype
+
+            hype = asyncio.run(
+                generate_outcome_hype(
+                    action="ship",
+                    files_changed=len(py_files),
+                    tokens_written=len(message) if message else 0,
+                    primary_file=str(py_files[0].relative_to(repo_root)) if py_files else "",
+                )
+            )
+            print(hype, file=sys.stderr)
+        except Exception:
+            pass
+
+    print("✅ Dry-run-full complete — would commit/push next", file=sys.stderr)
+    return result.returncode if result.returncode else 0
+
+
+def _cmd_ship(args: argparse.Namespace) -> int:
+    """
+    Autonomous ship: doc-sync → generate commit drafts → commit → push → PR draft.
+
+    Requires staged files. Use `git add` first, or run with no args after staging.
+    """
+    repo_root = Path.cwd().resolve()
+    dry = getattr(args, "dry_run", False)
+    dry_full = getattr(args, "dry_run_full", False)
+    no_push = getattr(args, "no_push", False)
+    create_pr = getattr(args, "create", False)
+    budget = getattr(args, "budget", 0.15)
+
+    # 1. Check staged files
+    staged = get_changed_files(staged_only=True, repo_root=repo_root)
+    py_files = [f for f in staged if f.suffix in _DOC_EXTENSIONS]
+    if not py_files:
+        print("No staged .py/.js files. Run: git add <files>", file=sys.stderr)
+        return 1
+
+    steps = [
+        ("doc-sync", f"scout-doc-sync generate -t vivarium -r --changed-only --staged --budget {budget}"),
+        ("drafts", "router.prepare_commit_msg (generate commit + PR drafts)"),
+        ("commit", "git commit -F <message>"),
+        ("push", "git push" if not no_push else "(skipped --no-push)"),
+        ("pr", "scout-pr --auto-draft" + (" --create" if create_pr else "")),
+    ]
+    if dry and not dry_full:
+        print("Dry run. Would execute:")
+        for name, cmd in steps:
+            print(f"  {name}: {cmd}")
+        return 0
+
+    # TICKET-33: --dry-run-full runs full pipeline except commit/push
+    if dry_full:
+        return _cmd_ship_dry_run_full(repo_root, py_files, budget, create_pr)
+
+    # 2. Doc-sync
+    result = subprocess.run(
+        [sys.executable, "-m", "vivarium.scout.cli.doc_sync", "generate",
+         "--target", "vivarium", "--recursive", "--changed-only", "--staged",
+         "--budget", str(budget), "-q"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 and result.stderr:
+        print(result.stderr, file=sys.stderr)
+
+    # 3. Generate drafts + commit
+    from vivarium.scout.router import TriggerRouter
+
+    router = TriggerRouter()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        msg_path = Path(f.name)
+    try:
+        router.prepare_commit_msg(msg_path)
+        message = msg_path.read_text(encoding="utf-8").strip()
+        if not message or "No staged" in message or len(message) < 10:
+            print(
+                "No commit message generated (or too short). "
+                "Check docs/drafts/*.commit.txt. Run scout-autonomy enable for prepare-commit-msg hook.",
+                file=sys.stderr,
+            )
+            return 1
+        result = subprocess.run(["git", "commit", "-F", str(msg_path)], cwd=repo_root)
+        if result.returncode != 0:
+            return result.returncode
+    finally:
+        msg_path.unlink(missing_ok=True)
+
+    # 4. Push
+    if not no_push:
+        result = subprocess.run(["git", "push"], cwd=repo_root)
+        if result.returncode != 0:
+            print("Push failed.", file=sys.stderr)
+            return result.returncode
+
+    # 5. PR draft or create
+    pr_args = [sys.executable, "-m", "vivarium.scout.cli.root", "pr", "--auto-draft"]
+    if create_pr:
+        pr_args.append("--create")
+    result = subprocess.run(pr_args, cwd=repo_root)
+
+    # TICKET-28/29: Outcome hype when SCOUT_WHIMSY=1
+    if result.returncode == 0 and os.environ.get("SCOUT_WHIMSY", "0") == "1":
+        try:
+            from vivarium.scout.ui.hype import generate_outcome_hype
+
+            hype = asyncio.run(
+                generate_outcome_hype(
+                    action="ship",
+                    files_changed=len(py_files),
+                    tokens_written=len(message) if message else 0,
+                    primary_file=str(py_files[0].relative_to(repo_root)) if py_files else "",
+                )
+            )
+            print(hype, file=sys.stderr)
+        except Exception:
+            pass
+
+    return result.returncode if result.returncode else 0
 
 
 def _cmd_commit(args: argparse.Namespace) -> int:
@@ -487,8 +651,42 @@ def main() -> int:
 
     subparsers.add_parser("status", help="Workflow dashboard (doc-sync, drafts, spend, accuracy, hooks)")
 
+    ship_parser = subparsers.add_parser(
+        "ship",
+        help="Autonomous ship: doc-sync → commit drafts → commit → push → PR draft",
+    )
+    ship_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview steps without executing",
+    )
+    ship_parser.add_argument(
+        "--dry-run-full",
+        action="store_true",
+        help="Run full pipeline (doc-sync, drafts, PR) except commit/push — for validation",
+    )
+    ship_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Commit but do not push",
+    )
+    ship_parser.add_argument(
+        "--create",
+        action="store_true",
+        help="Create PR via gh pr create (default: --auto-draft only)",
+    )
+    ship_parser.add_argument(
+        "--budget",
+        type=float,
+        default=0.15,
+        metavar="USD",
+        help="Doc-sync budget in USD (default: 0.15)",
+    )
+
     args = parser.parse_args()
 
+    if args.command == "ship":
+        return _cmd_ship(args)
     if args.command == "commit":
         return _cmd_commit(args)
     if args.command == "pr":

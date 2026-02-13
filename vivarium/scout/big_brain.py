@@ -171,6 +171,15 @@ async def interpret_query_async(natural_language: str) -> dict[str, Any]:
     if not _get_gemini_api_key():
         return _heuristic_query_spec(natural_language)
 
+    try:
+        return await _interpret_query_via_big_brain(natural_language)
+    except (ImportError, RuntimeError) as e:
+        logger.warning("Big brain unavailable, using heuristics: %s", e)
+        return _heuristic_query_spec(natural_language)
+
+
+async def _interpret_query_via_big_brain(natural_language: str) -> dict[str, Any]:
+    """Call big brain to interpret query. Raises on failure."""
     prompt = f"""Interpret this natural language request into a structured scout query.
 
 User request: "{natural_language}"

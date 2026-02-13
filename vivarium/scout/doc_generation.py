@@ -1909,12 +1909,20 @@ Technical summaries:
     use_big_brain = bool(os.environ.get("GEMINI_API_KEY"))
     try:
         if use_big_brain:
-            response = await call_big_brain_async(
-                prompt,
-                system=system,
-                max_tokens=1200,
-                task_type="pr_synthesis",
-            )
+            try:
+                response = await call_big_brain_async(
+                    prompt,
+                    system=system,
+                    max_tokens=1200,
+                    task_type="pr_synthesis",
+                )
+            except (ImportError, RuntimeError):
+                response = await call_groq_async(
+                    prompt,
+                    model=_resolve_doc_model("pr_synthesis") or _resolve_doc_model("tldr"),
+                    system=system,
+                    max_tokens=1200,
+                )
         else:
             response = await call_groq_async(
                 prompt,
@@ -1928,7 +1936,8 @@ Technical summaries:
             return raw_summaries
         raise
 
-    if not use_big_brain:
+    used_big_brain = "gemini" in getattr(response, "model", "").lower()
+    if not used_big_brain:
         audit = AuditLog()
         audit.log(
             "pr_synthesis",

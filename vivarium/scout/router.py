@@ -59,6 +59,18 @@ def _notify_user(message: str) -> None:
     logging.getLogger(__name__).info("Scout: %s", message)
 
 
+def on_git_commit(changed_files: List[Path], repo_root: Optional[Path] = None) -> None:
+    """
+    Proactive echo: invalidate dependency graph for changed files.
+    Called by post-commit hook — runs in <100ms, no LLM cost.
+    """
+    from vivarium.scout.deps import DependencyGraph
+
+    root = Path(repo_root or Path.cwd()).resolve()
+    graph = DependencyGraph(root)
+    graph.invalidate_cascade(changed_files)
+
+
 class TriggerRouter:
     """
     Orchestrates triggers, respects limits, prevents infinite loops,
@@ -748,14 +760,18 @@ Diff:
 Current documentation for changed symbols:
 {symbol_docs or "(none)"}
 """
+            response = None
             if os.environ.get("GEMINI_API_KEY"):
-                response = await call_big_brain_async(
-                    prompt,
-                    system="You are a documentation assistant. Output only the commit message, no preamble.",
-                    max_tokens=256,
-                    task_type="commit_draft",
-                )
-            else:
+                try:
+                    response = await call_big_brain_async(
+                        prompt,
+                        system="You are a documentation assistant. Output only the commit message, no preamble.",
+                        max_tokens=256,
+                        task_type="commit_draft",
+                    )
+                except Exception as bb_err:
+                    logger.debug("Big brain failed for commit draft, falling back to Groq: %s", bb_err)
+            if response is None:
                 response = await call_groq_async(
                     prompt,
                     model="llama-3.1-8b-instant",
@@ -793,17 +809,62 @@ Current documentation for changed symbols:
             self.audit.flush()
 
     async def _generate_pr_snippet(self, file: Path, session_id: str) -> None:
-        """Generate PR description snippet for the changed file."""
+        """Generate PR description snippet for the changed file.
+
+        TICKET-33: Uses gated path (call_big_brain_gated_async) for safety + whimsy.
+        Falls back to legacy path if gate fails.
+        """
         import os
+        import sys
         from vivarium.scout.git_analyzer import get_diff_for_file
-        from vivarium.scout.big_brain import call_big_brain_async
+        from vivarium.scout.big_brain import call_big_brain_async, call_big_brain_gated_async
         from vivarium.scout.llm import call_groq_async
 
         diff = get_diff_for_file(file, staged_only=True, repo_root=self.repo_root)
         if not diff.strip():
             return
         symbol_docs = self._load_symbol_docs(file)
-        prompt = f"""You are an expert software engineer. Write a brief PR description snippet (2-4 sentences) for these changes:
+        question = "Write a brief PR description snippet (2-4 sentences) for these changes. Include [GAP] markers for any uncertainties. Output only the snippet, no preamble."
+        raw_tldr_context = f"""File: {file}
+Diff:
+{diff}
+
+Current documentation for changed symbols:
+{symbol_docs or "(none)"}"""
+
+        response = None
+        if os.environ.get("GEMINI_API_KEY"):
+            try:
+                on_decision_async = None
+                try:
+                    from vivarium.scout.config import ScoutConfig
+                    from vivarium.scout.middle_manager import GateDecision
+                    from vivarium.scout.ui.whimsy import (
+                        generate_gate_whimsy,
+                        decision_to_whimsy_params,
+                    )
+                    if ScoutConfig().whimsy_mode:
+                        async def _print_whimsy_8b(d: GateDecision) -> None:
+                            cost = 0.05 if d.decision == "pass" else 0.50
+                            params = decision_to_whimsy_params(d, cost)
+                            line = await generate_gate_whimsy(**params)
+                            print(line, file=sys.stderr)
+                        on_decision_async = _print_whimsy_8b
+                except ImportError:
+                    pass
+
+                response = await call_big_brain_gated_async(
+                    question=question,
+                    raw_tldr_context=raw_tldr_context,
+                    task_type="pr_snippet",
+                    on_decision_async=on_decision_async,
+                )
+            except Exception as e:
+                logger.debug("Gate failed for PR snippet, falling back to legacy: %s", e)
+                response = None
+
+        if response is None:
+            prompt = f"""You are an expert software engineer. Write a brief PR description snippet (2-4 sentences) for these changes:
 
 File: {file}
 Diff:
@@ -813,20 +874,20 @@ Current documentation for changed symbols:
 {symbol_docs or "(none)"}
 
 Output only the snippet, no preamble."""
-        if os.environ.get("GEMINI_API_KEY"):
-            response = await call_big_brain_async(
-                prompt,
-                system="You are a documentation assistant. Be concise and accurate.",
-                max_tokens=256,
-                task_type="pr_snippet",
-            )
-        else:
-            response = await call_groq_async(
-                prompt,
-                model="llama-3.1-8b-instant",
-                system="You are a documentation assistant. Be concise and accurate.",
-                max_tokens=256,
-            )
+            if os.environ.get("GEMINI_API_KEY"):
+                response = await call_big_brain_async(
+                    prompt,
+                    system="You are a documentation assistant. Be concise and accurate.",
+                    max_tokens=256,
+                    task_type="pr_snippet",
+                )
+            else:
+                response = await call_groq_async(
+                    prompt,
+                    model="llama-3.1-8b-instant",
+                    system="You are a documentation assistant. Be concise and accurate.",
+                    max_tokens=256,
+                )
         draft_dir = self.repo_root / "docs" / "drafts"
         draft_dir.mkdir(parents=True, exist_ok=True)
         try:
