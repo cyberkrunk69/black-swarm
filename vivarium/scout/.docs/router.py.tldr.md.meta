@@ -1,7 +1,7 @@
 {
   "source_hash": "51a20026bc0ef148ba106c3b10d24d3fff38bf0a1f67f6f30b1adacefb984064",
-  "generated_at": "2026-02-13T01:42:34.315621+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.496112+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "logger": {
       "tldr": "The logger constant is not explicitly mentioned in the provided information. However, based on the imports and the context, it can be inferred that the logger constant is likely related to logging functionality. \n\nTL;DR: The logger constant is not explicitly mentioned, but it is likely related to logging functionality based on the imports from vivarium/scout/*.",

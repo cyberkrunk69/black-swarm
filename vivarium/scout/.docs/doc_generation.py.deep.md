@@ -1150,37 +1150,37 @@ The function returns a tuple containing four values:
 ## Logic Overview
 The `_generate_docs_for_symbols` function is an asynchronous function that generates documentation for symbols in a given target path. The main steps of the function are:
 1. **Initialization**: It initializes variables such as `symbols_to_doc`, `adapter`, `dependencies`, `meta_path`, and `meta`.
-2. **Partitioning**: It partitions the symbols into two categories: `to_reuse` and `to_generate`. The `to_reuse` category contains symbols that have not changed since the last generation, and the `to_generate` category contains symbols that have changed.
+2. **Partitioning**: It partitions the symbols into two categories: `to_reuse` and `to_generate`. The `to_reuse` category contains symbols that have not changed since the last generation, and the `to_generate` category contains symbols that need to be generated.
 3. **Generation**: It generates documentation for the symbols in the `to_generate` category using the `_generate_single_symbol_docs` function.
 4. **Merging**: It merges the generated documentation with the cached documentation in the `to_reuse` category.
-5. **Return**: It returns the aggregated documentation, total cost, model used, and symbols for meta.
+5. **Returning**: It returns the aggregated documentation, total cost, model used, and symbols for meta.
 
 ## Dependency Interactions
-The function uses the following traced calls:
-* `_compute_symbol_hash`: to compute the hash of a symbol
-* `_generate_single_symbol_docs`: to generate documentation for a single symbol
-* `_get_tldr_meta_path`: to get the path to the meta file
-* `_merge_symbol_content`: to merge the generated and cached documentation
-* `_on_symbol_done`: to update the running cost and progress callback
-* `_read_freshness_meta`: to read the meta file
-* `_resolve_doc_model`: to resolve the documentation model
-* `asyncio.Semaphore`: to limit the concurrency of the generation process
-* `asyncio.create_task`: to create tasks for generating documentation
-* `asyncio.gather`: to gather the results of the tasks
-* `extract_source_snippet`: to extract the source snippet of a symbol
-* `logger.debug`: to log debug messages
-* `meta_symbols.get`: to get the meta data of a symbol
-* `prev.get`: to get the previous data of a symbol
-* `progress_callback`: to update the progress callback
-* `to_generate.append`: to add a symbol to the `to_generate` category
-* `to_reuse.items`: to get the items in the `to_reuse` category
-* `zip`: to iterate over two lists in parallel
+The function interacts with the following traced calls:
+* `_compute_symbol_hash`: It is used to compute the hash of a symbol.
+* `_generate_single_symbol_docs`: It is used to generate documentation for a single symbol.
+* `_get_tldr_meta_path`: It is used to get the meta path for the target path.
+* `_merge_symbol_content`: It is used to merge the generated documentation with the cached documentation.
+* `_on_symbol_done`: It is used to update the running cost and progress callback after generating documentation for a symbol.
+* `_read_freshness_meta`: It is used to read the freshness meta data from the meta path.
+* `_resolve_doc_model`: It is used to resolve the documentation model.
+* `asyncio.Semaphore`: It is used to limit the concurrency of generating documentation for symbols.
+* `asyncio.create_task`: It is used to create tasks for generating documentation for symbols.
+* `asyncio.gather`: It is used to gather the results of the tasks.
+* `extract_source_snippet`: It is used to extract the source snippet for a symbol.
+* `logger.debug`: It is used to log debug messages.
+* `meta_symbols.get`: It is used to get the meta data for a symbol.
+* `prev.get`: It is used to get the previous meta data for a symbol.
+* `progress_callback`: It is used to update the progress callback.
+* `to_generate.append`: It is used to add a symbol to the `to_generate` category.
+* `to_reuse.items`: It is used to iterate over the `to_reuse` category.
+* `zip`: It is used to iterate over two lists in parallel.
 
 ## Potential Considerations
 The function has the following potential considerations:
-* **Error handling**: The function does not have explicit error handling for the generation process. If an error occurs during generation, it may not be properly handled.
-* **Performance**: The function uses a semaphore to limit the concurrency of the generation process. This may impact the performance of the function if the concurrency limit is too low.
-* **Edge cases**: The function assumes that the `symbols_to_doc` list is not empty. If it is empty, the function may not behave as expected.
+* **Error Handling**: The function does not have explicit error handling for the traced calls. It assumes that the calls will succeed.
+* **Performance**: The function uses concurrency to generate documentation for symbols. However, it limits the concurrency using a semaphore to prevent overwhelming the system.
+* **Edge Cases**: The function handles edge cases such as empty `to_reuse` and `to_generate` categories. However, it does not handle cases where the `meta` data is corrupted or missing.
 
 ## Signature
 The function signature is:
@@ -1199,23 +1199,23 @@ async def _generate_docs_for_symbols(
 ) -> Tuple[str, str, str, float, str, Dict[str, Dict[str, str]]]
 ```
 The function takes the following parameters:
-* `target_path`: the path to the target file
-* `trace`: the trace result
-* `output_dir`: the output directory (optional)
-* `generate_eliv`: whether to generate ELIV documentation (default: True)
-* `per_file_concurrency`: the concurrency limit per file (default: 3)
-* `slot_id`: the slot ID (optional)
-* `shared_display`: the shared display dictionary (optional)
-* `progress_callback`: the progress callback function (optional)
-* `fallback_template`: whether to use the fallback template (default: False)
+* `target_path`: The path to the target file.
+* `trace`: The trace result.
+* `output_dir`: The output directory (optional).
+* `generate_eliv`: A flag to generate ELIV documentation (default: True).
+* `per_file_concurrency`: The concurrency limit per file (default: 3).
+* `slot_id`: The slot ID (optional).
+* `shared_display`: The shared display dictionary (optional).
+* `progress_callback`: The progress callback function (optional).
+* `fallback_template`: A flag to use the fallback template (default: False).
 
 The function returns a tuple containing:
-* `tldr_agg`: the aggregated TLDR documentation
-* `deep_agg`: the aggregated deep documentation
-* `eliv_agg`: the aggregated ELIV documentation
-* `total_cost`: the total cost of the generation process
-* `model_used`: the documentation model used
-* `symbols_for_meta`: the symbols for meta data
+* `tldr_agg`: The aggregated TLDR documentation.
+* `deep_agg`: The aggregated deep documentation.
+* `eliv_agg`: The aggregated ELIV documentation.
+* `total_cost`: The total cost.
+* `model_used`: The model used.
+* `symbols_for_meta`: The symbols for meta data.
 ---
 
 # _rel_path_for_display
@@ -1664,44 +1664,73 @@ The function takes two parameters:
 The function returns a `List[str]` containing formatted strings with information about the exports and top-level calls in each Python file.
 ---
 
+# _update_module_brief_async
+
+## Logic Overview
+The `_update_module_brief_async` function generates a module-level brief (`__init__.py.module.md`) from real component roles and child `.tldr.md` files. The main steps are:
+1. Check if module briefs are enabled in the configuration.
+2. Gather package component roles using `_gather_package_component_roles`.
+3. Read and combine child `.tldr.md` files.
+4. Create a prompt for the LLM (Large Language Model) to synthesize a package overview.
+5. Call the LLM using `call_groq_async` and log the response.
+6. Write the generated module brief to local and central directories.
+
+## Dependency Interactions
+The function interacts with the following dependencies:
+* `vivarium.scout.config.ScoutConfig`: used to get the configuration, specifically the `drafts` setting.
+* `vivarium.scout.ignore.IgnorePatterns`: used to check if the package directory should be ignored.
+* `vivarium.scout.llm.call_groq_async`: used to call the LLM and generate the module brief.
+* `vivarium.scout.audit.AuditLog`: used to log the response from the LLM.
+* `_gather_package_component_roles`: used to gather package component roles.
+* `_resolve_doc_model`: used to resolve the document model for the LLM.
+
+## Potential Considerations
+The function handles the following edge cases and potential considerations:
+* Checks if the `__init__.py` file exists in the package directory.
+* Handles exceptions when reading child `.tldr.md` files.
+* Truncates the combined child summaries if they exceed 8000 characters.
+* Handles exceptions when calling the LLM and writing the module brief to disk.
+* Logs warnings and errors using `logger.warning`.
+* Uses `try`-`except` blocks to handle potential errors and exceptions.
+
+## Signature
+The function signature is:
+```python
+async def _update_module_brief_async(package_dir: Path, repo_root: Path) -> bool
+```
+This indicates that the function:
+* Is an asynchronous function (`async def`).
+* Takes two parameters: `package_dir` and `repo_root`, both of type `Path`.
+* Returns a boolean value indicating whether the module brief was successfully generated and written to disk.
+---
+
 # _update_module_brief
 
-## Logic Overview — Flow and main steps from the code.
-The `_update_module_brief` function generates a module-level brief (`__init__.py.module.md`) from real component roles and child `.tldr.md` files. The main steps are:
-1. Check if module briefs are enabled in the configuration.
-2. Verify the existence of the `__init__.py` file in the package directory.
-3. Gather component roles using the `_gather_package_component_roles` function.
-4. Collect and combine `.tldr.md` files from the `.docs` directory.
-5. Create a prompt for the LLM (Large Language Model) to synthesize a package overview.
-6. Run the LLM using `asyncio.run` and `call_groq_async`.
-7. Log the LLM response and write the generated module brief to local and central directories.
+## Logic Overview
+The `_update_module_brief` function serves as a wrapper for the `_update_module_brief_async` function, providing a synchronous interface. The main steps are:
+1. Check the value of the `is_async` parameter.
+2. If `is_async` is `True`, return the result of calling `_update_module_brief_async` directly.
+3. If `is_async` is `False` (default), use `asyncio.run` to execute `_update_module_brief_async` and return the result.
 
-## Dependency Interactions — How it uses the traced calls (reference qualified names).
-The function interacts with various dependencies through the following traced calls:
-* `vivarium.scout.config.ScoutConfig`: Retrieves configuration settings, including drafts and module briefs.
-* `vivarium.scout.ignore.IgnorePatterns`: Checks if the package directory should be ignored.
-* `vivarium.scout.audit.AuditLog`: Logs the LLM response and cost.
-* `vivarium.scout.llm.call_groq_async`: Runs the LLM to synthesize a package overview.
-* `vivarium.scout.adapters.base._gather_package_component_roles`: Gathers component roles from the package directory.
-* `vivarium.scout.adapters.base._resolve_doc_model`: Resolves the document model for the LLM.
-* `asyncio.run`: Runs the LLM asynchronously.
-* `logger.info` and `logger.warning`: Logs information and warnings.
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `_update_module_brief_async`: This is the core asynchronous function that performs the actual update operation. It is called directly when `is_async` is `True` or wrapped with `asyncio.run` when `is_async` is `False`.
+- `asyncio.run`: This function is used to run the `_update_module_brief_async` coroutine when `is_async` is `False`, allowing the function to be used in a synchronous context.
 
-## Potential Considerations — Edge cases, error handling, performance from the code.
-The function handles several edge cases and errors:
-* Checks if module briefs are enabled in the configuration and returns `False` if not.
-* Verifies the existence of the `__init__.py` file and returns `False` if it does not exist.
-* Catches `ValueError` exceptions when trying to get the relative path of the package directory.
-* Catches `OSError` exceptions when reading or writing files.
-* Handles LLM failures by logging a warning and returning `False`.
-* Truncates the combined `.tldr.md` content to 8000 characters to prevent excessive input to the LLM.
-* Uses `asyncio.run` to run the LLM asynchronously, which may impact performance.
+## Potential Considerations
+Based on the provided code, the following considerations can be noted:
+- **Error Handling**: The function does not explicitly handle errors that may occur during the execution of `_update_module_brief_async`. Any exceptions raised by `_update_module_brief_async` will be propagated to the caller.
+- **Performance**: The use of `asyncio.run` when `is_async` is `False` allows the function to be used in synchronous contexts, but it may introduce additional overhead compared to calling `_update_module_brief_async` directly in an asynchronous context.
+- **Edge Cases**: The function does not check the validity of the `package_dir` and `repo_root` parameters, which are expected to be of type `Path`. If these parameters are not valid, the function may raise exceptions or produce unexpected results.
 
-## Signature — `def _update_module_brief(package_dir: Path, repo_root: Path) -> bool`
-The function signature indicates that:
-* The function takes two parameters: `package_dir` and `repo_root`, both of type `Path`.
-* The function returns a boolean value indicating whether the module brief was successfully updated.
-* The function is prefixed with an underscore, suggesting it is intended to be a private or internal function.
+## Signature
+The function signature is:
+```python
+def _update_module_brief(package_dir: Path, repo_root: Path, *, is_async: bool = False)
+```
+This indicates that:
+- The function takes two required parameters: `package_dir` and `repo_root`, both of type `Path`.
+- The function takes one optional parameter: `is_async`, which is a boolean with a default value of `False`. The `*` in the signature indicates that all parameters after this point must be specified by keyword.
 ---
 
 # _process_file_with_semaphore
@@ -1801,35 +1830,32 @@ This indicates that the function:
 # process_directory_async
 
 ## Logic Overview
-The `process_directory_async` function is designed to process a directory of files for documentation generation asynchronously. The main steps in the function's flow are:
-1. **Directory Validation**: It checks if the target directory exists and is indeed a directory. If not, it raises a `NotADirectoryError`.
-2. **Initialization**: It initializes various parameters such as the number of workers, output directory, and dependencies function.
-3. **File Collection**: It collects a list of files to process from the target directory based on predefined patterns.
-4. **Processing**: It processes each file asynchronously using the `_process_and_track` function, which in turn uses a semaphore to limit concurrent file processing.
-5. **Dashboard and Progress**: If progress is enabled, it displays a dashboard or progress bar to track the processing of files.
-6. **Error Handling and Cleanup**: It handles errors, cancels tasks if the budget is exceeded, and performs cleanup tasks such as updating module briefs.
+The `process_directory_async` function is designed to process a directory of files for documentation generation asynchronously. The main steps in the function's logic are:
+1. **Validation and Setup**: The function first checks if the target directory exists and is indeed a directory. If not, it raises a `NotADirectoryError`.
+2. **Configuration and Initialization**: It then sets up various configurations such as the number of workers, output directory, and other parameters based on the provided arguments or default values.
+3. **File Collection**: The function collects a list of files to be processed from the target directory based on predefined patterns.
+4. **Processing**: It then processes each file asynchronously using the `_process_and_track` function, which is responsible for processing a single file and tracking its progress.
+5. **Progress Display**: If progress display is enabled, the function displays the progress of the file processing using the `_display_refresh_task` function.
+6. **Budget Enforcement**: The function also enforces a budget constraint, where it stops processing files if the total cost exceeds the specified budget.
+7. **Cleanup and Finalization**: Finally, the function cleans up and finalizes the processing by updating module briefs for processed package directories if necessary.
 
 ## Dependency Interactions
-The function interacts with various dependencies through traced calls, including:
-* `get_model_specs`: Retrieves model specifications.
-* `_resolve_doc_model`: Resolves the document model.
-* `_safe_workers_from_rpm`: Calculates the safe number of workers based on the RPM limit.
-* `_max_concurrent_from_rpm`: Calculates the maximum concurrent calls from the RPM limit.
-* `_process_file_with_semaphore`: Processes a file with a semaphore.
-* `_apply_pulse`: Applies a pulse to the display chain.
-* `_display_refresh_task`: Refreshes the dashboard display.
-* `_render_status`: Renders the status bar.
-* `_update_module_brief`: Updates the module brief.
-* `logger.info` and `logger.warning`: Logs information and warnings.
-* `asyncio` functions: Uses various asyncio functions such as `create_task`, `gather`, `sleep`, `Semaphore`, `Lock`, and `Event` to manage asynchronous tasks and concurrency.
+The `process_directory_async` function interacts with various dependencies through the traced calls, including:
+* `asyncio` library for asynchronous operations, such as `asyncio.Semaphore`, `asyncio.create_task`, and `asyncio.gather`.
+* `vivarium` library for Scout configuration and functionality, such as `ScoutConfig`, `get_model_specs`, and `_resolve_doc_model`.
+* `pathlib` library for path manipulation, such as `Path`, `Path.cwd`, and `Path.resolve`.
+* `logger` for logging warnings and information, such as `logger.info` and `logger.warning`.
+* `os` library for environment variable manipulation, such as `os.environ`.
+* `_process_file_with_semaphore` function for processing a single file with a semaphore.
+* `_update_module_brief_async` function for updating module briefs asynchronously.
 
 ## Potential Considerations
-The code handles various edge cases and performance considerations, including:
-* **Budget Exceeded**: If the budget is exceeded, it cancels all tasks and raises a `BudgetExceededError`.
-* **Error Handling**: It catches and handles errors during file processing, logging warnings and skipping files as needed.
-* **Concurrency**: It uses semaphores and locks to manage concurrency and prevent overloading.
-* **Progress Display**: It displays a progress bar or dashboard to track the processing of files, which can be disabled for quiet mode.
-* **Performance**: It optimizes performance by using asynchronous tasks, limiting concurrent file processing, and caching results.
+Some potential considerations and edge cases in the code include:
+* **Error Handling**: The function handles errors during file processing using try-except blocks, but it may not handle all possible error scenarios.
+* **Performance**: The function uses asynchronous processing and semaphores to control concurrency, which can impact performance.
+* **Budget Enforcement**: The function enforces a budget constraint, but it may not account for all possible costs or edge cases.
+* **Progress Display**: The function displays progress using a dashboard or status bar, but it may not work correctly in all environments or scenarios.
+* **File Filtering**: The function filters files based on predefined patterns, but it may not account for all possible file types or scenarios.
 
 ## Signature
 The `process_directory_async` function has the following signature:
@@ -1849,10 +1875,10 @@ async def process_directory_async(
     force: bool = False,
     changed_files: Optional[List[Path]] = None,
     fallback_template: bool = False,
-    versioned_mirror_dir: Optional[Path] = None
-) -> None
+    versioned_mirror_dir: Optional[Path] = None,
+) -> None:
 ```
-This signature indicates that the function takes a `target_path` as a required argument and various optional arguments to customize its behavior. The function returns `None`, indicating that it performs side effects such as processing files and displaying progress.
+This signature indicates that the function takes a `target_path` as a required argument, and various optional arguments for customizing its behavior. The function returns `None`, indicating that it does not return any value.
 ---
 
 # process_directory
@@ -1911,38 +1937,76 @@ def process_directory(
 This signature indicates that the function takes a required `target_path` parameter and several optional parameters, and returns `None`. The `*` in the parameter list indicates that all parameters after `target_path` must be specified by keyword.
 ---
 
-# synthesize_pr_description
+# _synthesize_pr_description_async
 
 ## Logic Overview
-The `synthesize_pr_description` function takes `raw_summaries` as input and attempts to synthesize a unified PR description using a Large Language Model (LLM). The main steps are:
-1. Construct a prompt for the LLM, including the `raw_summaries`.
-2. Call the LLM using `asyncio.run` and `call_groq_async`, passing the prompt and model.
-3. If the LLM call fails, log a warning and return the `raw_summaries`.
-4. Log the LLM call to an audit log using `AuditLog`.
-5. Return the synthesized PR description, or the `raw_summaries` if the synthesized description is empty.
+The `_synthesize_pr_description_async` function is an asynchronous implementation that generates a PR description based on provided technical summaries. The main steps are:
+1. Construct a prompt for the LLM (Large Language Model) using the provided `raw_summaries`.
+2. Attempt to call the LLM using `call_groq_async` with the constructed prompt and a resolved document model.
+3. If the LLM call fails and `fallback_template` is `True`, log a warning and return the `raw_summaries`.
+4. If the LLM call is successful, log an audit entry with the response details.
+5. Return the content of the LLM response if it is not empty; otherwise, return the `raw_summaries`.
 
 ## Dependency Interactions
 The function interacts with the following dependencies:
-- `_resolve_doc_model`: used to resolve the model for the LLM call.
-- `asyncio.run`: used to run the LLM call asynchronously.
-- `call_groq_async`: used to call the LLM, passing the prompt and model.
-- `logger.warning`: used to log a warning if the LLM call fails.
-- `AuditLog`: used to log the LLM call to an audit log.
-- `response.content.strip`: used to strip whitespace from the LLM response.
+* `vivarium.scout.llm.call_groq_async`: an asynchronous call to the LLM with the constructed prompt and resolved document model.
+* `vivarium.scout.audit.AuditLog`: creates an audit log entry with the response details.
+* `logger.warning`: logs a warning message if the LLM call fails and `fallback_template` is `True`.
+* `_resolve_doc_model`: resolves the document model for the LLM call.
 
 ## Potential Considerations
 The function handles the following edge cases and considerations:
-- **LLM call failure**: if the LLM call fails, the function logs a warning and returns the `raw_summaries`.
-- **Empty synthesized description**: if the synthesized description is empty, the function returns the `raw_summaries`.
-- **Audit logging**: the function logs the LLM call to an audit log, including the cost, model, input tokens, and output tokens.
-- **Performance**: the function uses asynchronous calls to improve performance.
+* **LLM failure**: if the LLM call fails, the function either raises an exception (if `fallback_template` is `False`) or logs a warning and returns the `raw_summaries` (if `fallback_template` is `True`).
+* **Empty response content**: if the LLM response content is empty, the function returns the `raw_summaries`.
+* **Audit logging**: the function logs an audit entry with the response details, including cost, model, input tokens, and output tokens.
+* **Performance**: the function uses asynchronous calls to the LLM, which can improve performance by allowing other tasks to run while waiting for the LLM response.
 
 ## Signature
 The function signature is:
 ```python
-def synthesize_pr_description(raw_summaries: str) -> str
+async def _synthesize_pr_description_async(raw_summaries: str, *, fallback_template: bool = False) -> str
 ```
-This indicates that the function takes a single string argument `raw_summaries` and returns a string. The function uses the `str` type for both input and output.
+This indicates that the function:
+* Is an asynchronous function (`async def`).
+* Takes two parameters: `raw_summaries` (a string) and `fallback_template` (a boolean with a default value of `False`).
+* Returns a string value.
+* Uses the `*` syntax to indicate that all parameters after `raw_summaries` are keyword-only.
+---
+
+# synthesize_pr_description
+
+## Logic Overview
+The `synthesize_pr_description` function takes in `raw_summaries` and two optional parameters: `is_async` and `fallback_template`. The main steps are:
+1. Check if `is_async` is `True`.
+2. If `is_async` is `True`, return the result of calling `_synthesize_pr_description_async` with `raw_summaries` and `fallback_template`.
+3. If `is_async` is `False`, use `asyncio.run` to run `_synthesize_pr_description_async` with `raw_summaries` and `fallback_template`, and return the result.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+- `_synthesize_pr_description_async`: This function is called with `raw_summaries` and `fallback_template` as arguments. The qualified name of this function is not provided, but it is used to synthesize a PR description asynchronously.
+- `asyncio.run`: This function is used to run `_synthesize_pr_description_async` synchronously when `is_async` is `False`. The qualified name of this function is `asyncio.run`.
+
+## Potential Considerations
+Based on the code, the following potential considerations can be identified:
+- Error handling: The function raises an error on LLM failure unless `fallback_template` is `True`. In this case, it returns `raw_summaries`.
+- Performance: The function uses `asyncio.run` to run `_synthesize_pr_description_async` synchronously when `is_async` is `False`. This may impact performance if the function is called frequently.
+- Edge cases: The function does not handle any edge cases explicitly, such as `raw_summaries` being an empty string or `None`.
+
+## Signature
+The function signature is:
+```python
+def synthesize_pr_description(
+    raw_summaries: str,
+    *,
+    is_async: bool = False,
+    fallback_template: bool = False,
+)
+```
+This signature indicates that:
+- `raw_summaries` is a required string parameter.
+- `is_async` is an optional boolean parameter with a default value of `False`.
+- `fallback_template` is an optional boolean parameter with a default value of `False`.
+The function returns a cohesive narrative PR description, or an `Awaitable[str]` if `is_async` is `True`.
 ---
 
 # parse_python_file

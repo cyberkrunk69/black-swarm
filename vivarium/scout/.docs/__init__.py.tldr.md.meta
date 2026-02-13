@@ -1,7 +1,7 @@
 {
   "source_hash": "9e6cb19d427db8ffb055e4707f492725a5ff3e7e339a7c68670e16417fc068f1",
-  "generated_at": "2026-02-13T01:42:07.218341+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.299959+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "__all__": {
       "tldr": "The `__all__` constant is used to specify the list of symbols that will be exported by the module when it is imported using the `from module import *` syntax. \n\nIt does not make any calls or use any types, but it imports several modules from the vivarium/scout package.",

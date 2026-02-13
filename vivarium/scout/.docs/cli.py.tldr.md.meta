@@ -1,7 +1,7 @@
 {
   "source_hash": "375cba78df7995460915164a787831c7287a9c9b33e814032c26c8201ea8b60f",
-  "generated_at": "2026-02-13T01:42:07.367062+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.372972+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "_cmd_config": {
       "tldr": "This function appears to be a command-line interface (CLI) configuration handler. It interacts with the Vivarium Scout configuration system, validating and setting configuration values, and potentially running a TUI (Text User Interface) based on the configuration. It also handles project and user configuration paths.",

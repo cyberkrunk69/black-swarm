@@ -1,7 +1,7 @@
 {
   "source_hash": "fc1c57951de527e07be2bc8e618fb5386300cbd3b48a544526d5103186e94289",
-  "generated_at": "2026-02-13T01:42:15.529379+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.355071+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "logger": {
       "tldr": "The logger constant is not used in the system as there are no traced calls or type usage.",

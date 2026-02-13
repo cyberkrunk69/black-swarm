@@ -66,7 +66,7 @@ The _extract_return_expr function appears to be part of a system that works with
 
 # try_auto_tldr
 
-This method appears to be a recursive function that calls itself, as indicated by the "try_auto_tldr" call. It operates on a "SymbolTree" type and returns no value, suggesting it may be used for traversal or processing of the tree.
+This function appears to be part of a larger system for parsing or analyzing code, specifically working with SymbolTrees. It calls _extract_return_expr and _is_simple_symbol, suggesting it is involved in expression analysis or simplification.
 ---
 
 # PythonAdapter
@@ -86,7 +86,7 @@ This method appears to be responsible for parsing a file, likely a Python script
 
 # try_auto_tldr
 
-This method appears to be a recursive function that calls itself, as indicated by the "try_auto_tldr" call. It operates on a "SymbolTree" type and returns no value, suggesting it may be used for traversal or processing of the tree.
+This function appears to be part of a larger system for parsing or analyzing code, specifically working with SymbolTrees. It calls _extract_return_expr and _is_simple_symbol, suggesting it is involved in expression analysis or simplification.
 ---
 
 # get_tldr_prompt

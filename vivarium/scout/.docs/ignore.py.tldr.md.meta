@@ -1,7 +1,7 @@
 {
   "source_hash": "80d68c58245ca25f39b73c9125c5561f2b4792b77a9ea3ef4ff206d0c96a6774",
-  "generated_at": "2026-02-13T01:42:12.805927+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.334592+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "BUILT_IN_IGNORES": {
       "tldr": "This constant is not used in the system as there are no traced calls or type usage.",

@@ -96,34 +96,36 @@ The function signature is `def _get_groq_api_key() -> Optional[str]`, indicating
 # call_groq_async
 
 ## Logic Overview
-The `call_groq_async` function is designed to call the Groq API for navigation purposes. It takes in several parameters, including a prompt, model, system, max tokens, and an optional LLM client. The main steps of the function can be broken down as follows:
-- Check if an LLM client is provided, and if so, use it to make the API call.
-- Validate the model and raise a `ValueError` if it is not supported.
-- Retrieve the Groq API key and raise a `RuntimeError` if it is not set.
-- Construct the API request payload, including the model, messages, temperature, and max tokens.
-- Make the API request using the `httpx.AsyncClient` and handle rate limiting errors (429) by retrying with backoff.
-- Parse the response data and extract the content, usage, and cost.
-- Return a `NavResponse` object containing the content, cost, model, input tokens, and output tokens.
+The `call_groq_async` function is an asynchronous function that calls the Groq API for navigation. The main steps of the function are:
+1. Check if an `llm_client` is provided. If so, it calls the `llm_client` with the provided parameters.
+2. Validate the `model` parameter. If the model is not supported, it raises a `ValueError`.
+3. Retrieve the Groq API key from the environment. If the key is missing, it raises an `EnvironmentError`.
+4. Import the `httpx` library. If the import fails, it raises a `RuntimeError`.
+5. Construct the API request payload with the provided parameters.
+6. Send the request to the Groq API using the `_do_request` function.
+7. Handle rate limiting errors (429 status code) by retrying the request with a backoff delay.
+8. Parse the response data and calculate the cost of the API call.
+9. Return a `NavResponse` object with the response content, cost, and other metadata.
 
 ## Dependency Interactions
-The `call_groq_async` function interacts with several dependencies, including:
-- `_get_groq_api_key()`: Retrieves the Groq API key.
-- `httpx.AsyncClient()`: Makes the API request to the Groq API.
-- `httpx.HTTPStatusError`: Handles HTTP status errors, including rate limiting errors (429).
-- `logger.warning()`: Logs warnings for rate limiting errors and other issues.
-- `vivarium.utils.llm_cost.estimate_cost()`: Estimates the cost of the API call based on the model, input tokens, and output tokens.
-- `vivarium.scout.config.get_global_semaphore()`: Acquires a global semaphore to synchronize access to the API.
-- `os.environ.get()`: Retrieves environment variables, including the Groq API URL.
-- `asyncio.sleep()`: Pauses execution to implement backoff for rate limiting errors.
+The `call_groq_async` function interacts with the following dependencies:
+* `_get_groq_api_key`: retrieves the Groq API key from the environment.
+* `httpx.AsyncClient`: sends the API request to the Groq API.
+* `httpx.HTTPStatusError`: handles HTTP status errors, including rate limiting errors.
+* `logger.warning`: logs warning messages, including rate limiting warnings.
+* `asyncio.sleep`: implements a delay between retries.
+* `vivarium.utils.llm_cost.estimate_cost`: estimates the cost of the API call.
+* `vivarium.scout.config.get_global_semaphore`: acquires a global semaphore for the API request.
+* `os.environ.get`: retrieves environment variables, including the Groq API URL.
 
 ## Potential Considerations
-The code handles several edge cases and potential issues, including:
-- **Rate limiting errors (429)**: The function retries the API request with backoff to handle rate limiting errors.
-- **Unsupported models**: The function raises a `ValueError` if the model is not supported.
-- **Missing API key**: The function raises a `RuntimeError` if the Groq API key is not set.
-- **HTTP status errors**: The function handles HTTP status errors, including rate limiting errors (429).
-- **Cost estimation**: The function estimates the cost of the API call based on the model, input tokens, and output tokens.
-- **Performance**: The function uses a global semaphore to synchronize access to the API, which can impact performance under high concurrency.
+The code handles the following edge cases and potential considerations:
+* **Rate limiting**: the function retries the request with a backoff delay if it encounters a rate limiting error (429 status code).
+* **Model validation**: the function raises a `ValueError` if the provided model is not supported.
+* **API key validation**: the function raises an `EnvironmentError` if the Groq API key is missing.
+* **Import errors**: the function raises a `RuntimeError` if the `httpx` library cannot be imported.
+* **Response parsing**: the function handles missing or invalid response data by using default values or raising exceptions.
+* **Cost calculation**: the function estimates the cost of the API call using the `vivarium.utils.llm_cost.estimate_cost` function.
 
 ## Signature
 The `call_groq_async` function has the following signature:
@@ -136,10 +138,10 @@ async def call_groq_async(
     llm_client: Optional[Callable] = None,
 ) -> NavResponse
 ```
-The function takes in five parameters:
-- `prompt`: The input prompt for the API call.
-- `model`: The model to use for the API call (defaults to "llama-3.1-8b-instant").
-- `system`: An optional system parameter for the API call.
-- `max_tokens`: The maximum number of tokens to generate (defaults to 500).
-- `llm_client`: An optional LLM client to use for the API call.
-The function returns a `NavResponse` object containing the content, cost, model, input tokens, and output tokens.
+The function takes the following parameters:
+* `prompt`: a required string parameter.
+* `model`: an optional string parameter with a default value of `"llama-3.1-8b-instant"`.
+* `system`: an optional string parameter with a default value of `None`.
+* `max_tokens`: an optional integer parameter with a default value of `500`.
+* `llm_client`: an optional callable parameter with a default value of `None`.
+The function returns a `NavResponse` object.

@@ -1,7 +1,7 @@
 {
   "source_hash": "db386026ca603605e0453799049d194513de9347445e1cc83a9668122e0fb127",
-  "generated_at": "2026-02-13T01:42:06.954224+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.292080+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "_module_to_path": {
       "tldr": "This function appears to manipulate file paths. It calls methods on Path objects, such as exists and relative_to, and string methods like replace and startswith. It returns a string result. \n\nIt is likely used to normalize or transform file paths within a system.",

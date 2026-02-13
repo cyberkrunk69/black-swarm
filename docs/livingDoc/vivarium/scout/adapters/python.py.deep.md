@@ -387,25 +387,32 @@ This indicates that the function:
 # try_auto_tldr
 
 ## Logic Overview
-The `try_auto_tldr` method appears to be a part of a class due to the presence of `self`. It takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`. The method's main step is to call another function named `try_auto_tldr` (not a method of the class, as it's called without `self`) with the same parameters. The purpose of this method, as indicated by its docstring, is to return a template TL;DR if the symbol is simple, without using a Large Language Model (LLM), otherwise it returns `None`.
+The `try_auto_tldr` function takes a `symbol` of type `SymbolTree` and a `source_snippet` of type `str` as input. The main steps in the function are:
+1. Check if the `symbol` is simple using the `_is_simple_symbol` function.
+2. If the `symbol` is not simple, return `None`.
+3. If the `symbol` is simple, extract the return expression from the `source_snippet` using the `_extract_return_expr` function.
+4. If a return expression is found, return a string in the format "Returns {expr}."
+5. If no return expression is found, return a string in the format "Simple {name} utility."
 
 ## Dependency Interactions
-The method interacts with the following traced calls and types:
-- It calls `try_auto_tldr`, which is not a method of the class itself but a separate function.
-- It uses types `SymbolTree` and `str` for its parameters.
-- The import statement from `vivarium/scout/adapters/base.py` is noted, but its direct interaction with the method is not explicitly shown in the provided code snippet.
+The `try_auto_tldr` function uses the following traced calls:
+- `vivarium.scout.adapters.base._is_simple_symbol(symbol)`: This function is used to check if the `symbol` is simple.
+- `vivarium.scout.adapters.base._extract_return_expr(source_snippet)`: This function is used to extract the return expression from the `source_snippet`.
 
 ## Potential Considerations
-From the provided code, potential considerations include:
-- **Recursive Call**: The method calls another function with the same name, which could potentially lead to a recursive loop if not handled properly. However, without the definition of the called `try_auto_tldr` function, it's unclear how this recursion is managed.
-- **Error Handling**: There's no explicit error handling shown in the method. If the called `try_auto_tldr` function raises an exception, it will propagate up the call stack unless caught and handled.
-- **Performance**: The performance impact of this method is largely dependent on the implementation of the `try_auto_tldr` function it calls. If that function performs complex operations or has a high computational cost, it could affect the overall performance.
+Based on the code, the following potential considerations can be identified:
+- **Edge case:** If the `symbol` is not simple, the function returns `None`. This might be a valid use case, but it's worth considering if there are other possible actions that could be taken in this scenario.
+- **Error handling:** The function does not appear to handle any errors that might occur when calling the `_is_simple_symbol` or `_extract_return_expr` functions. It's possible that these functions could raise exceptions, which would need to be handled.
+- **Performance:** The function makes two function calls, which could potentially impact performance if the function is called frequently. However, without more information about the implementation of these functions, it's difficult to say for certain.
 
 ## Signature
-The method signature is `def try_auto_tldr(self, symbol: SymbolTree, source_snippet: str) -> Optional[str]`. This indicates:
-- The method is an instance method of a class due to the `self` parameter.
-- It takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`.
-- The method returns an `Optional[str]`, meaning it can return either a string or `None`. This aligns with the docstring's description of returning a template TL;DR if the symbol is simple, or `None` otherwise.
+The `try_auto_tldr` function has the following signature:
+```python
+def try_auto_tldr(symbol: SymbolTree, source_snippet: str) -> Optional[str]
+```
+This indicates that the function:
+- Takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`.
+- Returns a value of type `Optional[str]`, which means it can return either a string or `None`.
 ---
 
 # PythonAdapter
@@ -509,25 +516,32 @@ This indicates that the method takes a `file_path` parameter of type `Path` and 
 # try_auto_tldr
 
 ## Logic Overview
-The `try_auto_tldr` method appears to be a part of a class due to the presence of `self`. It takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`. The method's main step is to call another function named `try_auto_tldr` (not a method of the class, as it's called without `self`) with the same parameters. The purpose of this method, as indicated by its docstring, is to return a template TL;DR if the symbol is simple, without using a Large Language Model (LLM), otherwise it returns `None`.
+The `try_auto_tldr` function takes a `symbol` of type `SymbolTree` and a `source_snippet` of type `str` as input. The main steps in the function are:
+1. Check if the `symbol` is simple using the `_is_simple_symbol` function.
+2. If the `symbol` is not simple, return `None`.
+3. If the `symbol` is simple, extract the return expression from the `source_snippet` using the `_extract_return_expr` function.
+4. If a return expression is found, return a string in the format "Returns {expr}."
+5. If no return expression is found, return a string in the format "Simple {name} utility."
 
 ## Dependency Interactions
-The method interacts with the following traced calls and types:
-- It calls `try_auto_tldr`, which is not a method of the class itself but a separate function.
-- It uses types `SymbolTree` and `str` for its parameters.
-- The import statement from `vivarium/scout/adapters/base.py` is noted, but its direct interaction with the method is not explicitly shown in the provided code snippet.
+The `try_auto_tldr` function uses the following traced calls:
+- `vivarium.scout.adapters.base._is_simple_symbol(symbol)`: This function is used to check if the `symbol` is simple.
+- `vivarium.scout.adapters.base._extract_return_expr(source_snippet)`: This function is used to extract the return expression from the `source_snippet`.
 
 ## Potential Considerations
-From the provided code, potential considerations include:
-- **Recursive Call**: The method calls another function with the same name, which could potentially lead to a recursive loop if not handled properly. However, without the definition of the called `try_auto_tldr` function, it's unclear how this recursion is managed.
-- **Error Handling**: There's no explicit error handling shown in the method. If the called `try_auto_tldr` function raises an exception, it will propagate up the call stack unless caught and handled.
-- **Performance**: The performance impact of this method is largely dependent on the implementation of the `try_auto_tldr` function it calls. If that function performs complex operations or has a high computational cost, it could affect the overall performance.
+Based on the code, the following potential considerations can be identified:
+- **Edge case:** If the `symbol` is not simple, the function returns `None`. This might be a valid use case, but it's worth considering if there are other possible actions that could be taken in this scenario.
+- **Error handling:** The function does not appear to handle any errors that might occur when calling the `_is_simple_symbol` or `_extract_return_expr` functions. It's possible that these functions could raise exceptions, which would need to be handled.
+- **Performance:** The function makes two function calls, which could potentially impact performance if the function is called frequently. However, without more information about the implementation of these functions, it's difficult to say for certain.
 
 ## Signature
-The method signature is `def try_auto_tldr(self, symbol: SymbolTree, source_snippet: str) -> Optional[str]`. This indicates:
-- The method is an instance method of a class due to the `self` parameter.
-- It takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`.
-- The method returns an `Optional[str]`, meaning it can return either a string or `None`. This aligns with the docstring's description of returning a template TL;DR if the symbol is simple, or `None` otherwise.
+The `try_auto_tldr` function has the following signature:
+```python
+def try_auto_tldr(symbol: SymbolTree, source_snippet: str) -> Optional[str]
+```
+This indicates that the function:
+- Takes two parameters: `symbol` of type `SymbolTree` and `source_snippet` of type `str`.
+- Returns a value of type `Optional[str]`, which means it can return either a string or `None`.
 ---
 
 # get_tldr_prompt

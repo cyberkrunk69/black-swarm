@@ -29,4 +29,6 @@ TL;DR: This function retrieves a Groq API key from the environment or a runtime 
 
 # call_groq_async
 
-This function, `call_groq_async`, appears to be an asynchronous function that interacts with an external API, specifically the Groq API, to retrieve data. It uses the `httpx.AsyncClient` to make a POST request to the API and handles potential errors, including HTTP status errors and API key issues.
+This function, `call_groq_async`, appears to be an asynchronous function that interacts with an external API, specifically the Groq API, to retrieve data. It uses the `httpx` library to make a POST request to the API and handles potential errors and responses. 
+
+It also estimates the cost of the LLM (Large Language Model) request using the `vivarium.utils.llm_cost.estimate_cost` function.

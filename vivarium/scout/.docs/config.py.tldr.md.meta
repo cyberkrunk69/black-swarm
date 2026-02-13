@@ -1,7 +1,7 @@
 {
   "source_hash": "d7ca772cd0169c1e6729bec041e0aa5eb259af2bb79eb34c3d6ed73b3dfd57a4",
-  "generated_at": "2026-02-13T01:42:27.524438+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:05.959243+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "_path_matches": {
       "tldr": "This function checks if a given path matches a pattern. It appears to convert the pattern to a regular expression and then uses this regex to match the path. The function likely returns a boolean value indicating whether the match was successful.",

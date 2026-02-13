@@ -1,7 +1,7 @@
 {
   "source_hash": "97b0e0000d6b041a3bc713175866ae2de444faee692a4a11d3aeee657a5e47b5",
-  "generated_at": "2026-02-13T01:42:08.252935+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.395398+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "_render_header": {
       "tldr": "The _render_header function appears to render a header, likely for a console or panel, and captures or prints output. It utilizes a string type and interacts with the vivarium/scout/config.py module.",

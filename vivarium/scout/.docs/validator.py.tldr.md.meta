@@ -1,7 +1,7 @@
 {
   "source_hash": "fe2e38039b559d79a3f9392029322628d2a5bf1f3c455cc8cc34cba16f62789e",
-  "generated_at": "2026-02-13T01:42:18.580530+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:05.925015+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "HALLUCINATED_PATH": {
       "tldr": "This constant, HALLUCINATED_PATH, does not appear to have any direct role in the system as it does not call or use any other components.",

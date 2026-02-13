@@ -185,7 +185,7 @@ The _merge_symbol_content function appears to be a utility function that operate
 
 # _generate_docs_for_symbols
 
-This function generates documentation for symbols in an asynchronous manner. It appears to be part of a documentation system that uses a semaphore to manage concurrency and relies on other functions to compute symbol hashes, generate single symbol documentation, and merge symbol content.
+This function generates documentation for symbols in a system, utilizing asynchronous tasks to manage the process. It appears to be part of a larger documentation generation pipeline, leveraging various helper functions to compute hashes, extract source snippets, and merge content.
 ---
 
 # _rel_path_for_display
@@ -248,9 +248,14 @@ This function, `process_single_file`, appears to be an asynchronous process that
 This function gathers package component roles by iterating over a directory of Python files, parsing each file using an adapter, and logging the results. It appears to be part of a package analysis or auditing system.
 ---
 
+# _update_module_brief_async
+
+This function appears to be responsible for updating a module's brief asynchronously. It gathers package component roles, resolves a doc model, and writes text to various paths. It also logs information and warnings, and calls the LLM to generate a brief.
+---
+
 # _update_module_brief
 
-This function appears to update a module's brief by gathering package component roles, resolving a doc model, and writing the result to a file. It interacts with the file system, a configuration, and a language model.
+This function is responsible for updating a module's brief, likely in an asynchronous context, as it calls `_update_module_brief_async` and `asyncio.run`. It appears to operate on file paths, utilizing the `Path` type.
 ---
 
 # _process_file_with_semaphore
@@ -265,7 +270,7 @@ This function formats a status bar, taking in various types of data including in
 
 # process_directory_async
 
-This Python function, `process_directory_async`, appears to asynchronously process a directory, utilizing various async utilities and ScoutConfig to manage the process. It likely handles file processing, error handling, and status updates, interacting with the system's display and logging mechanisms.
+This Python function, `process_directory_async`, appears to asynchronously process a directory by iterating over its contents, applying various tasks, and tracking progress. It utilizes asynchronous I/O and concurrency mechanisms to manage the processing of multiple files and directories.
 ---
 
 # process_directory
@@ -275,9 +280,16 @@ This function, `process_directory`, appears to be a synchronous wrapper around a
 It likely processes a directory path, as indicated by the `Path` type usage.
 ---
 
+# _synthesize_pr_description_async
+
+This function appears to be an asynchronous operation that synthesizes a PR description. It calls _resolve_doc_model and uses the result to log information and possibly generate a response.
+---
+
 # synthesize_pr_description
 
-This function synthesizes a PR description, likely using a Large Language Model (LLM) to generate the description. It calls the LLM asynchronously and logs the result, possibly for auditing purposes. The function appears to be part of a software development workflow, specifically a pull request (PR) process.
+This function appears to be a synchronous wrapper around an asynchronous function, specifically `_synthesize_pr_description_async`. It takes a string as input and does not export any values. 
+
+It is likely used to execute the asynchronous function in a synchronous manner, possibly for compatibility or convenience reasons.
 ---
 
 # parse_python_file

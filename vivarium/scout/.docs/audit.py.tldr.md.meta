@@ -1,7 +1,7 @@
 {
   "source_hash": "50fb667fd469e88eabad75f806250d152e744cae14ae8d6cc518dc1521d4e193",
-  "generated_at": "2026-02-13T01:42:24.838875+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:05.993176+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "logger": {
       "tldr": "The logger constant is not explicitly described in the provided information. However, based on the import of vivarium/scout/audit.py, it is likely used for logging purposes within the vivarium/scout module.",

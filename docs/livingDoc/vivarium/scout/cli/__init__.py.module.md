@@ -1,56 +1,27 @@
 ## Purpose
-The `vivarium.scout.cli` module provides a command-line interface (CLI) for the Vivarium framework, enabling users to interact with the scout-nav system, manage dependencies, and perform various tasks such as navigation, cost estimation, and model enhancement.
+The vivarium.scout.cli package is a command-line interface (CLI) for the Vivarium Scout system, providing tools for auditing, validation, and navigation within the system.
 
-## Key Components
-### Classes
-- `NavResult`: Represents a navigation result from the scout-nav system.
-- `GitContext`: Provides a context for target files based on Git interactions.
-- `DepGraph`: Represents a dependency graph for a target file.
+## Components
+### Ingress
+- `brief.py`: Handles command-line arguments and parses them using `argparse`.
+- `nav.py`: Parses command-line arguments and provides navigation functionality.
 
-### Functions
-- `_generate_session_id`: Generates a unique session ID.
-- `_run_git`: Runs a git command in a specified repository root.
-- `gather_git_context`: Gathers relevant Git context for a given target file.
-- `_module_to_path`: Resolves a module name to a repository-relative path.
-- `_parse_imports`: Extracts import targets from a given string content.
-- `_find_callers`: Finds files that import the target module within a specified repository.
-- `_resolve_target_to_file`: Resolves a target to a valid Python file path.
-- `build_dependencies`: Builds a dependency graph for a given target file.
-- `calculate_complexity`: Computes a complexity score between 0 and 1.
-- `_get_groq_api_key`: Retrieves a Groq API key.
-- `_call_groq`: Calls the Groq API, returning the content and cost in USD.
-- `_format_structure_prompt`: Generates a prompt for 8B structure generation.
-- `generate_structure_8b`: Generates a briefing structure using the 8B model.
-- `enhance_with_70b`: Enhances a given structure with 70B for deeper analysis.
-- `generate_deep_prompt_section`: Generates a 'Recommended Deep Model Prompt' section.
-- `generate_cost_section`: Generates a cost comparison section.
-- `build_header`: Constructs a briefing header.
-- `build_target_section`: Builds a target location section.
-- `build_change_context_section`: Builds a change context section.
-- `build_dependency_section`: Builds a dependency map section.
-- `_resolve_pr_task`: Resolves a Pull Request (PR) number to its corresponding task title.
-- `get_navigation`: Navigates to an entry point by reusing scout-nav logic.
+### Processing
+- `brief.py`: Generates a brief report or document based on gathered information from Git context, dependencies, and complexity calculations.
+- `ci_guard.py`: Runs a CI guard to ensure the system is in a valid state.
+- `doc_sync.py`: Synchronizes documentation files.
+- `index.py`: Builds and updates the index of files in the system.
+- `main.py`: Configures and validates the system.
+- `roast.py`: Generates a report based on audit logs.
+- `status.py`: Runs a status check on the system.
 
-## Interaction Flow
-The `vivarium.scout.cli` module interacts with various dependencies to perform its tasks, including:
-- `vivarium/scout/audit.py` for audit-related functionality.
-- `vivarium/scout/config.py` for configuration.
-- `vivarium/scout/validator.py` for validation.
-- `vivarium/utils/llm_cost.py` for LLM cost calculations.
-- `vivarium/scout/nav.py` for scout-nav logic.
-- `vivarium/scout/router.py` for routing.
-- `vivarium/scout/trigger_router.py` for trigger routing.
-- `vivarium/scout/trigger.py` for trigger logic.
-- `vivarium/scout/trigger_context.py` for trigger context.
-- `vivarium/scout/trigger_router.py` for trigger routing.
-- `vivarium/scout/trigger.py` for trigger logic.
-- `vivarium/scout/trigger_context.py` for trigger context.
-- `vivarium/scout/trigger_router.py` for trigger routing.
-- `vivarium/scout/trigger.py` for trigger logic.
-- `vivarium/scout/trigger_context.py` for trigger context.
-- `vivarium/scout/trigger_router.py` for trigger routing.
-- `vivarium/scout/trigger.py` for trigger logic.
-- `vivarium/scout/trigger_context.py` for trigger context.
-- `vivarium/scout/trigger_router.py` for trigger routing.
-- `vivarium/scout/trigger.py` for trigger logic.
-- `
+### Egress
+- `brief.py`: Writes the generated brief report to a file.
+- `index.py`: Outputs the updated index to a file.
+- `roast.py`: Outputs the generated report to the console.
+- `status.py`: Outputs the status check result to the console.
+
+## Key Invariants
+- The system uses a plain-text Git workflow.
+- The system does not have any external dependencies.
+- The system relies on the `vivarium` and `scout` modules for configuration, validation, and routing.

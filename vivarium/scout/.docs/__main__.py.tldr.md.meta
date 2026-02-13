@@ -1,7 +1,7 @@
 {
   "source_hash": "558677ebe2e00dbbfebbee29ccff495b5538acc32b2e6ad1b8f177a7ab141695",
-  "generated_at": "2026-02-13T01:42:08.210978+00:00",
-  "model": "llama-3.3-70b-versatile",
+  "generated_at": "2026-02-13T02:10:06.528184+00:00",
+  "model": "llama-3.1-8b-instant",
   "symbols": {
     "__main__": {
       "tldr": "This module serves as the main entry point for the system, likely responsible for executing the Vivarium Scout CLI. It imports the necessary dependencies from vivarium/scout/cli.py.",

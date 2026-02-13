@@ -149,6 +149,100 @@ This indicates that the function takes two parameters:
 The function returns a string, which is the assembled PR description.
 ---
 
+# _call_graph_summary_for_scope
+
+## Logic Overview
+The function `_call_graph_summary_for_scope` is designed to extract a brief call-graph summary for modules under a specified `scope_prefix`. The main steps involved in this process are:
+1. Checking if the `call_graph_path` exists.
+2. Loading the data from the `call_graph_path` using `json.loads`.
+3. Normalizing the `scope` by ensuring it has a trailing slash for prefix matching.
+4. Collecting edges where both the caller and callee are within the specified scope.
+5. Filtering out duplicate edges and sorting the remaining edges.
+6. Returning a markdown listing of the caller -> callee edges within the scope.
+
+## Dependency Interactions
+The function interacts with the following traced calls:
+* `call_graph_path.exists()`: Checks if the call graph path exists.
+* `call_graph_path.read_text()`: Reads the text from the call graph path.
+* `json.loads()`: Loads the JSON data from the call graph path.
+* `data.get()`: Retrieves the edges from the loaded JSON data.
+* `e.get()`: Retrieves the "from" and "to" values from each edge.
+* `file_from.startswith()`: Checks if the file from is within the scope.
+* `fr.split()`: Splits the "from" value to extract the file name.
+* `to.split()`: Splits the "to" value to extract the file name.
+* `lines.append()`: Appends the caller -> callee edges to the lines list.
+* `scope.endswith()`: Checks if the scope ends with a slash.
+* `scope.rstrip()`: Removes the trailing slash from the scope.
+* `scope_prefix.strip()`: Removes the leading and trailing slashes from the scope prefix.
+* `seen.add()`: Adds the caller -> callee edge to the seen set to avoid duplicates.
+* `sorted()`: Sorts the lines list in ascending order.
+
+## Potential Considerations
+The function handles the following potential considerations:
+* **Error Handling**: The function catches `json.JSONDecodeError` and `OSError` exceptions when loading the JSON data. If an exception occurs, the function returns an empty string.
+* **Edge Cases**: The function checks if the `call_graph_path` exists before attempting to read from it. If the path does not exist, the function returns an empty string.
+* **Performance**: The function limits the number of edges returned to 50 by using `sorted(lines)[:50]`. This could potentially impact performance if the number of edges is very large.
+* **Scope Normalization**: The function normalizes the scope by ensuring it has a trailing slash. This ensures that the scope prefix matching works correctly.
+
+## Signature
+The function signature is:
+```python
+def _call_graph_summary_for_scope(repo_root: Path, scope_prefix: str, call_graph_path: Path) -> str
+```
+This indicates that the function takes three parameters:
+* `repo_root`: A `Path` object representing the repository root.
+* `scope_prefix`: A `str` representing the scope prefix.
+* `call_graph_path`: A `Path` object representing the call graph path.
+The function returns a `str` representing the markdown listing of caller -> callee edges within the scope.
+---
+
+# assemble_pr_description_from_docs
+
+## Logic Overview
+The `assemble_pr_description_from_docs` function assembles a PR description from all `.tldr.md` files under the `.docs/` directory of a specified `target_path`. The main steps are:
+1. Resolve the `repo_root` and `target_path` to absolute paths.
+2. Check if the `.docs/` directory exists and is a directory. If not, return an error message.
+3. Find all `.tldr.md` files in the `.docs/` directory and sort them.
+4. If no `.tldr.md` files are found, return an error message.
+5. Iterate over the `.tldr.md` files, read their content, and create a section for each file.
+6. If `include_call_graph` is `True`, try to find a `call_graph.json` file in the `.docs/` directory or its parent directory, and append a call graph summary to the PR description.
+
+## Dependency Interactions
+The function uses the following traced calls:
+* `pathlib.Path` to create and manipulate paths.
+* `docs_dir.exists()` and `docs_dir.is_dir()` to check if the `.docs/` directory exists and is a directory.
+* `docs_dir.glob("*.tldr.md")` to find all `.tldr.md` files in the `.docs/` directory.
+* `tldr_path.read_text()` to read the content of a `.tldr.md` file.
+* `tldr_path.stem.removesuffix(".tldr")` to remove the `.tldr` suffix from the file stem.
+* `target.relative_to(root)` to get the relative path of the `target_path` to the `repo_root`.
+* `_call_graph_summary_for_scope(root, scope_rel, cg_candidate)` to get a call graph summary.
+* `cg_candidate.exists()` to check if a `call_graph.json` file exists.
+* `sorted()` to sort the `.tldr.md` files.
+* `str()` to convert a path to a string.
+
+## Potential Considerations
+The function handles the following edge cases:
+* If the `.docs/` directory does not exist or is not a directory, it returns an error message.
+* If no `.tldr.md` files are found, it returns an error message.
+* If a `.tldr.md` file cannot be read, it uses a default content "(unable to read)".
+* If the `target_path` is not absolute, it resolves it to an absolute path relative to the `repo_root`.
+* If a `call_graph.json` file is not found, it does not append a call graph summary.
+
+The function also uses error handling for the following cases:
+* `OSError` when reading a `.tldr.md` file.
+* `ValueError` when getting the relative path of the `target_path` to the `repo_root`.
+
+## Signature
+The function signature is:
+```python
+def assemble_pr_description_from_docs(repo_root: Path, target_path: str, *, include_call_graph: bool = True) -> str
+```
+This indicates that the function:
+* Takes two required arguments: `repo_root` of type `Path` and `target_path` of type `str`.
+* Takes one optional argument: `include_call_graph` of type `bool` with a default value of `True`.
+* Returns a string.
+---
+
 # assemble_commit_message
 
 ## Logic Overview

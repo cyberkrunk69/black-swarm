@@ -1,23 +1,57 @@
+# _MODULE_MD_NAME ELIV
+
+
+---
+
 # _stem_for_file ELIV
 
-Imagine you have a big box of toys, and inside the box, there's a smaller box with a toy inside. The big box is like the "repo root" and the smaller box is like the "file path".
 
-This special helper function finds the name of the toy inside the smaller box, but it only looks at the name, not the whole box. If the smaller box is inside the big box, it finds the name of the toy. If it's not inside the big box, it just finds the name of the toy in the smaller box.
+---
+
+# _find_package_root ELIV
+
+
+---
+
+# _read_module_summary ELIV
+
+
 ---
 
 # assemble_pr_description ELIV
 
-Imagine you have a big box of toys, and you want to write a note to tell your friends about the new toys you added. This special helper function is like a tool that writes that note for you.
 
-It looks at all the new toys you added (like a list of files you changed), and for each toy, it tries to find a special note that you wrote about it. If it can't find the note, it says "No note available".
+---
 
-Then, it puts all the notes together in a big list, with each note labeled with the name of the toy. Finally, it gives you the whole list of notes as a big message that you can share with your friends.
+# _call_graph_summary_for_scope ELIV
+
+This function helps us make a list of how different parts of a program talk to each other. 
+
+It does this by reading a special file that has information about how the program parts talk to each other. 
+
+It then looks at this information and makes a list of the parts that talk to each other. 
+
+If a part of the program is inside a special area, it only looks at the parts that talk to other parts inside that area. 
+
+It then shows us the list of parts that talk to each other, but only shows us the first 50 parts.
+---
+
+# assemble_pr_description_from_docs ELIV
+
+This function helps make a special text for a computer program. It looks for some special files in a folder called ".docs". 
+
+First, it checks if the ".docs" folder exists. If it doesn't, it says there's no folder.
+
+Then, it finds all the files that end with ".tldr.md" inside the ".docs" folder. If there are no files, it says there are no files.
+
+Next, it reads the text from each file and makes a list of the text. It also adds the name of the file (without the ".tldr.md" part) to the text.
+
+After that, it puts all the text together with some special lines in between.
+
+If we want to see a special graph, it looks for a file called "call_graph.json" in two places: in a folder called "vivarium/.docs" and in the ".docs" folder. If it finds the file, it adds the graph to the text.
+
+Finally, it returns the text we made.
 ---
 
 # assemble_commit_message ELIV
 
-Imagine you have a big box of toys, and you want to tell your friends what you did with each toy. You write a little note for each toy, and then you put all the notes together in one big paper.
-
-This function is like a helper that writes those notes for you. It looks at all the toys (or files) you've changed, and for each one, it tries to find a note (or a special message) that you wrote earlier. If it can't find the note, it writes a default message that says "No note available".
-
-Then, it puts all the notes together in one big paper, and that's the final message that says what you did with all the toys.

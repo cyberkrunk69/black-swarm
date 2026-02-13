@@ -17,7 +17,7 @@ This function appears to be responsible for committing changes to a Git reposito
 
 # _cmd_pr_auto_draft
 
-This function appears to be part of a command-line interface (CLI) for managing pull requests (PRs) in a Git repository. It generates or updates a draft PR description based on stale files and their downstream impact. The function likely operates on a specific repository path and uses various modules from the vivarium/scout package for its functionality.
+This function appears to be responsible for generating or updating a pull request draft. It does this by synthesizing a PR description and writing it to a file. The function also checks for stale files and their downstream impact.
 ---
 
 # _find_gh
@@ -27,9 +27,9 @@ This function appears to execute a Git command and retrieve its output. It uses 
 
 # _cmd_pr
 
-This function appears to be a command-line interface (CLI) handler responsible for processing pull requests. It calls various functions from the vivarium.scout module to analyze the Git repository and generate a pull request description. The function likely interacts with the Git repository, retrieves information about the current branch and upstream ref, and assembles a pull request description.
+This function appears to be a command-line interface (CLI) entry point for a pull request (PR) workflow. It calls various functions to analyze the current branch, resolve PR files, and synthesize a PR description. The function likely generates or updates a PR draft based on the analysis and description.
 ---
 
 # main
 
-This function appears to be a command-line interface (CLI) entry point for a Git-based system, handling commit and PR-related commands. It uses the `argparse` library to parse command-line arguments and calls functions from other modules to perform specific tasks.
+This function is part of a command-line interface (CLI) and appears to handle Git-related commands. It uses the `argparse` library to parse command-line arguments and calls functions from other modules to perform specific tasks, such as committing changes and printing help messages.
