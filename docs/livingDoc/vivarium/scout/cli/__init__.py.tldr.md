@@ -1,0 +1,3 @@
+# __all__
+
+The `__all__` constant is a list of strings that specifies the symbols to be imported when using the `from module import *` syntax. Its primary purpose is to control which module contents are exposed to users. It is typically used in modules that provide a public API and is related to the `vivarium/scout/cli/main.py` module, which likely uses this constant to determine what symbols to import when running the CLI.
