@@ -1,0 +1,9 @@
+{
+  "ticket": "minimal-truth-eliv",
+  "router_eliv_sample": "This module provides work coordination while respecting resource limits, activity logging. All activity is transparently logged.",
+  "audit_eliv_sample": "This module enforces activity logging. All activity is transparently logged.",
+  "hallucination_check_exit_code": 0,
+  "behavioral_test_exit_code": 0,
+  "honesty_pledge": "I did not force analogies or hallucinate purpose",
+  "commit_sha": "8ba2b75"
+}
