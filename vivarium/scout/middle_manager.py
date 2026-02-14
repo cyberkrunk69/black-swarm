@@ -30,7 +30,7 @@ class _DummyDepsGraph:
 logger = logging.getLogger(__name__)
 
 # Guard 3: Prevent context explosion (cap expanded context size)
-MAX_EXPANDED_CONTEXT = 40_000  # 10K tokens hard limit (~4 chars/token)
+MAX_EXPANDED_CONTEXT = 40_000  # Character limit for expanded context (~10K tokens at ~4 chars/token)
 
 # Base confidence prompt — critical_symbols_list injected at runtime (TICKET-48e)
 _CONFIDENCE_PROMPT_TEMPLATE = """You are a codebase analyst. Answer based ONLY on provided context.

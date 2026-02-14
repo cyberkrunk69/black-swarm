@@ -42,6 +42,29 @@ def _run_git(args: List[str], cwd: Optional[Path] = None) -> subprocess.Complete
         raise
 
 
+def get_files_in_last_commit(repo_root: Optional[Path] = None) -> List[Path]:
+    """
+    Return files changed in the most recent commit (for post-commit hooks).
+
+    Uses `git show --name-only --pretty=format: HEAD`.
+    Returns empty list if no commits exist or on error.
+    """
+    try:
+        result = _run_git(
+            ["show", "--name-only", "--pretty=format:", "HEAD"],
+            cwd=repo_root,
+        )
+    except subprocess.CalledProcessError:
+        return []
+
+    output = result.stdout.strip()
+    if not output:
+        return []
+
+    root = Path(repo_root or ".").resolve()
+    return [root / line for line in output.splitlines() if line.strip()]
+
+
 def get_changed_files(
     staged_only: bool = False,
     repo_root: Optional[Path] = None,

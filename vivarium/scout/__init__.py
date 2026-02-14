@@ -3,11 +3,23 @@
 from vivarium.scout.audit import AuditLog
 from vivarium.scout.config import ScoutConfig
 from vivarium.scout.ignore import IgnorePatterns
+from vivarium.scout.middle_manager import (
+    BriefParseError,
+    BriefParseResult,
+    BriefParser,
+    GateDecision,
+    MiddleManagerGate,
+)
 from vivarium.scout.router import TriggerRouter
 from vivarium.scout.validator import ValidationResult, Validator, validate_location
 
 __all__ = [
     "AuditLog",
+    "BriefParseError",
+    "BriefParseResult",
+    "BriefParser",
+    "GateDecision",
+    "MiddleManagerGate",
     "IgnorePatterns",
     "ScoutConfig",
     "TriggerRouter",
