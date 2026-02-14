@@ -6,6 +6,10 @@
 **Repository snapshot:** `f68d7ad`  
 **Branch context:** `cursor/scout-feature-white-paper-5620`
 
+**Companion docs:**
+- Vision README: `../docs/scout/README_VISION.md`
+- Technical README: `../docs/scout/README_TECHNICAL.md`
+
 ---
 
 ## Executive Summary
