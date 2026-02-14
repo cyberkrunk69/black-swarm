@@ -16,116 +16,117 @@ This module provides work coordination, resource limits, activity logging.
 Raised when hourly budget is exhausted before an LLM operation.
 
 ## Constants
-- None
+- (none)
 
 ## Methods
-- None
+- (none)
 
 # NavResult
 Result of scout-nav LLM call.
 
 ## Constants
-- None
+- (none)
 
 ## Methods
-- None
-
-# NavResult
-Result of scout-nav LLM call.
-
-## Constants
-- None
-
-## Methods
-- None
+- (none)
 
 # SymbolDoc
 Generated symbol documentation.
 
 ## Constants
-- None
+- (none)
 
 ## Methods
-- None
+- (none)
 
 # TriggerRouter
 Orchestrates triggers, respects limits, prevents infinite loops, and cascades doc updates safely.
 
 ## Constants
-- None
+- (none)
 
 ## Methods
 - `__init__(self, config: ScoutConfig=None, audit: AuditLog=None, validator: Validator=None, repo_root: Path=None, notify: Callable[[str], None]=None)`: 
   Orchestrates triggers, respects limits, prevents infinite loops, and cascades doc updates safely.
 - `should_trigger(self)`: 
-  Description missing.
+  (no description)
 - `_quick_token_estimate(self)`: 
-  Description missing.
+  (no description)
 - `estimate_cascade_cost(self)`: 
-  Description missing.
+  (no description)
 - `on_file_save(self)`: 
-  Description missing.
+  (no description)
 - `on_git_commit(self)`: 
-  Description missing.
+  (no description)
 - `prepare_commit_msg(self)`: 
-  Description missing.
+  (no description)
 - `estimate_task_nav_cost(self)`: 
-  Description missing.
+  (no description)
 - `_list_python_files(self)`: 
-  Description missing.
+  (no description)
 - `_parse_nav_json(self)`: 
-  Description missing.
+  (no description)
 - `navigate_task(self)`: 
-  Description missing.
+  (no description)
 - `on_manual_trigger(self)`: 
-  Description missing.
+  (no description)
 - `_quick_parse(self)`: 
-  Description missing.
+  (no description)
 - `_scout_nav(self)`: 
-  Description missing.
+  (no description)
 - `_affects_module_boundary(self)`: 
-  Description missing.
+  (no description)
 - `_is_public_api(self)`: 
-  Description missing.
+  (no description)
 - `_detect_module(self)`: 
-  Description missing.
+  (no description)
 - `_critical_path_files(self)`: 
-  Description missing.
+  (no description)
 - `_generate_symbol_doc(self)`: 
-  Description missing.
+  (no description)
 - `_write_draft(self)`: 
-  Description missing.
+  (no description)
 - `_update_module_brief(self)`: 
-  Description missing.
+  (no description)
 - `_create_human_ticket(self)`: 
-  Description missing.
+  (no description)
 - `_create_pr_draft(self)`: 
-  Description missing.
+  (no description)
 - `_generate_commit_draft(self)`: 
-  Description missing.
+  (no description)
 - `_generate_pr_snippet(self)`: 
-  Description missing.
+  (no description)
 - `_generate_impact_summary(self)`: 
-  Description missing.
+  (no description)
 - `_process_file(self)`: 
-  Description missing.
+  (no description)
 
 # _notify_user
 Notify user (stub — override for testing or real UI).
 
 ## Constants
-- None
+- (none)
 
 ## Methods
-- `_notify_user(message: str) -> None`: 
+- `_notify_user(self, message: str) -> None`: 
   Notify user (stub — override for testing or real UI).
 
 # check_budget_with_message
 Check if operation can proceed within hourly budget.
 
 ## Constants
-- None
+- (none)
 
 ## Methods
-- `check_budget_with_message(config: ScoutConfig, estimated_cost: float=0.01, audit: Optional[AuditLog]=None) -> bool`: 
+- `check_budget_with_message(self, config: ScoutConfig, estimated_cost: float=0.01, audit: Optional[AuditLog]=None) -> bool`: 
   Check if operation can proceed within hourly budget.
+
+# on_git_commit
+Proactive echo: invalidate dependency graph for changed files. Called by post-commit hook — runs in <100ms, no LLM cost.
+
+## Constants
+- (none)
+
+## Methods
+- `on_git_commit(self, changed_files: List[Path], repo_root: Optional[Path]=None) -> None`: 
+  Proactive echo: invalidate dependency graph for changed files. Called by post-commit hook — runs in <100ms, no LLM cost.

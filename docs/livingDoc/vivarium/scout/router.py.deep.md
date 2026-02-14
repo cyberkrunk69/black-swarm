@@ -71,7 +71,5 @@ This module provides work coordination, resource limits, activity logging.
 
 ## Control Flow
 
-* `BudgetExhaustedError` is raised when hourly budget is exhausted before an LLM operation.
-* `NavResult` is the result of scout-nav LLM call.
-* `SymbolDoc` is generated symbol documentation.
-* `TriggerRouter` orchestrates triggers, respects limits, prevents infinite loops, and cascades doc updates safely.
+* `check_budget_with_message`: Check if operation can proceed within hourly budget.
+  * Returns True if OK, False if blocked (and prints actionable error to stderr).

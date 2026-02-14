@@ -19,23 +19,21 @@ Append-only JSONL event log with line buffering, fsync cadence, and crash recove
 - `_SESSION_LOCK`: threading.Lock() (used at line 52)
 
 ## Methods
-- `__init__(self, path: Path=None)`: implementation
-- `_ensure_open()`: implementation
-- `_maybe_rotate()`: implementation
-- `_close_file()`: implementation
-- `_fsync_if_needed()`: implementation
-- `log()`: implementation
-- `_iter_lines()`: implementation
-- `_parse_line()`: implementation
-- `query()`: implementation
-- `hourly_spend()`: implementation
-- `last_events()`: implementation
-- `accuracy_metrics()`: implementation
-- `gate_metrics()`: implementation
-- `flush()`: implementation
-- `close()`: implementation
-- `__enter__()`: implementation
-- `__exit__()`: implementation
-
-# _get_session_id
-Return uuid4 session ID, one per process.
+- `__init__(path: Path=None)`: implementation
+- `_ensure_open`: implementation
+- `_maybe_rotate`: implementation
+- `_close_file`: implementation
+- `_fsync_if_needed`: implementation
+- `log`: implementation
+- `_iter_lines`: implementation
+- `_parse_line`: implementation
+- `query`: implementation
+- `hourly_spend`: implementation
+- `last_events`: implementation
+- `accuracy_metrics`: implementation
+- `gate_metrics`: implementation
+- `flush`: implementation
+- `close`: implementation
+- `__enter__`: implementation
+- `__exit__`: implementation
+- `_get_session_id() -> str`: Return uuid4 session ID, one per process.
