@@ -4,15 +4,13 @@
 This module coordinates specialized helpers with awareness of constraints and activity.
 
 ## Constants
-
 ### `_COMPLEXITY_KEYWORDS`
 
 * Value: `['algorithm', 'optimize', 'refactor', 'benchmark', 'scale', 'performance', 'thread', 'process', 'async', 'concurrency', 'distributed', 'pipeline', 'sql', 'database', 'api', 'authentication', 'encryption', 'docker', 'kubernetes', 'microservice', 'cache', 'index', 'migration']`
-* Type: `List[str]`
+* Type: List[str]
 * Used at lines: 66
 
 ## Methods
-
 ### `estimate_complexity`
 
 * Docstring: Return a numeric complexity score. Higher scores -> more demanding request.
@@ -32,7 +30,6 @@ This module coordinates specialized helpers with awareness of constraints and ac
 * Used at lines: (none)
 
 ## Control Flow
-
 ### `EngineType`
 
 * Docstring: Available inference backends.

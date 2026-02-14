@@ -30,6 +30,15 @@ Result of scout-nav LLM call.
 ## Methods
 - None
 
+# NavResult
+Result of scout-nav LLM call.
+
+## Constants
+- None
+
+## Methods
+- None
+
 # SymbolDoc
 Generated symbol documentation.
 
@@ -47,33 +56,59 @@ Orchestrates triggers, respects limits, prevents infinite loops, and cascades do
 
 ## Methods
 - `__init__(self, config: ScoutConfig=None, audit: AuditLog=None, validator: Validator=None, repo_root: Path=None, notify: Callable[[str], None]=None)`: 
+  Orchestrates triggers, respects limits, prevents infinite loops, and cascades doc updates safely.
 - `should_trigger(self)`: 
+  Description missing.
 - `_quick_token_estimate(self)`: 
+  Description missing.
 - `estimate_cascade_cost(self)`: 
+  Description missing.
 - `on_file_save(self)`: 
+  Description missing.
 - `on_git_commit(self)`: 
+  Description missing.
 - `prepare_commit_msg(self)`: 
+  Description missing.
 - `estimate_task_nav_cost(self)`: 
+  Description missing.
 - `_list_python_files(self)`: 
+  Description missing.
 - `_parse_nav_json(self)`: 
+  Description missing.
 - `navigate_task(self)`: 
+  Description missing.
 - `on_manual_trigger(self)`: 
+  Description missing.
 - `_quick_parse(self)`: 
+  Description missing.
 - `_scout_nav(self)`: 
+  Description missing.
 - `_affects_module_boundary(self)`: 
+  Description missing.
 - `_is_public_api(self)`: 
+  Description missing.
 - `_detect_module(self)`: 
+  Description missing.
 - `_critical_path_files(self)`: 
+  Description missing.
 - `_generate_symbol_doc(self)`: 
+  Description missing.
 - `_write_draft(self)`: 
+  Description missing.
 - `_update_module_brief(self)`: 
+  Description missing.
 - `_create_human_ticket(self)`: 
+  Description missing.
 - `_create_pr_draft(self)`: 
-- `_load_symbol_docs(self)`: 
+  Description missing.
 - `_generate_commit_draft(self)`: 
+  Description missing.
 - `_generate_pr_snippet(self)`: 
+  Description missing.
 - `_generate_impact_summary(self)`: 
+  Description missing.
 - `_process_file(self)`: 
+  Description missing.
 
 # _notify_user
 Notify user (stub — override for testing or real UI).
@@ -82,15 +117,15 @@ Notify user (stub — override for testing or real UI).
 - None
 
 ## Methods
-- `def _notify_user(message: str) -> None`: 
+- `_notify_user(message: str) -> None`: 
+  Notify user (stub — override for testing or real UI).
 
 # check_budget_with_message
 Check if operation can proceed within hourly budget.
-
-    Returns True if OK, False if blocked (and prints actionable error to stderr).
 
 ## Constants
 - None
 
 ## Methods
-- `def check_budget_with_message(config: ScoutConfig, estimated_cost: float=0.01, audit: Optional[AuditLog]=None) -> bool`:
+- `check_budget_with_message(config: ScoutConfig, estimated_cost: float=0.01, audit: Optional[AuditLog]=None) -> bool`: 
+  Check if operation can proceed within hourly budget.

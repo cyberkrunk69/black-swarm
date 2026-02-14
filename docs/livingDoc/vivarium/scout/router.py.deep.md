@@ -39,37 +39,39 @@ This module provides work coordination, resource limits, activity logging.
 
 ### Class Methods
 
-* `TriggerRouter`:
-  * `__init__`: Initializes the TriggerRouter instance.
-  * `should_trigger`: Checks if a trigger should be executed.
-  * `_quick_token_estimate`: Estimates the number of tokens in a file.
-  * `estimate_cascade_cost`: Estimates the cost of a cascade operation.
-  * `on_file_save`: Handles file save events.
-  * `on_git_commit`: Handles git commit events.
-  * `prepare_commit_msg`: Prepares a commit message.
-  * `estimate_task_nav_cost`: Estimates the cost of a task navigation operation.
-  * `_list_python_files`: Lists Python files in a repository.
-  * `_parse_nav_json`: Parses navigation JSON data.
-  * `navigate_task`: Navigates a task.
-  * `on_manual_trigger`: Handles manual trigger events.
-  * `_quick_parse`: Performs a quick parse operation.
-  * `_scout_nav`: Performs a scout navigation operation.
-  * `_affects_module_boundary`: Checks if a file affects a module boundary.
-  * `_is_public_api`: Checks if a file is part of the public API.
-  * `_detect_module`: Detects a module.
-  * `_critical_path_files`: Lists critical path files.
-  * `_generate_symbol_doc`: Generates symbol documentation.
-  * `_write_draft`: Writes a draft.
-  * `_update_module_brief`: Updates a module brief.
-  * `_create_human_ticket`: Creates a human ticket.
-  * `_create_pr_draft`: Creates a PR draft.
-  * `_load_symbol_docs`: Loads symbol documentation.
-  * `_generate_commit_draft`: Generates a commit draft.
-  * `_generate_pr_snippet`: Generates a PR snippet.
-  * `_generate_impact_summary`: Generates an impact summary.
-  * `_process_file`: Processes a file.
+* `TriggerRouter`: 
+  * `__init__`
+  * `should_trigger`
+  * `_quick_token_estimate`
+  * `estimate_cascade_cost`
+  * `on_file_save`
+  * `on_git_commit`
+  * `prepare_commit_msg`
+  * `estimate_task_nav_cost`
+  * `_list_python_files`
+  * `_parse_nav_json`
+  * `navigate_task`
+  * `on_manual_trigger`
+  * `_quick_parse`
+  * `_scout_nav`
+  * `_affects_module_boundary`
+  * `_is_public_api`
+  * `_detect_module`
+  * `_critical_path_files`
+  * `_generate_symbol_doc`
+  * `_write_draft`
+  * `_update_module_brief`
+  * `_create_human_ticket`
+  * `_create_pr_draft`
+  * `_load_symbol_docs`
+  * `_generate_commit_draft`
+  * `_generate_pr_snippet`
+  * `_generate_impact_summary`
+  * `_process_file`
 
 ## Control Flow
 
-* `check_budget_with_message`: Checks if an operation can proceed within the hourly budget.
-* `on_git_commit`: Handles git commit events and invalidates the dependency graph for changed files.
+* `BudgetExhaustedError` is raised when hourly budget is exhausted before an LLM operation.
+* `NavResult` is the result of scout-nav LLM call.
+* `SymbolDoc` is generated symbol documentation.
+* `TriggerRouter` orchestrates triggers, respects limits, prevents infinite loops, and cascades doc updates safely.
