@@ -6,146 +6,15 @@ Never invents facts. Validates output against facts. Embeds FACT_CHECKSUM for ru
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
-from vivarium.scout.doc_sync.ast_facts import ModuleFacts, SymbolFact
+from vivarium.scout.doc_sync.ast_facts import ModuleFacts
 
 logger = logging.getLogger(__name__)
-
-
-def _generate_eliv_minimal_truth(facts: ModuleFacts) -> str:
-    """Generate ELIV as MINIMAL PLAIN-ENGLISH TRUTH.
-
-    NO analogies. NO vividness pressure. NO hallucinations.
-    Only state what symbols factually support.
-    """
-    constraints: List[str] = []
-    capabilities: List[str] = []
-
-    # Extract factual constraints from symbol names
-    symbol_names = " ".join(s.lower() for s in facts.symbols.keys())
-
-    if any(kw in symbol_names for kw in ["budget", "cost", "limit", "ceiling", "max"]):
-        constraints.append("resource limits")
-    if any(kw in symbol_names for kw in ["audit", "log", "record", "track"]):
-        constraints.append("activity logging")
-    if any(kw in symbol_names for kw in ["route", "dispatch", "triage", "queue"]):
-        capabilities.append("work coordination")
-    if any(kw in symbol_names for kw in ["execut", "run", "invoke", "call"]):
-        capabilities.append("task execution")
-
-    # Construct minimal truth statement (no claims unsupported by symbols)
-    if capabilities and constraints:
-        base = (
-            f"This module provides {', '.join(capabilities)} "
-            f"while respecting {', '.join(constraints)}."
-        )
-    elif capabilities:
-        base = f"This module provides {', '.join(capabilities)}."
-    elif constraints:
-        base = f"This module enforces {', '.join(constraints)}."
-    else:
-        base = ""
-
-    if base:
-        if "activity logging" in constraints:
-            return f"{base} All activity is transparently logged."
-        return base
-    return (
-        "This module coordinates work between specialized helpers with resource "
-        "awareness and activity logging."
-    )
-
-
-def _extract_module_purpose(facts: ModuleFacts) -> str:
-    """Extract 'why' narrative from module docstring + symbol facts. No LLM."""
-    path = facts.path
-    stem = path.stem if path else "module"
-    symbol_names = set(facts.symbols.keys())
-
-    # 1. Module docstring (first sentence only — keep ELIV tight)
-    doc_parts: list[str] = []
-    try:
-        source = path.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(path))
-        doc = ast.get_docstring(tree)
-        if doc and doc.strip():
-            block = doc.strip().split("\n\n")[0].replace("\n", " ").strip()
-            first_sent = re.split(r"[.!?]\s+", block)[0]
-            if first_sent and len(first_sent) > 15:
-                doc_parts.append(first_sent.strip() + ("." if not first_sent.endswith(".") else ""))
-    except Exception:
-        pass
-
-    # 2. Purpose from symbol patterns (no hardcoded file names)
-    symbols_text = " ".join(symbol_names).lower()
-    if any(kw in symbols_text for kw in ["route", "dispatch", "trigger", "orchestrat"]):
-        if any(kw in symbols_text for kw in ["budget", "exhaust", "check_budget"]):
-            doc_parts.append("Routes work while enforcing limits so we don't overspend.")
-        else:
-            doc_parts.append("Routes triggers and dispatches work safely.")
-    elif any(kw in symbols_text for kw in ["audit", "log", "record", "track"]):
-        doc_parts.append("Logs events and costs so we can see what happened and how much we spent.")
-    elif any(kw in symbols_text for kw in ["engine", "inference", "complexity", "estimate"]):
-        doc_parts.append("Picks the right tool for the job and tracks usage.")
-
-    # 3. Constraint rationale from inline comments (max, limit, budget, ceiling)
-    try:
-        for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
-            if "=" in line and "#" in line:
-                lower = line.lower()
-                if any(kw in lower for kw in ["max", "limit", "ceiling", "budget", "cap"]):
-                    comment = line.split("#", 1)[1].strip()
-                    cl = comment.lower()
-                    if len(comment) > 15 and ("chars" in cl or "token" in cl):
-                        doc_parts.append(f"Keeps context under control ({comment[:60]}).")
-                        break
-    except Exception:
-        pass
-
-    if not doc_parts:
-        return f"Core logic for {stem}. The list below shows what's defined."
-    return " ".join(doc_parts[:2])[:320]  # Max 2 parts, ~320 chars
-
-
-def _classify_module_domain(facts: ModuleFacts) -> str:
-    """Classify module domain from symbol patterns — NO hardcoded project names."""
-    symbols = [n.lower() for n in facts.symbols.keys()]
-    stem = facts.path.stem.lower() if facts.path else ""
-    text = " ".join(symbols + [stem])
-    if any(kw in text for kw in ["route", "dispatch", "triage", "queue", "orchestrat"]):
-        return "routing"
-    if any(kw in text for kw in ["execut", "engine", "inference", "run", "invoke", "call"]):
-        return "execution"
-    if any(kw in text for kw in ["audit", "log", "record", "track", "account", "receipt"]):
-        return "audit"
-    if any(kw in text for kw in ["swarm", "agent", "collaborat", "coordinate", "team"]):
-        return "coordination"
-    return "general"
-
-
-def _extract_constraints_from_facts(facts: ModuleFacts) -> List[str]:
-    """Extract constraint-like patterns from symbol names and docstrings."""
-    constraints: List[str] = []
-    for name, fact in facts.symbols.items():
-        n = name.lower()
-        if any(kw in n for kw in ["limit", "max", "budget", "cap", "exhaust", "check"]):
-            constraints.append("manages limits")
-        if any(kw in n for kw in ["cost", "spend", "track"]):
-            constraints.append("tracks spending")
-        if fact.docstring and any(kw in fact.docstring.lower() for kw in ["prevent", "avoid", "ensure"]):
-            constraints.append("prevents problems")
-    return list(dict.fromkeys(constraints))[:3] or ["manages limits"]
-
-
-def _get_eliv_normie_friendly_from_facts(facts: ModuleFacts) -> str:
-    """Minimal plain-English truth from AST facts. No analogies, no hallucinations."""
-    return _generate_eliv_minimal_truth(facts)
 
 
 # TICKET-50: Gate constants that must NOT appear in docs unless defined in this module
@@ -157,11 +26,8 @@ _CROSS_MODULE_HALLUCINATION_BLOCKLIST = frozenset({
 })
 
 
-# TICKET-100: Section headers that are NOT symbol names (allowed in output)
 def _validate_output_against_facts(prose: str, facts: ModuleFacts) -> bool:
-    """Reject blatant contradictions and cross-module constant hallucinations. TICKET-46, TICKET-50.
-    TICKET-100: Reject hallucinated symbols — all # SymbolName must exist in facts.
-    """
+    """Reject blatant contradictions and cross-module constant hallucinations. TICKET-46, TICKET-50."""
     # TICKET-46: Reject "not used" when used
     for name, fact in facts.symbols.items():
         if fact.used_at and re.search(
@@ -183,83 +49,7 @@ def _validate_output_against_facts(prose: str, facts: ModuleFacts) -> bool:
                 facts.path.name if facts.path else "?",
             )
             return False
-
-    # TICKET-100: Reject hallucinated symbols — # SymbolName (single #) must exist in facts.
-    # Use (?<!#) to avoid matching "## Section" (double hash = subsection, not symbol).
-    # Exclude standard section headers: # TLDR, # ELIV (quality gate structure).
-    section_header_allowlist = frozenset({"TLDR", "ELIV", "Module"})
-    output_symbols: set[str] = set()
-    for m in re.finditer(r"(?<!#)#\s+`?([A-Za-z_][A-Za-z0-9_]*)`?", prose):
-        sym = m.group(1)
-        output_symbols.add(sym)
-        if sym in section_header_allowlist:
-            continue
-        if sym not in defined_names:
-            logger.error(
-                "Hallucinated symbol: '%s' in output but not in facts for %s",
-                sym,
-                facts.path.name if facts.path else "?",
-            )
-            return False
-
-    # TICKET-100: Reject if documentable symbols are missing (e.g. LLM omits TriggerRouter).
-    required = {n for n, f in facts.symbols.items() if f.type in ("class", "function")}
-    missing = required - output_symbols
-    if missing:
-        logger.error(
-            "Missing symbols in output for %s: %s",
-            facts.path.name if facts.path else "?",
-            ", ".join(sorted(missing)),
-        )
-        return False
-
-    # TICKET-100: Require class methods to appear (LLM may omit Methods section).
-    for name, fact in facts.symbols.items():
-        if fact.type == "class" and fact.methods:
-            for method in fact.methods:
-                if not re.search(rf"`{re.escape(method)}`", prose):
-                    logger.error(
-                        "Missing method %s.%s in output for %s",
-                        name,
-                        method,
-                        facts.path.name if facts.path else "?",
-                    )
-                    return False
     return True
-
-
-def _ensure_eliv_normie_friendly(prose: str, facts: ModuleFacts) -> str:
-    """Replace ELIV section with data-driven normie text."""
-    eliv_text = _get_eliv_normie_friendly_from_facts(facts)
-    # Replace content between # ELIV and next # heading or end
-    pattern = r"(^# ELIV\s*\n)(.*?)(?=^# |\Z)"
-    return re.sub(pattern, r"\g<1>" + eliv_text + "\n\n", prose, flags=re.MULTILINE | re.DOTALL)
-
-
-def _ensure_tldr_eliv_prefix(prose: str, facts: ModuleFacts) -> str:
-    """Prepend # TLDR and # ELIV if missing (quality gate: structural hierarchy).
-    TLDR: engineer-facing. ELIV: normie-friendly (curated for router/audit/inference_engine).
-    """
-    has_tldr = bool(re.search(r"^# TLDR\s*$", prose, re.MULTILINE))
-    has_eliv = bool(re.search(r"^# ELIV\s*$", prose, re.MULTILINE))
-    if has_tldr and has_eliv:
-        prose = _ensure_eliv_normie_friendly(prose, facts)
-        return prose
-    stem = facts.path.stem if facts.path else "module"
-    purpose = _extract_module_purpose(facts)
-    first = purpose.split(".")[0].strip()
-    if first and not first.endswith("."):
-        first += "."
-    eliv_text = _get_eliv_normie_friendly_from_facts(facts)
-    prefix = "# TLDR\n"
-    prefix += f"{stem}: {first}\n\n"
-    prefix += "# ELIV\n"
-    prefix += f"{eliv_text}\n\n"
-    # Insert after any existing HTML comment
-    if prose.strip().startswith("<!--"):
-        end = prose.find("-->") + 3
-        return prose[:end] + "\n\n" + prefix + prose[end:].lstrip()
-    return prefix + prose
 
 
 class ConstrainedDocSynthesizer:
@@ -277,35 +67,23 @@ RULES:
 1. NEVER invent facts not in the FACTS section.
 2. NEVER say "not used" unless usage list is "(none)" in FACTS.
 3. For constants, ALWAYS list line numbers where used (from FACTS) — e.g. "used at lines 109, 335, 363".
-4. Include ALL module-level constants AND functions that appear in FACTS (only symbols defined in this module).
-5. For classes, list ONLY methods from the Methods field. Enum classes have "Methods: (none)" — NEVER list module-level functions as class methods. Module-level functions are ALWAYS separate # FunctionName sections.
-6. For functions/methods, use the exact Signature from FACTS (params, types, defaults, return type).
-7. If uncertain about any detail, omit it — never hallucinate.
+4. Include ALL module-level constants that appear in FACTS (only symbols defined in this module).
+5. For classes, list their constants and methods. For methods, list parameters and return type (from FACTS).
+6. If uncertain about any detail, omit it — never hallucinate.
 
-OUTPUT FORMAT (MANDATORY — include all three sections at top):
-# TLDR
-One-line summary of what this module does (max 80 chars).
-
-# ELIV
-Explain Like I'm Five: 2-3 sentences in plain language. Why does this module exist? No jargon.
-
-# Module Summary
-
+OUTPUT FORMAT:
 ## Module Constants
 - `logger`: (used at lines X, Y, Z)
 - `MAX_EXPANDED_CONTEXT`: value (used at lines X, Y)
 
-## Module Functions
-- # function_name: Use exact Signature from FACTS. Parameters and Return Type from Signature.
-
 # ClassName
-Brief description. (If Enum class: no Methods section — only enum members as Constants if any.)
+Brief description.
 
 ## Constants
 - `name`: (used at lines X, Y, Z)
 
 ## Methods
-- `method(param: type) -> return_type`: description (ONLY for non-Enum classes; from Methods field only)
+- `method(param: type) -> return_type`: description
 
 FACTS (100% ACCURATE — DO NOT CONTRADICT):
 {facts_markdown}
@@ -323,13 +101,10 @@ OUTPUT (prose only — no JSON, no disclaimers):"""
     def _facts_to_markdown_impl(
         self, facts: ModuleFacts, include_enrichment: bool = False
     ) -> str:
-        """Convert ModuleFacts to markdown. Optionally include docstring/signature/purpose.
-        TICKET-95: Include method_signatures and is_enum for accurate attribution.
-        """
+        """Convert ModuleFacts to markdown. Optionally include docstring/signature/purpose."""
         lines = []
         for name, fact in sorted(facts.symbols.items()):
-            type_label = f"{fact.type} (Enum)" if getattr(fact, "is_enum", False) else fact.type
-            lines.append(f"- `{name}` ({type_label})")
+            lines.append(f"- `{name}` ({fact.type})")
             if fact.value is not None:
                 lines.append(f"  Value: {fact.value}")
             if fact.type_annotation:
@@ -348,17 +123,8 @@ OUTPUT (prose only — no JSON, no disclaimers):"""
                 lines.append(f"  Used at lines: {', '.join(map(str, fact.used_at))}")
             else:
                 lines.append("  Used at lines: (none)")
-            # TICKET-95: Enum has no methods. Methods are ONLY those in class body.
-            if getattr(fact, "is_enum", False):
-                lines.append("  Methods: (none — Enum class; module-level functions are NOT methods)")
-            elif fact.methods:
-                method_sigs = getattr(fact, "method_signatures", None) or {}
-                if method_sigs:
-                    for m in fact.methods:
-                        sig = method_sigs.get(m, m + "()")
-                        lines.append(f"  Method {m}: {sig}")
-                else:
-                    lines.append(f"  Methods: {', '.join(fact.methods)}")
+            if fact.methods:
+                lines.append(f"  Methods: {', '.join(fact.methods)}")
             if fact.fields:
                 lines.append(f"  Fields: {', '.join(fact.fields)}")
         return "\n".join(lines)
@@ -381,7 +147,6 @@ OUTPUT (prose only — no JSON, no disclaimers):"""
         if not _validate_output_against_facts(prose, facts):
             prose = self._fallback_from_facts(facts)
 
-        prose = _ensure_tldr_eliv_prefix(prose, facts)
         checksum = facts.checksum()
         return f"<!-- FACT_CHECKSUM: {checksum} -->\n\n{prose}", resp.cost_usd
 
@@ -396,20 +161,11 @@ OUTPUT (prose only — no JSON, no disclaimers):"""
 
 CRITICAL RULE (TICKET-50): ONLY describe symbols in FACTS below. Do NOT add constants from other modules.
 
-OUTPUT FORMAT (MANDATORY — include all three sections at top):
-# TLDR
-One-line summary of what this module does (max 80 chars).
-
-# ELIV
-Explain Like I'm Five: 2-3 sentences in plain language. Why does this module exist? No jargon.
-
-# Module Summary
-(bullet list of symbols, then ## sections for detail)
-
 FACTS:
 {facts_md}
 
-Output structured markdown. For each constant, list exact line numbers where used. Never say "not used" if lines are listed."""
+Output structured markdown with ## headings for Constants, Methods, Control Flow.
+For each constant, list exact line numbers where used. Never say "not used" if lines are listed."""
 
         from vivarium.scout.llm import call_groq_async
 
@@ -422,7 +178,6 @@ Output structured markdown. For each constant, list exact line numbers where use
         prose = resp.content.strip()
         if not _validate_output_against_facts(prose, facts):
             prose = self._fallback_from_facts(facts)
-        prose = _ensure_tldr_eliv_prefix(prose, facts)
         checksum = facts.checksum()
         return f"<!-- FACT_CHECKSUM: {checksum} -->\n\n{prose}", resp.cost_usd
 
@@ -431,19 +186,8 @@ Output structured markdown. For each constant, list exact line numbers where use
         return asyncio.run(self.synthesize_deep_async(facts))
 
     def _fallback_from_facts(self, facts: ModuleFacts) -> str:
-        """Generate deterministic fallback when LLM output fails validation.
-        TICKET-95: Include signatures for functions; Enum has no methods.
-        Quality gate: include # TLDR and # ELIV at top with purpose extraction.
-        """
-        stem = facts.path.stem if facts.path else "module"
-        purpose = _extract_module_purpose(facts)
-        first = purpose.split(".")[0].strip()
-        if first and not first.endswith("."):
-            first += "."
-        eliv_text = _get_eliv_normie_friendly_from_facts(facts)
-        tldr = f"# TLDR\n{stem}: {first}\n\n"
-        eliv = f"# ELIV\n{eliv_text}\n\n"
-        lines = [tldr, eliv, "# Module Summary\n"]
+        """Generate deterministic fallback when LLM output fails validation."""
+        lines = ["# Module Summary\n"]
         for name, fact in sorted(facts.symbols.items()):
             if fact.type == "constant":
                 usage = f" (used at lines {', '.join(map(str, fact.used_at))})" if fact.used_at else ""
@@ -451,20 +195,7 @@ Output structured markdown. For each constant, list exact line numbers where use
                 if fact.value:
                     lines.append(f"  Value: {fact.value}")
             elif fact.type == "class":
-                if getattr(fact, "is_enum", False):
-                    lines.append(f"- `{name}`: Enum class (no methods)")
-                else:
-                    method_sigs = getattr(fact, "method_signatures", None) or {}
-                    if method_sigs:
-                        for m, sig in method_sigs.items():
-                            lines.append(f"- `{name}.{m}`: {sig}")
-                    else:
-                        lines.append(f"- `{name}`: class with methods {', '.join(fact.methods)}")
-            elif fact.type == "function":
-                if fact.signature:
-                    lines.append(f"- `{name}`: {fact.signature}")
-                else:
-                    lines.append(f"- `{name}`: function")
+                lines.append(f"- `{name}`: class with methods {', '.join(fact.methods)}")
         return "\n".join(lines)
 
 
@@ -474,16 +205,6 @@ class RichDocSynthesizer(ConstrainedDocSynthesizer):
     """
 
     PHASE_1_PROMPT = """Generate minimal .tldr.md from facts below.
-
-OUTPUT MUST START WITH (in this order):
-# TLDR
-One-line summary (max 80 chars).
-
-# ELIV
-2-3 sentences in plain language. Why does this module exist?
-
-# Module Summary
-(bullet list)
 
 CRITICAL RULE (TICKET-50):
 - ONLY describe symbols DEFINED in this module (not imported/used symbols).
@@ -551,7 +272,6 @@ REWRITTEN (fluent prose WITH semantic precision):"""
         if not _validate_output_against_facts(phase2, facts):
             phase2 = self._fallback_from_facts(facts)
 
-        phase2 = _ensure_tldr_eliv_prefix(phase2, facts)
         checksum = facts.checksum()
         return f"<!-- FACT_CHECKSUM: {checksum} -->\n\n{phase2}", cost
 
@@ -561,11 +281,6 @@ REWRITTEN (fluent prose WITH semantic precision):"""
 
 
 PHASE_2_REASONING_PROMPT = """Rewrite this documentation to be clear, accurate, and helpful.
-
-PRESERVE AT TOP (do not remove or reorder):
-# TLDR
-# ELIV
-# Module Summary
 
 CRITICAL RULE (TICKET-50):
 - NEVER add constants that were not in the ORIGINAL. The ORIGINAL contains ONLY symbols defined in this module.
@@ -674,7 +389,6 @@ class ReasoningDocSynthesizer(ConstrainedDocSynthesizer):
             logger.warning("Fact validation failed — falling back to Phase 1")
             phase2 = phase1
 
-        phase2 = _ensure_tldr_eliv_prefix(phase2, facts)
         checksum = facts.checksum()
         return f"<!-- FACT_CHECKSUM: {checksum} -->\n\n{phase2}", cost1 + cost2
 
