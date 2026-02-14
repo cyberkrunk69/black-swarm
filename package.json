@@ -1,0 +1,27 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "Vivarium is a local-first operating model for long-running human + AI collaboration. Instead of treating AI workers as disposable one-shot prompts, Vivarium models them as persistent residents that can keep identity continuity, coordinate socially, earn and spend tokens, and participate in auditable, human-supervised execution loops.",
+  "main": "onTheInevitable-anEssayByClaudeOpus4point6_gen.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyberkrunk69/Vivarium.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/cyberkrunk69/Vivarium/issues"
+  },
+  "homepage": "https://github.com/cyberkrunk69/Vivarium#readme",
+  "dependencies": {
+    "docx": "^9.5.2"
+  }
+}
