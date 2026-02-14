@@ -46,12 +46,16 @@ async def _mock_70b_suspicious(prompt: str, **kwargs):
 class TestMiddleManagerGateRetryEscalation:
     """Retry escalation: mock 70B rejection → raw TLDR fallback."""
 
-    def test_escalates_to_raw_tldr_after_max_rejections(self):
+    def test_escalates_to_raw_tldr_after_max_rejections(self, tmp_path, monkeypatch):
         """Mock 70B returns low confidence 3x → escalate to raw TLDRs."""
+        from vivarium.scout.audit import AuditLog
+
+        monkeypatch.setattr("vivarium.scout.raw_briefs.RAW_BRIEFS_DIR", tmp_path / "raw_briefs")
         gate = MiddleManagerGate(
             confidence_threshold=0.75,
             max_attempts=3,
             groq_client=_mock_70b_reject_low_confidence,
+            audit=AuditLog(path=tmp_path / "audit.jsonl"),
         )
         decision = asyncio.run(gate.validate_and_compress(
             question="What does X do?",
@@ -62,11 +66,15 @@ class TestMiddleManagerGateRetryEscalation:
         assert decision.content == RAW_TLDR_CONTEXT
         assert decision.attempt == 3
 
-    def test_escalates_on_parse_error_after_max_retries(self):
+    def test_escalates_on_parse_error_after_max_retries(self, tmp_path, monkeypatch):
         """Mock 70B returns unparseable 3x → escalate to raw TLDRs."""
+        from vivarium.scout.audit import AuditLog
+
+        monkeypatch.setattr("vivarium.scout.raw_briefs.RAW_BRIEFS_DIR", tmp_path / "raw_briefs")
         gate = MiddleManagerGate(
             max_attempts=3,
             groq_client=_mock_70b_parse_error,
+            audit=AuditLog(path=tmp_path / "audit.jsonl"),
         )
         decision = asyncio.run(gate.validate_and_compress(
             question="What?",
@@ -76,8 +84,11 @@ class TestMiddleManagerGateRetryEscalation:
         assert decision.source == "raw_tldr"
         assert decision.content == RAW_TLDR_CONTEXT
 
-    def test_passes_on_first_acceptable_response(self):
+    def test_passes_on_first_acceptable_response(self, tmp_path, monkeypatch):
         """Mock 70B returns high confidence → pass on first attempt."""
+        from vivarium.scout.audit import AuditLog
+
+        monkeypatch.setattr("vivarium.scout.raw_briefs.RAW_BRIEFS_DIR", tmp_path / "raw_briefs")
         async def _mock_ok(prompt: str, **kwargs):
             return SimpleNamespace(
                 content="confidence_score: 0.85\nGood analysis.\nNone identified — verified coverage of 5 symbols",
@@ -86,6 +97,7 @@ class TestMiddleManagerGateRetryEscalation:
 
         gate = MiddleManagerGate(
             groq_client=_mock_ok,
+            audit=AuditLog(path=tmp_path / "audit.jsonl"),
         )
         decision = asyncio.run(gate.validate_and_compress(
             question="What?",
@@ -97,8 +109,12 @@ class TestMiddleManagerGateRetryEscalation:
         assert "Good analysis" in decision.content
         assert decision.attempt == 1
 
-    def test_audit_log_instrumentation(self):
+    def test_audit_log_instrumentation(self, tmp_path, monkeypatch):
         """Audit log receives confidence/gap hooks."""
+        monkeypatch.setattr(
+            "vivarium.scout.raw_briefs.RAW_BRIEFS_DIR",
+            tmp_path / "raw_briefs",
+        )
         audit = MagicMock()
         async def _mock_ok(prompt: str, **kwargs):
             return SimpleNamespace(
