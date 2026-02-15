@@ -110,7 +110,9 @@ def _fetch_file_at_ref(repo: str, file_path: str, ref: str) -> str:
     if not isinstance(data, dict) or "content" not in data:
         raise RuntimeError(f"Unexpected contents payload for {file_path}@{ref}")
     if data.get("encoding") != "base64":
-        raise RuntimeError(f"Unsupported encoding for {file_path}: {data.get('encoding')}")
+        raise RuntimeError(
+            f"Unsupported encoding for {file_path}: {data.get('encoding')}"
+        )
     raw = base64.b64decode(data["content"])
     return raw.decode("utf-8", errors="replace")
 
@@ -126,7 +128,9 @@ def _list_changed_files(repo: str, pr_number: int) -> list[str]:
             raise RuntimeError(f"Unexpected pulls/files payload for PR #{pr_number}")
         if not chunk:
             break
-        files.extend(item.get("filename", "") for item in chunk if isinstance(item, dict))
+        files.extend(
+            item.get("filename", "") for item in chunk if isinstance(item, dict)
+        )
         page += 1
     return [f for f in files if f]
 
@@ -163,8 +167,7 @@ def _contains_owner_wildcard(codeowners: str) -> bool:
 
 def _matches_restricted_path(path: str) -> bool:
     return any(
-        path == prefix or path.startswith(prefix)
-        for prefix in RESTRICTED_PATH_PREFIXES
+        path == prefix or path.startswith(prefix) for prefix in RESTRICTED_PATH_PREFIXES
     )
 
 
@@ -182,7 +185,10 @@ def _check_policy_files(
     result: GuardResult, repo: str, ref: str, event_name: str, payload: dict
 ) -> None:
     files: dict[str, str] = {}
-    for path in WORKFLOW_PATHS + (".github/CODEOWNERS", ".github/pull_request_template.md"):
+    for path in WORKFLOW_PATHS + (
+        ".github/CODEOWNERS",
+        ".github/pull_request_template.md",
+    ):
         try:
             files[path] = _fetch_file_at_ref(repo, path, ref)
         except RuntimeError as exc:
@@ -202,9 +208,7 @@ def _check_policy_files(
         body = payload.get("pull_request", {}).get("body") or ""
         for heading in ("## Evidence", "## Security", "## Ownership & Risk"):
             if heading not in body:
-                result.fail(
-                    f"PR description must include '{heading}' section."
-                )
+                result.fail(f"PR description must include '{heading}' section.")
 
     lint = files[".github/workflows/lint.yml"]
     lint_push = set(_parse_inline_branches(lint, "push"))
@@ -240,7 +244,9 @@ def _check_policy_files(
     for workflow_path in WORKFLOW_PATHS:
         text = files[workflow_path]
         if not _contains_top_level_contents_read(text):
-            result.fail(f"{workflow_path} must declare top-level permissions with contents: read.")
+            result.fail(
+                f"{workflow_path} must declare top-level permissions with contents: read."
+            )
         if re.search(r"(?mi)^\s*continue-on-error:\s*true\s*$", text):
             result.fail(f"{workflow_path} must not use continue-on-error: true.")
 
@@ -252,14 +258,20 @@ def _check_actor_controls(
     ref_name = os.environ.get("GITHUB_REF_NAME", "")
     owner_allowlist = {repo_owner.lower(), POLICY_OWNER}
 
-    if event_name == "push" and ref_name in PROTECTED_BRANCHES and actor not in owner_allowlist:
+    if (
+        event_name == "push"
+        and ref_name in PROTECTED_BRANCHES
+        and actor not in owner_allowlist
+    ):
         result.fail(
             f"Direct push to protected branch '{ref_name}' by '{actor}' is blocked by policy."
         )
 
     if event_name in {"pull_request", "pull_request_target"}:
         pr = payload.get("pull_request", {})
-        changed_files = _list_changed_files(_require_env("GITHUB_REPOSITORY"), pr["number"])
+        changed_files = _list_changed_files(
+            _require_env("GITHUB_REPOSITORY"), pr["number"]
+        )
         restricted = [p for p in changed_files if _matches_restricted_path(p)]
         if restricted and actor not in owner_allowlist:
             result.fail(
@@ -267,7 +279,9 @@ def _check_actor_controls(
                 f"Restricted changes detected: {', '.join(restricted[:10])}"
             )
         elif restricted:
-            result.note(f"Owner is modifying restricted paths: {', '.join(restricted[:10])}")
+            result.note(
+                f"Owner is modifying restricted paths: {', '.join(restricted[:10])}"
+            )
 
 
 def main() -> int:
