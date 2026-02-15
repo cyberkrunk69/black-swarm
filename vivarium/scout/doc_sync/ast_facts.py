@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Literal, Optional
 SymbolType = Literal["constant", "function", "class", "method", "field"]
 
 SemanticRole = Literal[
-    "threshold",      # Decision boundary (e.g. DEFAULT_CONFIDENCE_THRESHOLD)
-    "limit",          # Hard cap (e.g. MAX_EXPANDED_CONTEXT)
-    "model_name",     # LLM identifier (e.g. GROQ_70B_MODEL)
-    "output_value",   # Computed result (e.g. confidence_score from 70B)
-    "configuration", # User-tweakable setting
-    "implementation", # Internal detail (not user-facing)
+    "threshold",  # Decision boundary (e.g. DEFAULT_CONFIDENCE_THRESHOLD)
+    "limit",  # Hard cap (e.g. MAX_EXPANDED_CONTEXT)
+    "model_name",  # LLM identifier (e.g. GROQ_70B_MODEL)
+    "output_value",  # Computed result (e.g. confidence_score from 70B)
+    "configuration",  # User-tweakable setting
+    "implementation",  # Internal detail (not user-facing)
 ]
 
 
@@ -32,7 +32,9 @@ class SymbolFact:
     name: str
     type: SymbolType
     defined_at: int  # line number
-    used_at: List[int] = field(default_factory=list)  # line numbers where referenced (Load)
+    used_at: List[int] = field(
+        default_factory=list
+    )  # line numbers where referenced (Load)
     value: Optional[str] = None  # for constants with literal values
     type_annotation: Optional[str] = None
     methods: List[str] = field(default_factory=list)  # for classes
@@ -40,7 +42,9 @@ class SymbolFact:
     # TICKET-44: Rich prose synthesis — human context for documentable symbols
     docstring: Optional[str] = None  # existing human-written docstring
     signature: Optional[str] = None  # type signature from AST (e.g. func(args) -> ret)
-    purpose_hint: Optional[str] = None  # inferred from naming (e.g. "logger" → "audit logging")
+    purpose_hint: Optional[str] = (
+        None  # inferred from naming (e.g. "logger" → "audit logging")
+    )
     # TICKET-45: Semantic role — prevents threshold vs output conflation
     semantic_role: Optional[SemanticRole] = None
     method_signatures: Dict[str, str] = field(default_factory=dict)
@@ -151,10 +155,7 @@ class ModuleFacts:
         """Serialize to JSON with path as string for JSON compatibility."""
         data = {
             "path": str(self.path),
-            "symbols": {
-                k: asdict(v)
-                for k, v in sorted(self.symbols.items())
-            },
+            "symbols": {k: asdict(v) for k, v in sorted(self.symbols.items())},
             "control_flow": {
                 k: [asdict(cf) for cf in v]
                 for k, v in sorted(self.control_flow.items())
@@ -206,14 +207,19 @@ class ASTFactExtractor:
         return parents
 
     def _is_inside_function_or_class(
-        self, tree: ast.AST, node: ast.AST, parents: Optional[Dict[ast.AST, ast.AST]] = None
+        self,
+        tree: ast.AST,
+        node: ast.AST,
+        parents: Optional[Dict[ast.AST, ast.AST]] = None,
     ) -> bool:
         """True if node is inside a FunctionDef or ClassDef (not module-level)."""
         if parents is None:
             parents = self._build_parent_map(tree)
         current: Optional[ast.AST] = node
         while current is not None and current is not tree:
-            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(
+                current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
                 return True
             current = parents.get(current)
         return False
@@ -284,7 +290,9 @@ class ASTFactExtractor:
                             methods.append(item.name)
                         elif isinstance(item, ast.Assign):
                             for t in item.targets:
-                                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name):
+                                if isinstance(t, ast.Attribute) and isinstance(
+                                    t.value, ast.Name
+                                ):
                                     if t.value.id == "self":
                                         fields.append(t.attr)
                     symbols[node.name] = SymbolFact(
@@ -308,6 +316,7 @@ class ASTFactExtractor:
 
     def _get_parent_class(self, tree: ast.AST, node: ast.AST) -> Optional[str]:
         """Find if node is inside a ClassDef. Returns class name or None."""
+
         class _ParentFinder(ast.NodeVisitor):
             def __init__(self, target: ast.AST) -> None:
                 self.target = target
@@ -348,7 +357,11 @@ class ASTFactExtractor:
             return node.s
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
             if isinstance(node.operand, (ast.Constant, ast.Num)):
-                val = node.operand.value if hasattr(node.operand, "value") else node.operand.n
+                val = (
+                    node.operand.value
+                    if hasattr(node.operand, "value")
+                    else node.operand.n
+                )
                 return str(-val)
         try:
             return ast.unparse(node)
@@ -388,7 +401,9 @@ class ASTFactExtractor:
                         cond = ast.unparse(stmt.test)[:80]
                     except Exception:
                         cond = "<expr>"
-                    blocks.append({"type": "if", "condition": cond, "line": stmt.lineno})
+                    blocks.append(
+                        {"type": "if", "condition": cond, "line": stmt.lineno}
+                    )
             return blocks
 
         for node in ast.walk(tree):
@@ -398,7 +413,10 @@ class ASTFactExtractor:
                         blocks = collect_ifs(item.body)
                         if blocks:
                             result[f"{node.name}.{item.name}"] = [
-                                ControlFlowFact(function_name=f"{node.name}.{item.name}", blocks=blocks)
+                                ControlFlowFact(
+                                    function_name=f"{node.name}.{item.name}",
+                                    blocks=blocks,
+                                )
                             ]
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if not self._get_parent_class(tree, node):
@@ -444,9 +462,16 @@ class ASTFactExtractor:
     ) -> Optional[ast.AST]:
         """Find AST node for a symbol (for docstring/signature extraction)."""
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == name and sym_type == "class":
+            if (
+                isinstance(node, ast.ClassDef)
+                and node.name == name
+                and sym_type == "class"
+            ):
                 return node
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == name
+            ):
                 if sym_type == "function":
                     if not self._get_parent_class(tree, node):
                         return node
@@ -496,7 +521,10 @@ class ASTFactExtractor:
         """Extract full signature (params, types, return). For ClassDef, use __init__."""
         if isinstance(node, ast.ClassDef):
             for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == "__init__"
+                ):
                     return self._extract_signature_from_node(item)
             return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -539,7 +567,9 @@ class ASTFactExtractor:
         }
         return hints.get(name.lower())
 
-    def _infer_semantic_role(self, name: str, fact: SymbolFact) -> Optional[SemanticRole]:
+    def _infer_semantic_role(
+        self, name: str, fact: SymbolFact
+    ) -> Optional[SemanticRole]:
         """TICKET-45: Infer semantic role from naming — prevents threshold vs output conflation."""
         if fact.type != "constant":
             return "implementation"

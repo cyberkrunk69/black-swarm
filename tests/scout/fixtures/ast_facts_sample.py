@@ -5,10 +5,12 @@ from enum import Enum
 # Module-level constant
 FIXTURE_CONST = 42
 
+
 # Module-level function (not async)
 def module_func(x: int) -> str:
     """A module-level function."""
     return str(x)
+
 
 # Module-level async function (with control flow for extraction test)
 async def async_module_func(y: float) -> bool:
@@ -16,6 +18,7 @@ async def async_module_func(y: float) -> bool:
     if y > 0:
         return True
     return False
+
 
 # Regular class with methods
 class SampleClass:
@@ -26,6 +29,7 @@ class SampleClass:
 
     async def async_method(self, x: str) -> str:
         return x.upper()
+
 
 # Enum class — members only, no methods to attribute
 class SampleEnum(Enum):
