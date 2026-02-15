@@ -223,7 +223,9 @@ def _check_policy_files(
         result.fail("ci.yml must define --cov-fail-under for runtime coverage.")
     elif runtime_floor < MIN_RUNTIME_COVERAGE:
         result.fail(
-            f"ci.yml runtime coverage floor {runtime_floor}% is below policy minimum {MIN_RUNTIME_COVERAGE}%."
+            "ci.yml runtime coverage floor "
+            f"{runtime_floor}% is below policy minimum "
+            f"{MIN_RUNTIME_COVERAGE}%."
         )
     if "Scout Smoke Tests" not in ci:
         result.fail("ci.yml must include Scout Smoke Tests step.")
@@ -244,7 +246,8 @@ def _check_policy_files(
         text = files[workflow_path]
         if not _contains_top_level_contents_read(text):
             result.fail(
-                f"{workflow_path} must declare top-level permissions with contents: read."
+                f"{workflow_path} must declare top-level permissions "
+                "with contents: read."
             )
         if re.search(r"(?mi)^\s*continue-on-error:\s*true\s*$", text):
             result.fail(f"{workflow_path} must not use continue-on-error: true.")
@@ -263,7 +266,8 @@ def _check_actor_controls(
         and actor not in owner_allowlist
     ):
         result.fail(
-            f"Direct push to protected branch '{ref_name}' by '{actor}' is blocked by policy."
+            "Direct push to protected branch "
+            f"'{ref_name}' by '{actor}' is blocked by policy."
         )
 
     if event_name in {"pull_request", "pull_request_target"}:
