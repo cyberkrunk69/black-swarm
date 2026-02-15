@@ -113,3 +113,6 @@ vivarium/meta/security/*_ui_settings.json
 tests/control_panel/coverage_html/
 coverage.xml
 .coverage*
+
+# Node.js dependencies
+node_modules/

@@ -1,8 +1,11 @@
+#!/usr/bin/env node
+
 const fs = require("fs");
+const path = require("path");
 const {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   AlignmentType, PageBreak, BorderStyle, TabStopType
-} = require("/home/claude/.npm-global/lib/node_modules/docx");
+} = require("docx");
 
 // ============================================================
 // ESSAY CONTENT - Structured as sections
@@ -651,6 +654,8 @@ const allContent = [
   ...part5,
 ];
 
+const outputPath = process.argv[2] || path.join(process.cwd(), "the-inevitable-layer.docx");
+
 const doc = new Document({
   styles: {
     default: {
@@ -690,8 +695,9 @@ const doc = new Document({
 });
 
 Packer.toBuffer(doc).then(buffer => {
-  fs.writeFileSync("/home/claude/the-inevitable-layer.docx", buffer);
-  console.log("Document generated successfully.");
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, buffer);
+  console.log(`Document generated successfully: ${outputPath}`);
 
   // Count approximate words
   const texts = allContent
