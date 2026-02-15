@@ -1,8 +1,7 @@
 """
-Scout AST Fact Extractor — 100% deterministic fact extraction.
+Scout AST Fact Extractor — deterministic fact extraction from Python AST.
 
-Zero LLM, zero hallucination. Extracts symbols, usage, control flow from Python AST.
-Used as ground truth for constrained prose synthesis.
+Extracts symbols, usage, control flow. Used as ground truth for constrained prose synthesis.
 """
 
 from __future__ import annotations
@@ -44,6 +43,8 @@ class SymbolFact:
     purpose_hint: Optional[str] = None  # inferred from naming (e.g. "logger" → "audit logging")
     # TICKET-45: Semantic role — prevents threshold vs output conflation
     semantic_role: Optional[SemanticRole] = None
+    method_signatures: Dict[str, str] = field(default_factory=dict)
+    is_enum: bool = False
 
 
 @dataclass
@@ -95,6 +96,8 @@ class ModuleFacts:
                 signature=v.get("signature"),
                 purpose_hint=v.get("purpose_hint"),
                 semantic_role=v.get("semantic_role"),
+                method_signatures=v.get("method_signatures", {}),
+                is_enum=v.get("is_enum", False),
             )
         control_flow = {}
         for k, v in data.get("control_flow", {}).items():
@@ -167,7 +170,7 @@ class ModuleFacts:
 
 
 class ASTFactExtractor:
-    """100% deterministic fact extraction — zero LLM, zero hallucination."""
+    """Deterministic fact extraction from Python AST — no LLM, no hallucination."""
 
     def extract(self, path: Path) -> ModuleFacts:
         """Extract all facts from a Python file."""
@@ -275,8 +278,9 @@ class ASTFactExtractor:
                 if node.name not in imported_names:
                     methods = []
                     fields = []
+                    is_enum = self._is_enum_class(node)
                     for item in node.body:
-                        if isinstance(item, ast.FunctionDef):
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             methods.append(item.name)
                         elif isinstance(item, ast.Assign):
                             for t in item.targets:
@@ -289,8 +293,9 @@ class ASTFactExtractor:
                         defined_at=node.lineno,
                         methods=methods,
                         fields=fields,
+                        is_enum=is_enum,
                     )
-            elif isinstance(node, ast.FunctionDef):
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 parent = self._get_parent_class(tree, node)
                 if not parent and node.name not in imported_names:
                     symbols[node.name] = SymbolFact(
@@ -323,6 +328,15 @@ class ASTFactExtractor:
         finder = _ParentFinder(node)
         finder.visit(tree)
         return finder.found
+
+    def _is_enum_class(self, node: ast.ClassDef) -> bool:
+        """True if class inherits from Enum."""
+        for base in node.bases:
+            if isinstance(base, ast.Name) and base.id == "Enum":
+                return True
+            if isinstance(base, ast.Attribute) and base.attr == "Enum":
+                return True
+        return False
 
     def _literal_to_str(self, node: ast.expr) -> Optional[str]:
         """Convert literal AST node to string representation."""
@@ -380,13 +394,13 @@ class ASTFactExtractor:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 for item in node.body:
-                    if isinstance(item, ast.FunctionDef):
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         blocks = collect_ifs(item.body)
                         if blocks:
                             result[f"{node.name}.{item.name}"] = [
                                 ControlFlowFact(function_name=f"{node.name}.{item.name}", blocks=blocks)
                             ]
-            elif isinstance(node, ast.FunctionDef):
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if not self._get_parent_class(tree, node):
                     blocks = collect_ifs(node.body)
                     if blocks:
@@ -432,7 +446,7 @@ class ASTFactExtractor:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and node.name == name and sym_type == "class":
                 return node
-            if isinstance(node, ast.FunctionDef) and node.name == name:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
                 if sym_type == "function":
                     if not self._get_parent_class(tree, node):
                         return node
@@ -467,7 +481,7 @@ class ASTFactExtractor:
 
     def _extract_docstring_from_node(self, node: ast.AST) -> Optional[str]:
         """Extract docstring from ClassDef or FunctionDef."""
-        if not isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
         body = getattr(node, "body", [])
         if body and isinstance(body[0], ast.Expr):
@@ -479,27 +493,38 @@ class ASTFactExtractor:
         return None
 
     def _extract_signature_from_node(self, node: ast.AST) -> Optional[str]:
-        """Extract signature from FunctionDef (args, return type). For ClassDef, use __init__."""
+        """Extract full signature (params, types, return). For ClassDef, use __init__."""
         if isinstance(node, ast.ClassDef):
             for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
                     return self._extract_signature_from_node(item)
             return None
-        if not isinstance(node, ast.FunctionDef):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
         try:
-            args = node.args
-            arg_names = []
-            for a in args.args:
-                arg_names.append(a.arg)
-            if args.vararg:
-                arg_names.append(f"*{args.vararg.arg}")
-            if args.kwarg:
-                arg_names.append(f"**{args.kwarg.arg}")
-            sig = f"{node.name}({', '.join(arg_names)})"
-            if node.returns:
-                sig += f" -> {ast.unparse(node.returns)}"
-            return sig
+            fake = (
+                ast.AsyncFunctionDef(
+                    name=node.name,
+                    args=node.args,
+                    body=[ast.Pass()],
+                    decorator_list=[],
+                    returns=node.returns,
+                )
+                if isinstance(node, ast.AsyncFunctionDef)
+                else ast.FunctionDef(
+                    name=node.name,
+                    args=node.args,
+                    body=[ast.Pass()],
+                    decorator_list=[],
+                    returns=node.returns,
+                )
+            )
+            ast.copy_location(fake, node)
+            unparsed = ast.unparse(fake)
+            idx = unparsed.find(":\n")
+            if idx != -1:
+                return unparsed[:idx].rstrip()
+            return unparsed.replace(": pass", "").rstrip()
         except Exception:
             return None
 
@@ -548,6 +573,12 @@ class ASTFactExtractor:
                 fact.signature = self._extract_signature_from_node(node)
                 if fact.type == "constant" and not fact.docstring:
                     fact.docstring = self._extract_inline_comment(node, source)
+                if fact.type == "class" and isinstance(node, ast.ClassDef):
+                    for item in node.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            sig = self._extract_signature_from_node(item)
+                            if sig:
+                                fact.method_signatures[item.name] = sig
             fact.purpose_hint = self._infer_purpose(name, fact)
             fact.semantic_role = self._infer_semantic_role(name, fact)
 
