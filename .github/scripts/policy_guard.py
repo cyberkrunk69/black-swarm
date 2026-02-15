@@ -70,6 +70,7 @@ REQUIRED_WORKFLOW_SNIPPETS = {
     ".github/workflows/integration.yml": ('pytest -q -m "integration or e2e"',),
     ".github/workflows/lint.yml": (
         "Determine changed Python files",
+        'git diff --name-only --diff-filter=ACMRT "$DIFF_RANGE" -- "*.py"',
         "Run Black (check mode) on changed files",
         "Run Flake8 on changed files",
         "Run MyPy on changed files",
@@ -252,6 +253,37 @@ def _check_lint_ignore_policy(result: GuardResult, lint_workflow_text: str) -> N
             return
 
 
+def _check_test_command_integrity(
+    result: GuardResult, ci_text: str, integration_text: str
+) -> None:
+    if not re.search(
+        r'(?m)^\s*run:\s*pytest -q -m "not integration and not e2e"\s*$',
+        ci_text,
+    ):
+        result.fail("CI core test command must remain exact and ungated.")
+
+    if re.search(
+        r'pytest -q -m "not integration and not e2e"[^\n]*(?:-k|--lf|--ff|--maxfail|--collect-only|--co)\b',
+        ci_text,
+    ):
+        result.fail("CI core test command contains forbidden narrowing flags.")
+
+    if not re.search(
+        r'(?m)^\s*run:\s*pytest -q -m "integration or e2e"\s*$',
+        integration_text,
+    ):
+        result.fail("Integration test command must remain exact and ungated.")
+
+    if re.search(
+        r'pytest -q -m "integration or e2e"[^\n]*(?:-k|--lf|--ff|--maxfail|--collect-only|--co)\b',
+        integration_text,
+    ):
+        result.fail("Integration test command contains forbidden narrowing flags.")
+
+    if "PYTEST_ADDOPTS" in ci_text or "PYTEST_ADDOPTS" in integration_text:
+        result.fail("PYTEST_ADDOPTS override is forbidden in CI/integration workflows.")
+
+
 def _detect_added_suppressions(file_entries: list[dict]) -> list[str]:
     offenders: set[str] = set()
     suppression_patterns = (
@@ -381,6 +413,9 @@ def _check_policy_files(
         )
     if "Scout Smoke Tests" not in ci:
         result.fail("ci.yml must include Scout Smoke Tests step.")
+    _check_test_command_integrity(
+        result, ci, files[".github/workflows/integration.yml"]
+    )
 
     control_panel = files[".github/workflows/control-panel.yml"]
     cp_floor = _extract_cov_floor(control_panel)
