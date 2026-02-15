@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -u -o pipefail
 
 # Apply strict branch protection to master/main for owner-controlled merges.
 # Usage:
@@ -23,11 +23,21 @@ fi
 echo "Applying protection for repo: $REPO"
 echo "Owner-locking push access to: $POLICY_OWNER"
 echo "Required checks: ${REQUIRED_CHECKS[*]}"
+echo ""
+
+ADMIN_PERMISSION="$(gh api "repos/$REPO" --jq '.permissions.admin' 2>/dev/null || echo "unknown")"
+if [[ "$ADMIN_PERMISSION" != "true" ]]; then
+  echo "⚠️  Current token likely lacks repository admin rights (permissions.admin=$ADMIN_PERMISSION)."
+  echo "   Branch protection updates require admin access."
+  echo ""
+fi
 
 apply_branch_protection() {
   local branch="$1"
   local payload_file
+  local output_file
   payload_file="$(mktemp)"
+  output_file="$(mktemp)"
 
   cat >"$payload_file" <<EOF
 {
@@ -58,23 +68,47 @@ apply_branch_protection() {
 EOF
 
   echo "  -> Protecting branch '$branch'"
-  gh api \
+  if gh api \
     --method PUT \
     -H "Accept: application/vnd.github+json" \
     "repos/$REPO/branches/$branch/protection" \
-    --input "$payload_file" >/dev/null
+    --input "$payload_file" >"$output_file" 2>&1; then
+    echo "     ✅ Protection updated for '$branch'"
+    rm -f "$payload_file" "$output_file"
+    return 0
+  fi
 
-  rm -f "$payload_file"
+  echo "     ❌ Failed to update '$branch'"
+  cat "$output_file"
+  if rg -q "Resource not accessible by integration|403" "$output_file"; then
+    echo ""
+    echo "     Remediation:"
+    echo "       1) Authenticate gh with a PAT that has repo admin rights."
+    echo "       2) Re-run this script from an owner/admin shell."
+    echo "       3) Confirm settings in GitHub UI: Settings -> Branches."
+  fi
+
+  rm -f "$payload_file" "$output_file"
+  return 1
 }
 
+FAILED=0
 for branch in master main; do
   if gh api "repos/$REPO/branches/$branch" >/dev/null 2>&1; then
-    apply_branch_protection "$branch"
+    if ! apply_branch_protection "$branch"; then
+      FAILED=1
+    fi
   else
     echo "  -> Skipping '$branch' (branch does not exist)"
   fi
 done
 
 echo ""
-echo "Branch protection applied successfully."
-echo "Tip: run 'gh pr checks <pr-number>' to confirm required check names are correct."
+if [[ "$FAILED" -eq 0 ]]; then
+  echo "Branch protection applied successfully."
+  echo "Tip: run 'gh pr checks <pr-number>' to confirm required check names are correct."
+  exit 0
+fi
+
+echo "Branch protection was NOT fully applied."
+exit 1
